@@ -30,6 +30,9 @@ def test_full_flow_with_approval_interrupt(db):
     assert len(result2["final_report"]) > 0
     assert result2["approval_decision"] == "approve"
 
+    # node re-run on resume must NOT duplicate the approval (idempotency)
+    assert db.query(Approval).count() == 1
+
 
 def test_plan_routes_to_cmo(db):
     from app.graph.ceo import ceo_plan

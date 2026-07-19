@@ -50,18 +50,27 @@ def cmo_work(state: CommanderState) -> CommanderState:
     if recommendations:
         rec = recommendations[0]
         with SessionLocal() as db:
-            approval = Approval(
-                task_id=state.get("task_id"),
-                agent="cmo",
-                action_type="EXECUTE_RECOMMENDATION",
-                payload=rec,
-                risk="medium",
-                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-            )
-            db.add(approval)
-            db.commit()
-            db.refresh(approval)
-            approval_id = approval.id
+            # idempotent: on resume LangGraph re-runs this whole node —
+            # reuse the approval already created for this task instead of duplicating
+            existing = db.query(Approval).filter(
+                Approval.task_id == state.get("task_id"),
+                Approval.action_type == "EXECUTE_RECOMMENDATION",
+            ).order_by(Approval.id.desc()).first()
+            if existing is not None:
+                approval_id = existing.id
+            else:
+                approval = Approval(
+                    task_id=state.get("task_id"),
+                    agent="cmo",
+                    action_type="EXECUTE_RECOMMENDATION",
+                    payload=rec,
+                    risk="medium",
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                )
+                db.add(approval)
+                db.commit()
+                db.refresh(approval)
+                approval_id = approval.id
 
         # HITL: pause here until owner decides (via Telegram / API)
         decision = interrupt(
