@@ -192,6 +192,53 @@ def daily_activity(days: int = 7, db: Session = Depends(get_db)) -> dict:
     return {"days": daily}
 
 
+@router.get("/api/projects")
+def projects(limit: int = 12, db: Session = Depends(get_db)) -> dict:
+    """Per-project (task) view: progress, per-department work/thinking, boardroom."""
+    PROGRESS = {"pending": 10, "in_progress": 45, "waiting_approval": 75,
+                "done": 100, "failed": 100}
+    tasks = db.scalars(select(Task).order_by(Task.id.desc()).limit(limit)).all()
+    task_ids = [t.id for t in tasks]
+    events = db.scalars(
+        select(AuditLog).where(AuditLog.task_id.in_(task_ids)).order_by(AuditLog.id)
+    ).all() if task_ids else []
+
+    by_task: dict[int, list] = {}
+    for ev in events:
+        by_task.setdefault(ev.task_id, []).append(ev)
+
+    out = []
+    for t in tasks:
+        evs = by_task.get(t.id, [])
+        depts: dict[str, list] = {}
+        board = []
+        for ev in evs:
+            msg = str((ev.detail or {}).get("message") or (ev.detail or {}).get("report") or "")[:400]
+            item = {
+                "at": ev.created_at.isoformat() if ev.created_at else None,
+                "event": ev.event,
+                "message": msg or None,
+            }
+            if ev.event.startswith("boardroom_"):
+                board.append({"speaker": ev.agent, "decision": ev.event == "boardroom_decision", **item})
+            else:
+                depts.setdefault(ev.agent, []).append(item)
+        result = t.result or {}
+        out.append({
+            "id": t.id,
+            "title": t.title,
+            "status": t.status,
+            "progress": PROGRESS.get(t.status, 0),
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+            "departments": depts,
+            "boardroom": board,
+            "report": str(result.get("report") or "")[:2000] or None,
+            "brief": result.get("brief"),
+        })
+    return {"projects": out}
+
+
 @router.get("/api/snapshot")
 def snapshot(db: Session = Depends(get_db)) -> dict:
     return build_snapshot(db)

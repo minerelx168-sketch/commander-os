@@ -49,8 +49,37 @@ def test_dashboard_page(client):
     assert "Commander OS" in r.text
     assert "Jarvis" in r.text
     assert "System Health" in r.text
-    assert "Daily Activity" in r.text
-    assert "Boardroom" in r.text
+    # tab-based UI: Overview / Projects / Departments
+    assert "view-overview" in r.text
+    assert "view-projects" in r.text
+    assert "view-departments" in r.text
+
+
+def test_projects_api(client, db):
+    from app.models import AuditLog, Task
+
+    db.add_all([
+        Task(created_by="owner", assigned_to="ceo", title="ภารกิจทดสอบ",
+             status="done", result={"report": "รายงาน", "brief": "x.md"}),
+    ])
+    db.commit()
+    t = db.query(Task).first()
+    db.add_all([
+        AuditLog(agent="cmo", task_id=t.id, event="analysis_done", detail={}),
+        AuditLog(agent="ceo", task_id=t.id, event="boardroom_decision",
+                 detail={"message": "มติ: ok"}),
+    ])
+    db.commit()
+
+    r = client.get("/api/projects")
+    assert r.status_code == 200
+    p = r.json()["projects"][0]
+    assert p["title"] == "ภารกิจทดสอบ"
+    assert p["progress"] == 100
+    assert "cmo" in p["departments"]
+    assert p["boardroom"][0]["speaker"] == "ceo"
+    assert p["boardroom"][0]["decision"] is True
+    assert p["report"] == "รายงาน" and p["brief"] == "x.md"
 
 
 def test_kill_switch_blocks_commands(client, db):

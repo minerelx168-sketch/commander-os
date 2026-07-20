@@ -40,16 +40,29 @@ def _audit(agent: str, task_id: int | None, event: str, detail: dict) -> None:
 
 def boardroom(state: CommanderState) -> CommanderState:
     results = state.get("department_results") or {}
-    if len(results) < 2:  # nothing to debate with one (or zero) voices
+    pending = state.get("pending_reco")
+    # debate when there are 2+ voices, or when an actionable proposal is on the table
+    if len(results) < 2 and not pending:
         return {}
 
     task_id = state.get("task_id")
     transcript: list[dict] = []
     SessionLocal = get_sessionmaker()
 
-    # round 1: each department reacts to the OTHERS' results
-    for dept in results:
-        if dept not in DEPT_SYSTEM:
+    reco_note = ""
+    if pending:
+        reco_note = (
+            "\n\nข้อเสนอที่รอตัดสิน (จากระบบ Ads): "
+            + json.dumps(
+                {k: pending.get(k) for k in ("action", "target", "reason", "params")},
+                ensure_ascii=False,
+            )
+            + "\nช่วยให้ความเห็นว่าควรอนุมัติหรือไม่ เพราะอะไร"
+        )
+
+    # round 1: each department reacts to the OTHERS' results (and the proposal)
+    for dept in DEPT_SYSTEM:
+        if dept not in results and not pending:
             continue
         others = {k: v for k, v in results.items() if k != dept}
         with SessionLocal() as db:
@@ -58,7 +71,7 @@ def boardroom(state: CommanderState) -> CommanderState:
                 agent=dept,
                 purpose=f"boardroom_{dept}",
                 system=DEPT_SYSTEM[dept],
-                user="ผลงานของแผนกอื่น:\n" + json.dumps(others, ensure_ascii=False),
+                user="ผลงานของแผนกอื่น:\n" + json.dumps(others, ensure_ascii=False) + reco_note,
                 task_id=task_id,
             )
         transcript.append({"speaker": dept, "message": comment})
@@ -74,6 +87,7 @@ def boardroom(state: CommanderState) -> CommanderState:
             user=(
                 f"คำสั่งเดิม: {state['user_command']}\n\n"
                 "ผลจากแผนก:\n" + json.dumps(results, ensure_ascii=False)
+                + reco_note
                 + "\n\nความเห็นในที่ประชุม:\n" + json.dumps(transcript, ensure_ascii=False)
             ),
             task_id=task_id,

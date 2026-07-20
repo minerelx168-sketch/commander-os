@@ -3,7 +3,7 @@ import uuid
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from app.graph.build import _route_after_cmo, _route_after_plan
+from app.graph.build import _route_after_cmo_only, _route_after_plan
 from app.graph.cfo import cfo_work
 
 
@@ -18,7 +18,7 @@ def test_routing_cmo_then_cfo():
         {"assigned_to": "cfo", "title": "y", "description": ""},
     ]}
     assert _route_after_plan(state) == "cmo"
-    assert _route_after_cmo(state) == "cfo"
+    assert _route_after_cmo_only(state) == "cfo"
 
 
 def test_routing_no_departments():

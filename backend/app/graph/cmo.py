@@ -1,15 +1,14 @@
 """CMO agent node — Meta Ads department. Uses meta-ads-agent as its toolset.
 
-Read/analyze work completes autonomously. Any recommendation that would change
-the live ad account creates an approval record and interrupts the graph (HITL).
+Read/analyze work completes autonomously. A recommendation that would change
+the live ad account is NOT sent to the owner here — it's parked in state
+(`pending_reco`) so the boardroom can debate it and the CEO can rule first.
+The owner_gate node (after the boardroom) owns the single HITL interrupt.
 """
 import json
-from datetime import datetime, timedelta, timezone
-
-from langgraph.types import interrupt
 
 from ..database import get_sessionmaker
-from ..models import Approval, AuditLog
+from ..models import AuditLog
 from ..services import llm, meta_ads_client
 from .state import CommanderState
 
@@ -19,7 +18,7 @@ CMO_SYSTEM = """คุณคือ AI CMO (การตลาด) วิเค�
 
 
 def cmo_work(state: CommanderState) -> CommanderState:
-    """Run all subtasks assigned to cmo; interrupt if an action needs approval."""
+    """Run all subtasks assigned to cmo; park any actionable reco for the board."""
     my_tasks = [t for t in state.get("plan", []) if t["assigned_to"] == "cmo"]
     if not my_tasks:
         return {"department_results": {"cmo": "ไม่มีงานที่มอบหมายให้ CMO"}}
@@ -46,50 +45,7 @@ def cmo_work(state: CommanderState) -> CommanderState:
         db.commit()
 
     result: CommanderState = {"department_results": {"cmo": analysis}}
-
     if recommendations:
-        rec = recommendations[0]
-        with SessionLocal() as db:
-            # idempotent: on resume LangGraph re-runs this whole node —
-            # reuse the approval already created for this task instead of duplicating
-            existing = db.query(Approval).filter(
-                Approval.task_id == state.get("task_id"),
-                Approval.action_type == "EXECUTE_RECOMMENDATION",
-            ).order_by(Approval.id.desc()).first()
-            if existing is not None:
-                approval_id = existing.id
-            else:
-                approval = Approval(
-                    task_id=state.get("task_id"),
-                    agent="cmo",
-                    action_type="EXECUTE_RECOMMENDATION",
-                    payload=rec,
-                    risk="medium",
-                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                )
-                db.add(approval)
-                db.commit()
-                db.refresh(approval)
-                approval_id = approval.id
-
-        # HITL: pause here until owner decides (via Telegram / API)
-        decision = interrupt(
-            {
-                "approval_id": approval_id,
-                "action": rec["action"],
-                "target": rec["target"],
-                "reason": rec["reason"],
-            }
-        )
-        result["pending_approval_id"] = approval_id
-        result["approval_decision"] = decision
-        if decision in ("approve", "reject"):
-            # forward to meta-ads-agent — it executes via Meta API (or its own mock)
-            outcome = meta_ads_client.decide_recommendation(rec["id"], decision)
-            with SessionLocal() as db:
-                db.add(AuditLog(agent="cmo", task_id=state.get("task_id"),
-                                event=f"recommendation_{decision}d",
-                                detail={"reco_id": rec["id"], "outcome": outcome}))
-                db.commit()
-
+        # hold for boardroom debate + CEO ruling — owner sees it once, at the gate
+        result["pending_reco"] = recommendations[0]
     return result
