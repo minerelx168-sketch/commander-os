@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧠 Commander OS</title>
+<style>
+  :root {
+    --bg: #0a0e17; --panel: #111827; --panel2: #0f1522; --border: #1f2a3f;
+    --text: #d7e1f3; --dim: #6b7a94; --accent: #38bdf8; --green: #34d399;
+    --amber: #fbbf24; --red: #f87171; --purple: #a78bfa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 13px;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #0d1320, #0a0e17);
+  }
+  header h1 { font-size: 16px; letter-spacing: 2px; color: var(--accent); }
+  header .status { color: var(--dim); font-size: 11px; }
+  #killbtn {
+    background: transparent; color: var(--red); border: 1px solid var(--red);
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: inherit;
+    font-size: 12px; letter-spacing: 1px;
+  }
+  #killbtn.engaged { background: var(--red); color: #000; font-weight: bold; }
+  .grid {
+    display: grid; gap: 14px; padding: 16px 22px;
+    grid-template-columns: 1.2fr 1fr; grid-template-areas:
+      "agents approvals" "agents kpi" "activity tasks";
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; overflow: hidden;
+  }
+  .panel h2 {
+    font-size: 11px; letter-spacing: 2px; color: var(--dim);
+    margin-bottom: 12px; text-transform: uppercase;
+  }
+  #agents { grid-area: agents; }
+  #approvals { grid-area: approvals; }
+  #kpi { grid-area: kpi; }
+  #activity { grid-area: activity; }
+  #tasks { grid-area: tasks; }
+  .agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .agent-card {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px;
+  }
+  .agent-card .name { font-size: 15px; font-weight: bold; text-transform: uppercase; }
+  .agent-card .role { color: var(--dim); font-size: 10px; margin: 4px 0 8px; min-height: 24px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; letter-spacing: 1px; }
+  .WORKING { background: rgba(52,211,153,.15); color: var(--green); box-shadow: 0 0 8px rgba(52,211,153,.35); }
+  .WAITING { background: rgba(251,191,36,.15); color: var(--amber); }
+  .IDLE { background: rgba(107,122,148,.15); color: var(--dim); }
+  .cost { color: var(--purple); font-size: 11px; margin-top: 6px; }
+  .approval-item {
+    background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--amber);
+    border-radius: 6px; padding: 10px; margin-bottom: 8px;
+  }
+  .approval-item .meta { color: var(--dim); font-size: 11px; margin-bottom: 6px; }
+  .approval-item button {
+    font-family: inherit; font-size: 11px; padding: 4px 12px; border-radius: 5px;
+    cursor: pointer; margin-right: 6px; border: 1px solid;
+  }
+  .btn-ok { background: transparent; color: var(--green); border-color: var(--green); }
+  .btn-no { background: transparent; color: var(--red); border-color: var(--red); }
+  .kpi-row { display: flex; gap: 20px; }
+  .kpi-box .num { font-size: 26px; color: var(--accent); }
+  .kpi-box .lbl { color: var(--dim); font-size: 10px; letter-spacing: 1px; }
+  .feed { max-height: 300px; overflow-y: auto; }
+  .feed-item { padding: 4px 0; border-bottom: 1px dashed #16203380; color: var(--dim); }
+  .feed-item b { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 5px 6px; border-bottom: 1px dashed #16203380; }
+  .st-done { color: var(--green); } .st-waiting_approval { color: var(--amber); }
+  .st-in_progress { color: var(--accent); } .st-failed { color: var(--red); }
+  .empty { color: var(--dim); font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 COMMANDER OS</h1>
+  <span class="status" id="conn">connecting…</span>
+  <button id="killbtn" onclick="toggleKill()">⏻ KILL SWITCH</button>
+</header>
+<div class="grid">
+  <div class="panel" id="agents"><h2>Agent Grid</h2><div class="agent-cards" id="agent-cards"></div></div>
+  <div class="panel" id="approvals"><h2>📋 Approval Inbox</h2><div id="approval-list"></div></div>
+  <div class="panel" id="kpi"><h2>📈 KPI</h2><div class="kpi-row" id="kpi-row"></div></div>
+  <div class="panel" id="activity"><h2>💬 Live Activity</h2><div class="feed" id="feed"></div></div>
+  <div class="panel" id="tasks"><h2>🗂 Tasks</h2><table id="task-table"></table></div>
+</div>
+<script>
+let killEngaged = false;
+
+function render(s) {
+  killEngaged = s.kill_switch;
+  const kb = document.getElementById('killbtn');
+  kb.classList.toggle('engaged', killEngaged);
+  kb.textContent = killEngaged ? '⏻ SYSTEM HALTED' : '⏻ KILL SWITCH';
+
+  document.getElementById('agent-cards').innerHTML = s.agents.map(a => `
+    <div class="agent-card">
+      <div class="name">${a.name}</div>
+      <div class="role">${a.role}</div>
+      <span class="badge ${a.status}">${a.status === 'WORKING' ? '⚡ ' : a.status === 'WAITING' ? '⏸ ' : '💤 '}${a.status}</span>
+      <div class="cost">฿${a.cost_today_thb.toFixed(2)} วันนี้ · ${a.model}</div>
+    </div>`).join('');
+
+  document.getElementById('approval-list').innerHTML = s.approvals.length === 0
+    ? '<div class="empty">ไม่มีรายการรออนุมัติ</div>'
+    : s.approvals.map(ap => `
+      <div class="approval-item">
+        <div class="meta">#${ap.id} · ${ap.agent.toUpperCase()} · risk: ${ap.risk}</div>
+        <div>${ap.action_type}: ${ap.payload.action || ''} → ${ap.payload.target || ''} ${ap.payload.reason ? '· ' + ap.payload.reason : ''}</div>
+        <div style="margin-top:8px">
+          <button class="btn-ok" onclick="decide(${ap.id}, 'approve')">✅ อนุมัติ</button>
+          <button class="btn-no" onclick="decide(${ap.id}, 'reject')">❌ ปฏิเสธ</button>
+        </div>
+      </div>`).join('');
+
+  document.getElementById('kpi-row').innerHTML = `
+    <div class="kpi-box"><div class="num">${s.kpi.done_today}</div><div class="lbl">งานเสร็จวันนี้</div></div>
+    <div class="kpi-box"><div class="num">฿${s.kpi.cost_today_thb.toFixed(2)}</div><div class="lbl">ค่า LLM วันนี้</div></div>
+    <div class="kpi-box"><div class="num">${s.approvals.length}</div><div class="lbl">รออนุมัติ</div></div>`;
+
+  document.getElementById('feed').innerHTML = s.activity.map(ev =>
+    `<div class="feed-item">${ev.at ? ev.at.substring(11,19) : ''} <b>${ev.agent}</b> · ${ev.event}</div>`).join('')
+    || '<div class="empty">ยังไม่มีกิจกรรม</div>';
+
+  document.getElementById('task-table').innerHTML = s.tasks.map(t =>
+    `<tr><td>#${t.id}</td><td>${t.title}</td><td>${t.assigned_to}</td>
+     <td class="st-${t.status}">${t.status}</td></tr>`).join('')
+    || '<tr><td class="empty">ยังไม่มีงาน</td></tr>';
+}
+
+async function decide(id, decision) {
+  await fetch(`/api/approvals/${id}/decide`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({decision, decided_by: 'owner:dashboard'})
+  });
+}
+
+async function toggleKill() {
+  if (!killEngaged && !confirm('หยุดรับคำสั่งใหม่ทั้งหมด?')) return;
+  await fetch(`/api/kill-switch?engage=${!killEngaged}`, {method: 'POST'});
+}
+
+function connect() {
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  ws.onopen = () => document.getElementById('conn').textContent = '🟢 live';
+  ws.onmessage = e => render(JSON.parse(e.data));
+  ws.onclose = () => {
+    document.getElementById('conn').textContent = '🔴 reconnecting…';
+    setTimeout(connect, 3000);
+  };
+}
+connect();
+</script>
+</body>
+</html>

@@ -63,6 +63,12 @@ def resume_graph_bg(task_id: int, thread_id: str, decision: str) -> None:
 def create_command(
     cmd: CommandIn, background: BackgroundTasks, db: Session = Depends(get_db)
 ) -> CommandOut:
+    from .dashboard import KILL_SWITCH
+
+    if KILL_SWITCH["engaged"]:
+        from fastapi import HTTPException
+        raise HTTPException(503, "Kill switch engaged — ระบบหยุดรับคำสั่งชั่วคราว")
+
     thread_id = str(uuid.uuid4())
     task = Task(
         created_by="owner",

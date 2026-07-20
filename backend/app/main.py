@@ -3,14 +3,15 @@ import logging
 from fastapi import FastAPI
 
 from .config import get_settings
-from .routers import approvals, commands, reports
+from .routers import approvals, commands, dashboard, reports
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="Commander OS", version="0.1.0")
+app = FastAPI(title="Commander OS", version="0.2.0")
 app.include_router(commands.router)
 app.include_router(approvals.router)
 app.include_router(reports.router)
+app.include_router(dashboard.router)
 
 
 @app.on_event("startup")
