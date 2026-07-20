@@ -28,6 +28,18 @@
     font-size: 12px; letter-spacing: 1px;
   }
   #killbtn.engaged { background: var(--red); color: #000; font-weight: bold; }
+  #orb {
+    width: 42px; height: 42px; border-radius: 50%; cursor: pointer; border: 2px solid var(--accent);
+    background: radial-gradient(circle at 35% 35%, #1e3a5f, #0a0e17); color: var(--accent);
+    font-size: 18px; transition: all .2s;
+  }
+  #orb.rec {
+    border-color: var(--red); color: var(--red); animation: pulse 1s infinite;
+    box-shadow: 0 0 18px rgba(248,113,113,.6);
+  }
+  #orb.busy { border-color: var(--amber); color: var(--amber); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 50% { transform: scale(1.12); } }
+  #voice-status { color: var(--dim); font-size: 11px; min-width: 180px; }
   .grid {
     display: grid; gap: 14px; padding: 16px 22px;
     grid-template-columns: 1.2fr 1fr; grid-template-areas:
@@ -85,6 +97,8 @@
 <body>
 <header>
   <h1>🧠 COMMANDER OS</h1>
+  <button id="orb" title="กดค้างเพื่อพูด (Jarvis mode)">🎙</button>
+  <span id="voice-status">กดค้างที่ 🎙 เพื่อสั่งงานด้วยเสียง</span>
   <span class="status" id="conn">connecting…</span>
   <button id="killbtn" onclick="toggleKill()">⏻ KILL SWITCH</button>
 </header>
@@ -161,6 +175,65 @@ function connect() {
   };
 }
 connect();
+
+// ---------- Jarvis mode: push-to-talk ----------
+const orb = document.getElementById('orb');
+const vstatus = document.getElementById('voice-status');
+let recorder = null, watchTask = null, spokenTasks = new Set();
+
+async function startRec() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+    recorder = new MediaRecorder(stream, {mimeType: 'audio/webm'});
+    const chunks = [];
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      orb.className = 'busy';
+      vstatus.textContent = '🧠 กำลังถอดเสียง…';
+      const fd = new FormData();
+      fd.append('audio', new Blob(chunks, {type: 'audio/webm'}), 'cmd.webm');
+      try {
+        const r = await fetch('/api/voice/command', {method: 'POST', body: fd});
+        const j = await r.json();
+        vstatus.textContent = `💬 "${j.transcript}" → task #${j.task_id}`;
+        watchTask = j.task_id;
+      } catch (e) {
+        vstatus.textContent = '⚠️ ' + e;
+      }
+      orb.className = '';
+    };
+    recorder.start();
+    orb.className = 'rec';
+    vstatus.textContent = '🔴 กำลังฟัง… ปล่อยเพื่อส่ง';
+  } catch (e) { vstatus.textContent = '⚠️ เข้าถึงไมค์ไม่ได้: ' + e.message; }
+}
+
+function stopRec() { if (recorder && recorder.state === 'recording') recorder.stop(); }
+
+orb.addEventListener('mousedown', startRec);
+orb.addEventListener('mouseup', stopRec);
+orb.addEventListener('mouseleave', stopRec);
+orb.addEventListener('touchstart', e => { e.preventDefault(); startRec(); });
+orb.addEventListener('touchend', e => { e.preventDefault(); stopRec(); });
+
+// speak the report aloud when the voice-initiated task completes
+async function maybeSpeak(tasks) {
+  if (!watchTask) return;
+  const t = tasks.find(x => x.id === watchTask);
+  if (!t || t.status !== 'done' || spokenTasks.has(t.id)) return;
+  spokenTasks.add(t.id); watchTask = null;
+  const r = await fetch(`/api/tasks/${t.id}`);
+  const detail = await r.json();
+  const report = (detail.result && detail.result.report) || '';
+  if (!report) return;
+  vstatus.textContent = '🔊 กำลังอ่านรายงาน…';
+  const audio = new Audio(`/api/voice/tts?text=${encodeURIComponent(report.substring(0, 600))}`);
+  audio.onended = () => vstatus.textContent = 'กดค้างที่ 🎙 เพื่อสั่งงานด้วยเสียง';
+  audio.play();
+}
+const _origRender = render;
+render = s => { _origRender(s); maybeSpeak(s.tasks); };
 </script>
 </body>
 </html>
