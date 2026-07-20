@@ -1,4 +1,11 @@
-"""HTTP client for the meta-ads-agent backend (CMO department tools)."""
+"""HTTP client for the meta-ads-agent backend (CMO department tools).
+
+Real endpoints (meta-ads-agent :8000):
+  GET  /api/metrics/summary                   -> dashboard summary
+  GET  /api/recommendations?status_filter=PENDING
+  POST /api/recommendations/{id}/approve|reject
+  POST /api/ingest/run , POST /api/agent/run  -> refresh data + generate recos
+"""
 import httpx
 
 from ..config import get_settings
@@ -25,32 +32,63 @@ MOCK_RECOMMENDATIONS = [
 ]
 
 
+def _base() -> str:
+    return get_settings().meta_agent_url.rstrip("/")
+
+
 def get_dashboard() -> dict:
-    s = get_settings()
-    if s.meta_agent_mock:
+    if get_settings().meta_agent_mock:
         return MOCK_DASHBOARD
-    r = httpx.get(f"{s.meta_agent_url}/api/dashboard", timeout=30)
+    r = httpx.get(f"{_base()}/api/metrics/summary", timeout=30)
     r.raise_for_status()
     return r.json()
 
 
 def get_recommendations(status: str = "PENDING") -> list[dict]:
-    s = get_settings()
-    if s.meta_agent_mock:
+    if get_settings().meta_agent_mock:
         return [x for x in MOCK_RECOMMENDATIONS if x["status"] == status]
     r = httpx.get(
-        f"{s.meta_agent_url}/api/recommendations",
-        params={"status": status},
+        f"{_base()}/api/recommendations",
+        params={"status_filter": status},
         timeout=30,
     )
+    r.raise_for_status()
+    # normalize to the shape the CMO node expects
+    return [
+        {
+            "id": rec["id"],
+            "action": rec["action_type"],
+            "target": rec.get("entity_name") or rec["entity_meta_id"],
+            "params": {
+                "current": rec.get("current_value"),
+                "proposed": rec.get("proposed_value"),
+            },
+            "reason": rec["justification"],
+            "status": rec["status"],
+        }
+        for rec in r.json()
+    ]
+
+
+def decide_recommendation(reco_id: int, decision: str) -> dict:
+    """Forward owner's decision to meta-ads-agent, which executes via Meta API."""
+    if get_settings().meta_agent_mock:
+        return {"id": reco_id, "status": "APPROVED" if decision == "approve" else "REJECTED"}
+    action = "approve" if decision == "approve" else "reject"
+    r = httpx.post(f"{_base()}/api/recommendations/{reco_id}/{action}", timeout=60)
     r.raise_for_status()
     return r.json()
 
 
 def run_pipeline() -> dict:
-    s = get_settings()
-    if s.meta_agent_mock:
+    """Refresh metrics + let the meta-ads agent generate new recommendations."""
+    if get_settings().meta_agent_mock:
         return {"status": "ok", "new_recommendations": 1}
-    r = httpx.post(f"{s.meta_agent_url}/api/pipeline/run", timeout=120)
+    out = {}
+    r = httpx.post(f"{_base()}/api/ingest/run", timeout=120)
     r.raise_for_status()
-    return r.json()
+    out["ingest"] = r.json()
+    r = httpx.post(f"{_base()}/api/agent/run", timeout=120)
+    r.raise_for_status()
+    out["agent"] = r.json()
+    return out

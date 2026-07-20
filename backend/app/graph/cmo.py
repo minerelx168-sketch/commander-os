@@ -83,13 +83,13 @@ def cmo_work(state: CommanderState) -> CommanderState:
         )
         result["pending_approval_id"] = approval_id
         result["approval_decision"] = decision
-        if decision == "approve" and not _is_mock():
-            # forward the approval to meta-ads-agent to actually execute
-            pass  # Phase 1: execution happens inside meta-ads-agent's own approval flow
+        if decision in ("approve", "reject"):
+            # forward to meta-ads-agent — it executes via Meta API (or its own mock)
+            outcome = meta_ads_client.decide_recommendation(rec["id"], decision)
+            with SessionLocal() as db:
+                db.add(AuditLog(agent="cmo", task_id=state.get("task_id"),
+                                event=f"recommendation_{decision}d",
+                                detail={"reco_id": rec["id"], "outcome": outcome}))
+                db.commit()
 
     return result
-
-
-def _is_mock() -> bool:
-    from ..config import get_settings
-    return get_settings().meta_agent_mock
