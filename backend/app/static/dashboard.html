@@ -3,123 +3,298 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🧠 Commander OS</title>
+<title>🧠 Commander OS — Agentic Ops</title>
 <style>
   :root {
-    --bg: #0a0e17; --panel: #111827; --panel2: #0f1522; --border: #1f2a3f;
-    --text: #d7e1f3; --dim: #6b7a94; --accent: #38bdf8; --green: #34d399;
-    --amber: #fbbf24; --red: #f87171; --purple: #a78bfa;
+    --bg: #05080f; --panel: #0b111d; --panel2: #0e1626; --border: #17233a;
+    --text: #d7e1f3; --dim: #5f7191; --accent: #38bdf8; --green: #34d399;
+    --amber: #fbbf24; --red: #f87171; --purple: #a78bfa; --pink: #f472b6;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text); min-height: 100vh;
     font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 13px;
+    display: flex;
   }
+  /* ============ SIDEBAR ============ */
+  aside {
+    width: 232px; min-height: 100vh; flex-shrink: 0;
+    background: linear-gradient(180deg, #0a1120, #060a12);
+    border-right: 1px solid var(--border);
+    padding: 18px 14px; display: flex; flex-direction: column; gap: 4px;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .logo .mark {
+    width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+    background: radial-gradient(circle at 30% 30%, #1e3a5f, #0a0e17);
+    border: 1px solid var(--accent); font-size: 16px;
+  }
+  .logo .t1 { font-weight: bold; font-size: 14px; }
+  .logo .t2 { color: var(--dim); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; }
+  nav a {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
+    color: var(--dim); text-decoration: none; font-size: 12px; letter-spacing: .5px;
+    border: 1px solid transparent;
+  }
+  nav a:hover { color: var(--text); background: var(--panel2); }
+  nav a.active { color: var(--text); background: var(--panel2); border-color: var(--border); }
+  .side-h {
+    margin: 16px 4px 8px; color: var(--dim); font-size: 9px; letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  .side-agent {
+    display: flex; align-items: center; gap: 9px; padding: 8px 10px; margin-bottom: 6px;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .side-agent .ic {
+    width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center;
+    font-size: 13px; background: #17233a;
+  }
+  .side-agent .nm { font-size: 12px; font-weight: bold; text-transform: uppercase; }
+  .side-agent .rl { color: var(--dim); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; }
+  .side-agent .st { margin-left: auto; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+  .pill { font-size: 9px; letter-spacing: 1px; padding: 2px 8px; border-radius: 9px; white-space: nowrap; }
+  .p-WORKING { background: rgba(52,211,153,.13); color: var(--green); box-shadow: 0 0 8px rgba(52,211,153,.3); }
+  .p-WAITING { background: rgba(251,191,36,.13); color: var(--amber); }
+  .p-IDLE { background: rgba(95,113,145,.13); color: var(--dim); }
+
+  /* ============ MAIN ============ */
+  main { flex: 1; min-width: 0; }
   header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 22px; border-bottom: 1px solid var(--border);
-    background: linear-gradient(180deg, #0d1320, #0a0e17);
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 22px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, #0a1120, transparent);
+    position: sticky; top: 0; backdrop-filter: blur(6px); z-index: 5;
   }
-  header h1 { font-size: 16px; letter-spacing: 2px; color: var(--accent); }
-  header .status { color: var(--dim); font-size: 11px; }
+  header h1 { font-size: 13px; letter-spacing: 3px; color: var(--accent); text-transform: uppercase; }
+  header .status { color: var(--dim); font-size: 11px; margin-left: auto; }
   #killbtn {
     background: transparent; color: var(--red); border: 1px solid var(--red);
     padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: inherit;
-    font-size: 12px; letter-spacing: 1px;
+    font-size: 11px; letter-spacing: 1px;
   }
   #killbtn.engaged { background: var(--red); color: #000; font-weight: bold; }
-  #orb {
-    width: 42px; height: 42px; border-radius: 50%; cursor: pointer; border: 2px solid var(--accent);
-    background: radial-gradient(circle at 35% 35%, #1e3a5f, #0a0e17); color: var(--accent);
-    font-size: 18px; transition: all .2s;
+  #orb, #wake {
+    width: 38px; height: 38px; border-radius: 50%; cursor: pointer; transition: all .2s;
+    font-size: 15px;
   }
-  #orb.rec {
-    border-color: var(--red); color: var(--red); animation: pulse 1s infinite;
-    box-shadow: 0 0 18px rgba(248,113,113,.6);
-  }
+  #orb { border: 2px solid var(--accent); background: radial-gradient(circle at 35% 35%, #1e3a5f, #0a0e17); color: var(--accent); }
+  #orb.rec { border-color: var(--red); color: var(--red); animation: pulse 1s infinite; box-shadow: 0 0 18px rgba(248,113,113,.6); }
   #orb.busy { border-color: var(--amber); color: var(--amber); animation: pulse 1.4s infinite; }
   @keyframes pulse { 50% { transform: scale(1.12); } }
-  #wake {
-    width: 42px; height: 42px; border-radius: 50%; cursor: pointer; font-size: 16px;
-    border: 2px solid var(--border); background: var(--panel2); color: var(--dim); transition: all .2s;
-  }
-  #wake.on {
-    border-color: var(--green); color: var(--green);
-    box-shadow: 0 0 12px rgba(52,211,153,.4); animation: pulse 2.5s infinite;
-  }
-  #voice-status { color: var(--dim); font-size: 11px; min-width: 180px; }
-  .grid {
-    display: grid; gap: 14px; padding: 16px 22px;
-    grid-template-columns: 1.2fr 1fr; grid-template-areas:
-      "agents approvals" "agents kpi" "activity tasks";
-  }
+  #wake { border: 2px solid var(--border); background: var(--panel2); color: var(--dim); }
+  #wake.on { border-color: var(--green); color: var(--green); box-shadow: 0 0 12px rgba(52,211,153,.4); animation: pulse 2.5s infinite; }
+  #voice-status { color: var(--dim); font-size: 10px; max-width: 220px; }
+
+  .wrap { padding: 16px 22px; display: grid; gap: 14px; }
+  .row-top { display: grid; grid-template-columns: 280px 1fr 260px; gap: 14px; }
   .panel {
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 14px 16px; overflow: hidden;
+    border-radius: 12px; padding: 14px 16px; overflow: hidden;
   }
   .panel h2 {
-    font-size: 11px; letter-spacing: 2px; color: var(--dim);
+    font-size: 10px; letter-spacing: 2.5px; color: var(--dim);
     margin-bottom: 12px; text-transform: uppercase;
   }
-  #agents { grid-area: agents; }
-  #approvals { grid-area: approvals; }
-  #kpi { grid-area: kpi; }
-  #activity { grid-area: activity; }
-  #tasks { grid-area: tasks; }
-  .agent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-  .agent-card {
-    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px;
+  .panel h2 .led { color: var(--accent); margin-right: 6px; }
+
+  /* security posture */
+  .sec-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 10px; margin-bottom: 7px; background: var(--panel2);
+    border: 1px solid var(--border); border-radius: 7px;
+    font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--text);
   }
-  .agent-card .name { font-size: 15px; font-weight: bold; text-transform: uppercase; }
-  .agent-card .role { color: var(--dim); font-size: 10px; margin: 4px 0 8px; min-height: 24px; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; letter-spacing: 1px; }
-  .WORKING { background: rgba(52,211,153,.15); color: var(--green); box-shadow: 0 0 8px rgba(52,211,153,.35); }
-  .WAITING { background: rgba(251,191,36,.15); color: var(--amber); }
-  .IDLE { background: rgba(107,122,148,.15); color: var(--dim); }
-  .cost { color: var(--purple); font-size: 11px; margin-top: 6px; }
+  .b-good { background: rgba(52,211,153,.13); color: var(--green); padding: 2px 9px; border-radius: 9px; font-size: 9px; letter-spacing: 1px; }
+  .b-warn { background: rgba(251,191,36,.13); color: var(--amber); padding: 2px 9px; border-radius: 9px; font-size: 9px; letter-spacing: 1px; }
+  .b-bad  { background: rgba(248,113,113,.16); color: var(--red); padding: 2px 9px; border-radius: 9px; font-size: 9px; letter-spacing: 1px; }
+  .sec-note { color: var(--green); font-size: 9px; letter-spacing: .5px; margin-top: 4px; }
+
+  /* directive + context */
+  .directive {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .directive .big { font-size: 17px; font-weight: bold; font-family: -apple-system, "Segoe UI", sans-serif; }
+  .ctx-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .ctx-head .who { font-size: 15px; font-weight: bold; text-transform: uppercase; }
+  .ctx-head .n { color: var(--accent); font-size: 11px; letter-spacing: 1px; }
+  .ctx-bar { height: 8px; border-radius: 5px; background: #131d31; overflow: hidden; margin-bottom: 10px; }
+  .ctx-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--pink), var(--purple)); border-radius: 5px; transition: width .6s; }
+  .ctx-last { color: var(--dim); font-size: 11px; }
+  .ctx-last b { color: var(--text); font-weight: normal; }
+
+  /* health */
+  .h-item { margin-bottom: 12px; }
+  .h-top { display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+  .h-top .v { color: var(--accent); }
+  .h-sub { color: var(--dim); font-size: 9px; margin-top: 2px; }
+  .h-bar { height: 6px; border-radius: 4px; background: #131d31; margin-top: 5px; overflow: hidden; }
+  .h-bar i { display: block; height: 100%; border-radius: 4px; transition: width .6s; }
+  .h-cpu i { background: var(--accent); } .h-ram i { background: var(--purple); } .h-disk i { background: var(--green); }
+  .h-cost { border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 4px;
+    display: flex; justify-content: space-between; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+  .h-cost .v { color: var(--amber); font-size: 13px; }
+
+  /* ops stats row */
+  .ops { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .ops .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .ops .lbl { color: var(--dim); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; }
+  .ops .num { font-size: 21px; margin-top: 4px; }
+  .ops .n-err { color: var(--red); } .ops .n-ok { color: var(--green); }
+
+  .row-mid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; }
+  .row-bot { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; }
+
+  /* chat */
+  .chat-row { display: flex; gap: 8px; }
+  .chat-row select, .chat-row input {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    font-family: inherit; font-size: 12px; padding: 9px 12px; border-radius: 8px; outline: none;
+  }
+  .chat-row input { flex: 1; }
+  .chat-row input:focus { border-color: var(--accent); }
+  .chat-row button {
+    background: rgba(56,189,248,.12); color: var(--accent); border: 1px solid var(--accent);
+    font-family: inherit; font-size: 12px; padding: 9px 16px; border-radius: 8px; cursor: pointer;
+  }
+  #chat-status { color: var(--dim); font-size: 11px; margin-top: 8px; min-height: 15px; }
+
   .approval-item {
     background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--amber);
-    border-radius: 6px; padding: 10px; margin-bottom: 8px;
+    border-radius: 7px; padding: 10px; margin-bottom: 8px;
   }
   .approval-item .meta { color: var(--dim); font-size: 11px; margin-bottom: 6px; }
   .approval-item button {
     font-family: inherit; font-size: 11px; padding: 4px 12px; border-radius: 5px;
-    cursor: pointer; margin-right: 6px; border: 1px solid;
+    cursor: pointer; margin-right: 6px; border: 1px solid; background: transparent;
   }
-  .btn-ok { background: transparent; color: var(--green); border-color: var(--green); }
-  .btn-no { background: transparent; color: var(--red); border-color: var(--red); }
-  .kpi-row { display: flex; gap: 20px; }
-  .kpi-box .num { font-size: 26px; color: var(--accent); }
-  .kpi-box .lbl { color: var(--dim); font-size: 10px; letter-spacing: 1px; }
-  .feed { max-height: 300px; overflow-y: auto; }
-  .feed-item { padding: 4px 0; border-bottom: 1px dashed #16203380; color: var(--dim); }
+  .btn-ok { color: var(--green); border-color: var(--green); }
+  .btn-no { color: var(--red); border-color: var(--red); }
+
+  .feed { max-height: 280px; overflow-y: auto; }
+  .feed-item { padding: 4px 0; border-bottom: 1px dashed #16203380; color: var(--dim); font-size: 11px; }
   .feed-item b { color: var(--text); }
   table { width: 100%; border-collapse: collapse; }
-  td { padding: 5px 6px; border-bottom: 1px dashed #16203380; }
+  td { padding: 5px 6px; border-bottom: 1px dashed #16203380; font-size: 12px; }
   .st-done { color: var(--green); } .st-waiting_approval { color: var(--amber); }
   .st-in_progress { color: var(--accent); } .st-failed { color: var(--red); }
   .empty { color: var(--dim); font-style: italic; }
+  @media (max-width: 1100px) {
+    .row-top { grid-template-columns: 1fr; }
+    .ops { grid-template-columns: repeat(3, 1fr); }
+    .row-mid, .row-bot { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
+
+<aside>
+  <div class="logo">
+    <div class="mark">🧠</div>
+    <div>
+      <div class="t1">Commander OS</div>
+      <div class="t2">Agentic Growth Ops</div>
+    </div>
+  </div>
+  <nav>
+    <a href="#" class="active">◈ Command Center</a>
+    <a href="#agents-side">◇ Agents</a>
+    <a href="#tasks">▤ Tasks</a>
+    <a href="#approvals">✓ Approvals</a>
+    <a href="#activity">≋ Activity</a>
+  </nav>
+  <div class="side-h" id="agents-side">Agents</div>
+  <div id="side-agents"></div>
+</aside>
+
+<main>
 <header>
-  <h1>🧠 COMMANDER OS</h1>
+  <h1>Command Center</h1>
   <button id="orb" title="กดค้างเพื่อพูด (Jarvis mode)">🎙</button>
   <button id="wake" title="เปิด/ปิด wake word — พูด 'คอมมานเดอร์' เพื่อสั่งงาน">👂</button>
   <span id="voice-status">กดค้างที่ 🎙 เพื่อสั่งงานด้วยเสียง</span>
   <span class="status" id="conn">connecting…</span>
   <button id="killbtn" onclick="toggleKill()">⏻ KILL SWITCH</button>
 </header>
-<div class="grid">
-  <div class="panel" id="agents"><h2>Agent Grid</h2><div class="agent-cards" id="agent-cards"></div></div>
-  <div class="panel" id="approvals"><h2>📋 Approval Inbox</h2><div id="approval-list"></div></div>
-  <div class="panel" id="kpi"><h2>📈 KPI</h2><div class="kpi-row" id="kpi-row"></div></div>
-  <div class="panel" id="activity"><h2>💬 Live Activity</h2><div class="feed" id="feed"></div></div>
-  <div class="panel" id="tasks"><h2>🗂 Tasks</h2><table id="task-table"></table></div>
+
+<div class="wrap">
+
+  <div class="row-top">
+    <div class="panel">
+      <h2><span class="led">●</span>Security Posture</h2>
+      <div id="sec-list"></div>
+      <div class="sec-note">● HUMAN-IN-THE-LOOP — ทุก action เสี่ยงต้องขออนุมัติ</div>
+    </div>
+
+    <div class="panel">
+      <h2><span class="led">●</span>Current Directive</h2>
+      <div class="directive"><div class="big" id="directive">—</div></div>
+      <h2><span class="led">●</span>Context Window</h2>
+      <div class="ctx-head">
+        <span class="who" id="ctx-agent">—</span>
+        <span class="n" id="ctx-tasks"></span>
+      </div>
+      <div class="ctx-bar"><i id="ctx-fill" style="width:0%"></i></div>
+      <div class="ctx-last">Last status: <b id="ctx-last">—</b></div>
+    </div>
+
+    <div class="panel">
+      <h2>System Health</h2>
+      <div class="h-item h-cpu">
+        <div class="h-top"><span>CPU</span><span class="v" id="cpu-v">—</span></div>
+        <div class="h-bar"><i id="cpu-b" style="width:0%"></i></div>
+      </div>
+      <div class="h-item h-ram">
+        <div class="h-top"><span>RAM</span><span class="v" id="ram-v">—</span></div>
+        <div class="h-sub" id="ram-s"></div>
+        <div class="h-bar"><i id="ram-b" style="width:0%"></i></div>
+      </div>
+      <div class="h-item h-disk">
+        <div class="h-top"><span>Disk</span><span class="v" id="disk-v">—</span></div>
+        <div class="h-sub" id="disk-s"></div>
+        <div class="h-bar"><i id="disk-b" style="width:0%"></i></div>
+      </div>
+      <div class="h-cost"><span>ค่า LLM วันนี้</span><span class="v" id="cost-v">฿0.00</span></div>
+    </div>
+  </div>
+
+  <div class="ops" id="ops-row"></div>
+
+  <div class="row-mid">
+    <div class="panel">
+      <h2>💬 Chat with an Agent</h2>
+      <div class="chat-row">
+        <select id="chat-agent"><option value="ceo">CEO</option></select>
+        <input id="chat-text" placeholder="พิมพ์คำสั่ง… (Enter เพื่อส่ง)" />
+        <button onclick="sendChat()">ส่ง ➤</button>
+      </div>
+      <div id="chat-status"></div>
+    </div>
+    <div class="panel" id="approvals">
+      <h2>📋 Approval Inbox</h2>
+      <div id="approval-list"></div>
+    </div>
+  </div>
+
+  <div class="row-bot">
+    <div class="panel" id="tasks"><h2>🗂 Tasks</h2><table id="task-table"></table></div>
+    <div class="panel" id="activity"><h2>≋ Live Activity</h2><div class="feed" id="feed"></div></div>
+  </div>
+
 </div>
+</main>
+
 <script>
 let killEngaged = false;
+const AGENT_ICON = { ceo: '👑', cmo: '📣', cfo: '💰', researcher: '🔎' };
+
+function fmt(n) { return Number(n || 0).toLocaleString('en-US'); }
 
 function render(s) {
   killEngaged = s.kill_switch;
@@ -127,13 +302,62 @@ function render(s) {
   kb.classList.toggle('engaged', killEngaged);
   kb.textContent = killEngaged ? '⏻ SYSTEM HALTED' : '⏻ KILL SWITCH';
 
-  document.getElementById('agent-cards').innerHTML = s.agents.map(a => `
-    <div class="agent-card">
-      <div class="name">${a.name}</div>
-      <div class="role">${a.role}</div>
-      <span class="badge ${a.status}">${a.status === 'WORKING' ? '⚡ ' : a.status === 'WAITING' ? '⏸ ' : '💤 '}${a.status}</span>
-      <div class="cost">฿${a.cost_today_thb.toFixed(2)} วันนี้ · ${a.model}</div>
+  // sidebar agent cards
+  document.getElementById('side-agents').innerHTML = s.agents.map(a => `
+    <div class="side-agent">
+      <div class="ic">${AGENT_ICON[a.name] || '🤖'}</div>
+      <div>
+        <div class="nm">${a.name}</div>
+        <div class="rl">${a.role}</div>
+      </div>
+      <span class="st pill p-${a.status}"><span class="dot" style="background:currentColor"></span>${a.status.toLowerCase()}</span>
     </div>`).join('');
+
+  // agent selector (keep selection)
+  const sel = document.getElementById('chat-agent');
+  const cur = sel.value;
+  sel.innerHTML = s.agents.map(a => `<option value="${a.name}">${a.name.toUpperCase()}</option>`).join('');
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+
+  // security posture
+  document.getElementById('sec-list').innerHTML = [
+    ['Kill Switch', killEngaged ? '<span class="b-bad">HALTED</span>' : '<span class="b-good">ARMED</span>'],
+    ['Approval Gate', s.approvals.length ? `<span class="b-warn">${s.approvals.length} PENDING</span>` : '<span class="b-good">CLEAR</span>'],
+    ['Local Data Permissions', '<span class="b-good">GOOD</span>'],
+    ['Audit Trail', '<span class="b-good">ON</span>'],
+  ].map(([k, v]) => `<div class="sec-item"><span>${k}</span>${v}</div>`).join('');
+
+  // directive + context window
+  const d = s.directive;
+  document.getElementById('directive').textContent =
+    d ? `${d.agent.toUpperCase()} · ${d.title}` : 'ยังไม่มีคำสั่ง — สั่งงานได้เลย';
+  const c = s.context;
+  document.getElementById('ctx-agent').textContent = c ? c.agent.toUpperCase() : 'IDLE';
+  document.getElementById('ctx-tasks').textContent = c ? `${c.open_tasks} TASKS` : '';
+  document.getElementById('ctx-fill').style.width = c ? Math.min(100, c.open_tasks * 20) + '%' : '0%';
+  document.getElementById('ctx-last').textContent = c && c.last_status ? c.last_status : '—';
+
+  // health
+  const h = s.health || {};
+  document.getElementById('cpu-v').textContent = (h.cpu_pct ?? 0) + '%';
+  document.getElementById('cpu-b').style.width = (h.cpu_pct ?? 0) + '%';
+  document.getElementById('ram-v').textContent = (h.ram_pct ?? 0) + '%';
+  document.getElementById('ram-b').style.width = (h.ram_pct ?? 0) + '%';
+  document.getElementById('ram-s').textContent = `${fmt(h.ram_used_mb)} / ${fmt(h.ram_total_mb)} MB`;
+  document.getElementById('disk-v').textContent = (h.disk_pct ?? 0) + '%';
+  document.getElementById('disk-b').style.width = (h.disk_pct ?? 0) + '%';
+  document.getElementById('disk-s').textContent = `${h.disk_used_gb} / ${h.disk_total_gb} GB`;
+  document.getElementById('cost-v').textContent = '฿' + (s.kpi.cost_today_thb || 0).toFixed(2);
+
+  // ops stats
+  const o = s.ops || {};
+  document.getElementById('ops-row').innerHTML = `
+    <div class="box"><div class="lbl">Integrity</div><div class="num n-ok">${o.integrity_pct ?? 100}%</div></div>
+    <div class="box"><div class="lbl">Agent Calls</div><div class="num">${fmt(o.agent_calls)}</div></div>
+    <div class="box"><div class="lbl">Messages</div><div class="num">${fmt(o.messages)}</div></div>
+    <div class="box"><div class="lbl">Tokens In</div><div class="num">${fmt(o.tokens_in)}</div></div>
+    <div class="box"><div class="lbl">Tokens Out</div><div class="num">${fmt(o.tokens_out)}</div></div>
+    <div class="box"><div class="lbl">Errors</div><div class="num ${o.errors ? 'n-err' : ''}">${fmt(o.errors)}</div></div>`;
 
   document.getElementById('approval-list').innerHTML = s.approvals.length === 0
     ? '<div class="empty">ไม่มีรายการรออนุมัติ</div>'
@@ -147,11 +371,6 @@ function render(s) {
         </div>
       </div>`).join('');
 
-  document.getElementById('kpi-row').innerHTML = `
-    <div class="kpi-box"><div class="num">${s.kpi.done_today}</div><div class="lbl">งานเสร็จวันนี้</div></div>
-    <div class="kpi-box"><div class="num">฿${s.kpi.cost_today_thb.toFixed(2)}</div><div class="lbl">ค่า LLM วันนี้</div></div>
-    <div class="kpi-box"><div class="num">${s.approvals.length}</div><div class="lbl">รออนุมัติ</div></div>`;
-
   document.getElementById('feed').innerHTML = s.activity.map(ev =>
     `<div class="feed-item">${ev.at ? ev.at.substring(11,19) : ''} <b>${ev.agent}</b> · ${ev.event}</div>`).join('')
     || '<div class="empty">ยังไม่มีกิจกรรม</div>';
@@ -161,6 +380,29 @@ function render(s) {
      <td class="st-${t.status}">${t.status}</td></tr>`).join('')
     || '<tr><td class="empty">ยังไม่มีงาน</td></tr>';
 }
+
+// ---------- chat with an agent ----------
+async function sendChat() {
+  const input = document.getElementById('chat-text');
+  const agent = document.getElementById('chat-agent').value;
+  const text = input.value.trim();
+  if (!text) return;
+  const payload = agent === 'ceo' ? text : `ให้ ${agent.toUpperCase()} ทำ: ${text}`;
+  const st = document.getElementById('chat-status');
+  st.textContent = '⏳ ส่งคำสั่ง…';
+  try {
+    const r = await fetch('/api/command', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: payload, source: 'dashboard'})
+    });
+    const j = await r.json();
+    st.textContent = r.ok ? `✅ task #${j.task_id} — ${agent.toUpperCase()} รับงานแล้ว` : `⚠️ ${JSON.stringify(j)}`;
+    if (r.ok) { watchTask = j.task_id; input.value = ''; }
+  } catch (e) { st.textContent = '⚠️ ' + e; }
+}
+document.getElementById('chat-text').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendChat();
+});
 
 async function decide(id, decision) {
   await fetch(`/api/approvals/${id}/decide`, {
