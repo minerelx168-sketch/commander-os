@@ -1,7 +1,8 @@
-"""Build the Commander LangGraph: ceo_plan -> cmo -> ceo_synthesize."""
+"""Build the Commander LangGraph: ceo_plan -> depts -> boardroom -> ceo_synthesize."""
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from .boardroom import boardroom
 from .ceo import ceo_plan, ceo_synthesize
 from .cfo import cfo_work
 from .cmo import cmo_work
@@ -25,6 +26,11 @@ def _route_after_cmo(state: CommanderState) -> str:
     return "cfo" if "cfo" in assigned else "ceo_synthesize"
 
 
+def _route_after_dept(state: CommanderState) -> str:
+    """2+ departments spoke → boardroom debate; otherwise straight to synthesis."""
+    return "boardroom" if len(state.get("department_results") or {}) >= 2 else "ceo_synthesize"
+
+
 def get_checkpointer():
     """MemorySaver for tests/dev; swap to PostgresSaver in production."""
     global _checkpointer
@@ -42,12 +48,14 @@ def build_graph(checkpointer=None):
     g.add_node("ceo_plan", ceo_plan)
     g.add_node("cmo", cmo_work)
     g.add_node("cfo", cfo_work)
+    g.add_node("boardroom", boardroom)
     g.add_node("ceo_synthesize", ceo_synthesize)
 
     g.add_edge(START, "ceo_plan")
     g.add_conditional_edges("ceo_plan", _route_after_plan, ["cmo", "cfo", "ceo_synthesize"])
     g.add_conditional_edges("cmo", _route_after_cmo, ["cfo", "ceo_synthesize"])
-    g.add_edge("cfo", "ceo_synthesize")
+    g.add_conditional_edges("cfo", _route_after_dept, ["boardroom", "ceo_synthesize"])
+    g.add_edge("boardroom", "ceo_synthesize")
     g.add_edge("ceo_synthesize", END)
 
     compiled = g.compile(checkpointer=checkpointer or get_checkpointer())

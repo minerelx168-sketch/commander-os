@@ -56,6 +56,9 @@ def ceo_synthesize(state: CommanderState) -> CommanderState:
     if state.get("pending_approval_id"):
         decision = state.get("approval_decision") or "pending"
         approval_note = f"\n[การอนุมัติ #{state['pending_approval_id']}: {decision}]"
+    board_note = ""
+    if state.get("ceo_decision"):
+        board_note = f"\n\nมติที่ประชุมบอร์ด (CEO ตัดสิน):\n{state['ceo_decision']}"
 
     SessionLocal = get_sessionmaker()
     with SessionLocal() as db:
@@ -66,7 +69,8 @@ def ceo_synthesize(state: CommanderState) -> CommanderState:
             system=CEO_SYNTH_SYSTEM,
             user=f"คำสั่งเดิม: {state['user_command']}\n\nผลจากแผนก:\n"
             + json.dumps(results, ensure_ascii=False)
-            + approval_note,
+            + approval_note
+            + board_note,
             task_id=state.get("task_id"),
         )
     _audit("ceo", state.get("task_id"), "report_created", {"report": report[:500]})

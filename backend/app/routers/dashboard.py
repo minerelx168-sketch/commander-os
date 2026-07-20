@@ -2,7 +2,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -149,6 +149,7 @@ def build_snapshot(db: Session) -> dict:
             {
                 "id": ev.id, "agent": ev.agent, "event": ev.event,
                 "at": ev.created_at.isoformat() if ev.created_at else None,
+                "detail_message": str((ev.detail or {}).get("message") or "")[:300] or None,
             }
             for ev in activity
         ],
@@ -165,6 +166,30 @@ def build_snapshot(db: Session) -> dict:
         "context": context,
         "health": system_health(),
     }
+
+
+@router.get("/api/activity/daily")
+def daily_activity(days: int = 7, db: Session = Depends(get_db)) -> dict:
+    """Audit trail grouped by day → department, so the owner sees who did what each day."""
+    since = datetime.combine(
+        datetime.now(timezone.utc).date() - timedelta(days=days - 1), time.min, tzinfo=timezone.utc
+    )
+    rows = db.scalars(
+        select(AuditLog).where(AuditLog.created_at >= since).order_by(AuditLog.id.desc())
+    ).all()
+    daily: dict[str, dict[str, list]] = {}
+    for ev in rows:
+        dt = ev.created_at
+        if dt and dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        day = dt.astimezone().date().isoformat() if dt else "unknown"
+        detail = ev.detail or {}
+        daily.setdefault(day, {}).setdefault(ev.agent, []).append({
+            "at": dt.isoformat() if dt else None,
+            "event": ev.event,
+            "summary": str(detail.get("message") or detail.get("report") or "")[:200],
+        })
+    return {"days": daily}
 
 
 @router.get("/api/snapshot")

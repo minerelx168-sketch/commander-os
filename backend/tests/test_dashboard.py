@@ -47,8 +47,10 @@ def test_dashboard_page(client):
     r = client.get("/dashboard")
     assert r.status_code == 200
     assert "Commander OS" in r.text
-    assert "Chat with an Agent" in r.text
+    assert "Jarvis" in r.text
     assert "System Health" in r.text
+    assert "Daily Activity" in r.text
+    assert "Boardroom" in r.text
 
 
 def test_kill_switch_blocks_commands(client, db):

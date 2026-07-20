@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     llm_model: str = "gemini-3.5-flash"
     llm_mock: bool = True
 
+    # per-agent overrides: "provider:model" (e.g. "anthropic:claude-fable-5").
+    # CEO thinks on Claude Fable 5 when an Anthropic key is present; falls back to default.
+    ceo_model: str = "anthropic:claude-fable-5"
+
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_mock: bool = True

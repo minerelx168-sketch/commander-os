@@ -32,12 +32,41 @@ MOCK_RESPONSES: dict[str, str] = {
         "การเงินสรุป: ค่าโฆษณารวม 6,000 บาท ค่า LLM สะสมต่ำ — "
         "Campaign B คุ้มสุด (ROAS 3.4) แนะนำคุมงบ Campaign A"
     ),
+    "boardroom_cmo": (
+        "CMO เห็นด้วยกับ CFO เรื่องคุมงบ Campaign A "
+        "แต่ขอคงงบ Campaign B ไว้เพราะ ROAS ยังโตต่อได้"
+    ),
+    "boardroom_cfo": (
+        "CFO เห็นต่างเล็กน้อย: เสนอย้ายงบ 10% จาก A ไป B "
+        "เพราะตัวเลข ROAS 3.4 คุ้มกว่าอย่างมีนัยสำคัญ"
+    ),
+    "ceo_decide": (
+        "มติ: อนุมัติย้ายงบ 10% จาก Campaign A ไป B ตามข้อเสนอ CFO "
+        "และให้ CMO ติดตาม ROAS รายวัน 7 วัน แล้วรายงานกลับ"
+    ),
 }
 
 
 def _mock_complete(purpose: str) -> tuple[str, int, int]:
     text = MOCK_RESPONSES.get(purpose, f"[MOCK:{purpose}]")
     return text, 500, 200
+
+
+def _resolve_model(settings, agent: str) -> tuple[str, str]:
+    """(provider, model) for an agent — per-agent override, else global default.
+
+    CEO runs on Claude Fable 5 (settings.ceo_model) when an anthropic key exists;
+    otherwise falls back to the global provider so the system never bricks.
+    """
+    override = getattr(settings, f"{agent}_model", "")
+    if override and ":" in override:
+        provider, model = override.split(":", 1)
+        key_ok = (provider == "anthropic" and settings.anthropic_api_key) or (
+            provider == "gemini" and settings.google_api_key
+        )
+        if key_ok:
+            return provider, model
+    return settings.llm_provider, settings.llm_model
 
 
 def complete(
@@ -54,12 +83,14 @@ def complete(
 
     if settings.llm_mock:
         text, in_tok, out_tok = _mock_complete(purpose)
+        model_used = "mock"
     else:
-        if settings.llm_provider == "gemini":
+        provider, model_used = _resolve_model(settings, agent)
+        if provider == "gemini":
             from langchain_google_genai import ChatGoogleGenerativeAI
 
             llm = ChatGoogleGenerativeAI(
-                model=settings.llm_model,
+                model=model_used,
                 google_api_key=settings.google_api_key,
                 max_output_tokens=4096,
             )
@@ -67,7 +98,7 @@ def complete(
             from langchain_anthropic import ChatAnthropic
 
             llm = ChatAnthropic(
-                model=settings.llm_model,
+                model=model_used,
                 api_key=settings.anthropic_api_key,
                 max_tokens=4096,
             )
@@ -85,7 +116,7 @@ def complete(
         CostEntry(
             agent=agent,
             task_id=task_id,
-            model=settings.llm_model if not settings.llm_mock else "mock",
+            model=model_used,
             input_tokens=in_tok,
             output_tokens=out_tok,
             cost_thb=cost_thb,

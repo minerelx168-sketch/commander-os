@@ -77,16 +77,31 @@
   }
   #killbtn.engaged { background: var(--red); color: #000; font-weight: bold; }
   #orb, #wake {
-    width: 38px; height: 38px; border-radius: 50%; cursor: pointer; transition: all .2s;
-    font-size: 15px;
+    border-radius: 50%; cursor: pointer; transition: all .2s;
   }
-  #orb { border: 2px solid var(--accent); background: radial-gradient(circle at 35% 35%, #1e3a5f, #0a0e17); color: var(--accent); }
-  #orb.rec { border-color: var(--red); color: var(--red); animation: pulse 1s infinite; box-shadow: 0 0 18px rgba(248,113,113,.6); }
+  #wake { width: 38px; height: 38px; font-size: 15px; }
+  /* Jarvis orb — center stage */
+  #orb {
+    width: 96px; height: 96px; font-size: 38px;
+    border: 3px solid var(--accent); color: var(--accent);
+    background: radial-gradient(circle at 35% 35%, #1e3a5f, #05080f);
+    box-shadow: 0 0 34px rgba(56,189,248,.35), inset 0 0 24px rgba(56,189,248,.15);
+    animation: breathe 3.5s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    50% { box-shadow: 0 0 50px rgba(56,189,248,.55), inset 0 0 30px rgba(56,189,248,.25); }
+  }
+  #orb.rec { border-color: var(--red); color: var(--red); animation: pulse 1s infinite; box-shadow: 0 0 34px rgba(248,113,113,.6); }
   #orb.busy { border-color: var(--amber); color: var(--amber); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 50% { transform: scale(1.12); } }
+  @keyframes pulse { 50% { transform: scale(1.08); } }
   #wake { border: 2px solid var(--border); background: var(--panel2); color: var(--dim); }
   #wake.on { border-color: var(--green); color: var(--green); box-shadow: 0 0 12px rgba(52,211,153,.4); animation: pulse 2.5s infinite; }
-  #voice-status { color: var(--dim); font-size: 10px; max-width: 220px; }
+  #voice-status { color: var(--dim); font-size: 11px; text-align: center; min-height: 15px; }
+  .jarvis {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    padding: 18px 16px 14px;
+  }
+  .jarvis .hint { color: var(--dim); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; }
 
   .wrap { padding: 16px 22px; display: grid; gap: 14px; }
   .row-top { display: grid; grid-template-columns: 280px 1fr 260px; gap: 14px; }
@@ -180,6 +195,22 @@
   .feed { max-height: 280px; overflow-y: auto; }
   .feed-item { padding: 4px 0; border-bottom: 1px dashed #16203380; color: var(--dim); font-size: 11px; }
   .feed-item b { color: var(--text); }
+  /* boardroom chat bubbles */
+  .board-msg {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 9px;
+    padding: 9px 12px; margin-bottom: 8px; font-size: 12px; position: relative;
+  }
+  .board-msg .who { color: var(--accent); font-size: 10px; letter-spacing: 1px; display: block; margin-bottom: 4px; }
+  .board-msg .ts { position: absolute; top: 9px; right: 12px; color: var(--dim); font-size: 9px; }
+  .board-msg.is-ceo { border-left: 3px solid var(--purple); }
+  .board-msg.is-ceo .who { color: var(--purple); }
+  /* daily activity grouped by day → dept */
+  .day-h { color: var(--accent); font-size: 11px; letter-spacing: 2px; margin: 10px 0 6px; text-transform: uppercase; }
+  .day-h:first-child { margin-top: 0; }
+  .dept-h { color: var(--text); font-size: 11px; font-weight: bold; margin: 6px 0 3px; text-transform: uppercase; }
+  .dept-h .cnt { color: var(--dim); font-weight: normal; }
+  .dept-ev { color: var(--dim); font-size: 11px; padding: 2px 0 2px 14px; border-left: 1px dashed var(--border); margin-left: 4px; }
+  .dept-ev b { color: var(--text); font-weight: normal; }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 5px 6px; border-bottom: 1px dashed #16203380; font-size: 12px; }
   .st-done { color: var(--green); } .st-waiting_approval { color: var(--amber); }
@@ -216,9 +247,7 @@
 <main>
 <header>
   <h1>Command Center</h1>
-  <button id="orb" title="กดค้างเพื่อพูด (Jarvis mode)">🎙</button>
   <button id="wake" title="เปิด/ปิด wake word — พูด 'คอมมานเดอร์' เพื่อสั่งงาน">👂</button>
-  <span id="voice-status">กดค้างที่ 🎙 เพื่อสั่งงานด้วยเสียง</span>
   <span class="status" id="conn">connecting…</span>
   <button id="killbtn" onclick="toggleKill()">⏻ KILL SWITCH</button>
 </header>
@@ -233,9 +262,19 @@
     </div>
 
     <div class="panel">
-      <h2><span class="led">●</span>Current Directive</h2>
+      <div class="jarvis">
+        <button id="orb" title="กดค้างเพื่อพูด (Jarvis mode)">🎙</button>
+        <div class="hint">Jarvis — กดค้างเพื่อพูด หรือพิมพ์ด้านล่าง</div>
+        <span id="voice-status"></span>
+      </div>
+      <div class="chat-row">
+        <select id="chat-agent"><option value="ceo">CEO</option></select>
+        <input id="chat-text" placeholder="พิมพ์คำสั่ง… (Enter เพื่อส่ง)" />
+        <button onclick="sendChat()">ส่ง ➤</button>
+      </div>
+      <div id="chat-status"></div>
+      <h2 style="margin-top:14px"><span class="led">●</span>Current Directive</h2>
       <div class="directive"><div class="big" id="directive">—</div></div>
-      <h2><span class="led">●</span>Context Window</h2>
       <div class="ctx-head">
         <span class="who" id="ctx-agent">—</span>
         <span class="n" id="ctx-tasks"></span>
@@ -267,14 +306,9 @@
   <div class="ops" id="ops-row"></div>
 
   <div class="row-mid">
-    <div class="panel">
-      <h2>💬 Chat with an Agent</h2>
-      <div class="chat-row">
-        <select id="chat-agent"><option value="ceo">CEO</option></select>
-        <input id="chat-text" placeholder="พิมพ์คำสั่ง… (Enter เพื่อส่ง)" />
-        <button onclick="sendChat()">ส่ง ➤</button>
-      </div>
-      <div id="chat-status"></div>
+    <div class="panel" id="daily">
+      <h2>📅 Daily Activity — แยกตามแผนก</h2>
+      <div class="feed" id="daily-feed" style="max-height:340px"></div>
     </div>
     <div class="panel" id="approvals">
       <h2>📋 Approval Inbox</h2>
@@ -284,7 +318,7 @@
 
   <div class="row-bot">
     <div class="panel" id="tasks"><h2>🗂 Tasks</h2><table id="task-table"></table></div>
-    <div class="panel" id="activity"><h2>≋ Live Activity</h2><div class="feed" id="feed"></div></div>
+    <div class="panel" id="activity"><h2>🏛 Boardroom — แผนกถกกัน, CEO ตัดสิน</h2><div class="feed" id="board-feed"></div></div>
   </div>
 
 </div>
@@ -371,9 +405,15 @@ function render(s) {
         </div>
       </div>`).join('');
 
-  document.getElementById('feed').innerHTML = s.activity.map(ev =>
-    `<div class="feed-item">${ev.at ? ev.at.substring(11,19) : ''} <b>${ev.agent}</b> · ${ev.event}</div>`).join('')
-    || '<div class="empty">ยังไม่มีกิจกรรม</div>';
+  document.getElementById('board-feed').innerHTML = s.activity
+    .filter(ev => ev.event.startsWith('boardroom_'))
+    .map(ev => `
+      <div class="board-msg ${ev.agent === 'ceo' ? 'is-ceo' : ''}">
+        <span class="who">${AGENT_ICON[ev.agent] || '🤖'} ${ev.agent.toUpperCase()}${ev.event === 'boardroom_decision' ? ' · มติ' : ''}</span>
+        <div>${ev.detail_message || ev.event}</div>
+        <span class="ts">${ev.at ? ev.at.substring(11,19) : ''}</span>
+      </div>`).join('')
+    || '<div class="empty">ยังไม่มีการประชุมบอร์ด — สั่งงานที่เกี่ยวทั้งการตลาดและการเงินเพื่อให้แผนกถกกัน</div>';
 
   document.getElementById('task-table').innerHTML = s.tasks.map(t =>
     `<tr><td>#${t.id}</td><td>${t.title}</td><td>${t.assigned_to}</td>
@@ -403,6 +443,29 @@ async function sendChat() {
 document.getElementById('chat-text').addEventListener('keydown', e => {
   if (e.key === 'Enter') sendChat();
 });
+
+// ---------- daily activity per department ----------
+const EVENT_TH = {
+  plan_created: 'วางแผน/แตกงาน', report_created: 'สรุปรายงาน', analysis_done: 'วิเคราะห์เสร็จ',
+  finance_analysis_done: 'วิเคราะห์การเงินเสร็จ', recommendation_approved: 'อนุมัติข้อเสนอ',
+  recommendation_rejected: 'ปฏิเสธข้อเสนอ', boardroom_comment: 'อภิปรายในบอร์ด', boardroom_decision: 'มติบอร์ด',
+};
+async function loadDaily() {
+  try {
+    const j = await (await fetch('/api/activity/daily?days=7')).json();
+    const days = Object.keys(j.days).sort().reverse();
+    document.getElementById('daily-feed').innerHTML = days.map(day => `
+      <div class="day-h">📅 ${day}</div>` +
+      Object.entries(j.days[day]).map(([dept, evs]) => `
+        <div class="dept-h">${AGENT_ICON[dept] || '🤖'} ${dept} <span class="cnt">· ${evs.length} กิจกรรม</span></div>` +
+        evs.slice(0, 6).map(e => `
+          <div class="dept-ev">${e.at ? e.at.substring(11,16) : ''} <b>${EVENT_TH[e.event] || e.event}</b>${e.summary ? ' — ' + e.summary : ''}</div>`).join('')
+      ).join('')
+    ).join('') || '<div class="empty">ยังไม่มีกิจกรรม</div>';
+  } catch (e) { /* keep old content */ }
+}
+loadDaily();
+setInterval(loadDaily, 30000);
 
 async function decide(id, decision) {
   await fetch(`/api/approvals/${id}/decide`, {
