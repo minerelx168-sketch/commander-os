@@ -28,6 +28,10 @@ MOCK_RESPONSES: dict[str, str] = {
         "วิเคราะห์แล้ว: แคมเปญ A มี CPA สูงกว่าเป้า 15% — "
         "แนะนำลดงบ 20% และมี recommendation PENDING ในระบบ meta-ads-agent"
     ),
+    "cfo_analyze": (
+        "การเงินสรุป: ค่าโฆษณารวม 6,000 บาท ค่า LLM สะสมต่ำ — "
+        "Campaign B คุ้มสุด (ROAS 3.4) แนะนำคุมงบ Campaign A"
+    ),
 }
 
 

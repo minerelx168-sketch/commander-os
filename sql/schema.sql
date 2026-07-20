@@ -60,5 +60,6 @@ CREATE TABLE IF NOT EXISTS cost_entries (
 
 INSERT INTO agents (name, role, model) VALUES
   ('ceo', 'Chief Executive Officer — แตกงาน มอบหมาย รวมรายงาน', 'claude-sonnet'),
-  ('cmo', 'Chief Marketing Officer — วิเคราะห์/จัดการ Meta Ads ผ่าน meta-ads-agent', 'claude-sonnet')
+  ('cmo', 'Chief Marketing Officer — วิเคราะห์/จัดการ Meta Ads ผ่าน meta-ads-agent', 'claude-sonnet'),
+  ('cfo', 'Chief Financial Officer — ค่าใช้จ่าย งบประมาณ ROI ต้นทุนระบบ AI', 'claude-sonnet')
 ON CONFLICT (name) DO NOTHING;

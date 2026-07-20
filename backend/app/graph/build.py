@@ -3,6 +3,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from .ceo import ceo_plan, ceo_synthesize
+from .cfo import cfo_work
 from .cmo import cmo_work
 from .state import CommanderState
 
@@ -11,10 +12,17 @@ _checkpointer = None
 
 
 def _route_after_plan(state: CommanderState) -> str:
-    plan = state.get("plan", [])
-    if any(t["assigned_to"] == "cmo" for t in plan):
+    assigned = {t["assigned_to"] for t in state.get("plan", [])}
+    if "cmo" in assigned:
         return "cmo"
+    if "cfo" in assigned:
+        return "cfo"
     return "ceo_synthesize"
+
+
+def _route_after_cmo(state: CommanderState) -> str:
+    assigned = {t["assigned_to"] for t in state.get("plan", [])}
+    return "cfo" if "cfo" in assigned else "ceo_synthesize"
 
 
 def get_checkpointer():
@@ -33,11 +41,13 @@ def build_graph(checkpointer=None):
     g = StateGraph(CommanderState)
     g.add_node("ceo_plan", ceo_plan)
     g.add_node("cmo", cmo_work)
+    g.add_node("cfo", cfo_work)
     g.add_node("ceo_synthesize", ceo_synthesize)
 
     g.add_edge(START, "ceo_plan")
-    g.add_conditional_edges("ceo_plan", _route_after_plan, ["cmo", "ceo_synthesize"])
-    g.add_edge("cmo", "ceo_synthesize")
+    g.add_conditional_edges("ceo_plan", _route_after_plan, ["cmo", "cfo", "ceo_synthesize"])
+    g.add_conditional_edges("cmo", _route_after_cmo, ["cfo", "ceo_synthesize"])
+    g.add_edge("cfo", "ceo_synthesize")
     g.add_edge("ceo_synthesize", END)
 
     compiled = g.compile(checkpointer=checkpointer or get_checkpointer())

@@ -39,6 +39,14 @@
   }
   #orb.busy { border-color: var(--amber); color: var(--amber); animation: pulse 1.4s infinite; }
   @keyframes pulse { 50% { transform: scale(1.12); } }
+  #wake {
+    width: 42px; height: 42px; border-radius: 50%; cursor: pointer; font-size: 16px;
+    border: 2px solid var(--border); background: var(--panel2); color: var(--dim); transition: all .2s;
+  }
+  #wake.on {
+    border-color: var(--green); color: var(--green);
+    box-shadow: 0 0 12px rgba(52,211,153,.4); animation: pulse 2.5s infinite;
+  }
   #voice-status { color: var(--dim); font-size: 11px; min-width: 180px; }
   .grid {
     display: grid; gap: 14px; padding: 16px 22px;
@@ -98,6 +106,7 @@
 <header>
   <h1>🧠 COMMANDER OS</h1>
   <button id="orb" title="กดค้างเพื่อพูด (Jarvis mode)">🎙</button>
+  <button id="wake" title="เปิด/ปิด wake word — พูด 'คอมมานเดอร์' เพื่อสั่งงาน">👂</button>
   <span id="voice-status">กดค้างที่ 🎙 เพื่อสั่งงานด้วยเสียง</span>
   <span class="status" id="conn">connecting…</span>
   <button id="killbtn" onclick="toggleKill()">⏻ KILL SWITCH</button>
@@ -234,6 +243,55 @@ async function maybeSpeak(tasks) {
 }
 const _origRender = render;
 render = s => { _origRender(s); maybeSpeak(s.tasks); };
+
+// ---------- Wake word: "คอมมานเดอร์" / "commander" (hands-free) ----------
+const wakeBtn = document.getElementById('wake');
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let wakeOn = false, rec = null;
+const WAKE_RE = /(คอมมานเดอร์|คอมมานเด้อ|commander)/i;
+
+function startWake() {
+  rec = new SR();
+  rec.lang = 'th-TH';
+  rec.continuous = true;
+  rec.interimResults = false;
+  rec.onresult = e => {
+    const said = e.results[e.results.length - 1][0].transcript.trim();
+    if (!WAKE_RE.test(said)) return;
+    const cmd = said.replace(WAKE_RE, '').replace(/^(เฮ้|เฮ้ย|hey|โอเค|ok)\s*/i, '').trim();
+    if (cmd.length < 4) {
+      vstatus.textContent = '👂 ว่าไงครับ? พูดคำสั่งต่อท้าย "คอมมานเดอร์" ได้เลย';
+      return;
+    }
+    vstatus.textContent = `💬 "${cmd}" → ส่งให้ CEO…`;
+    fetch('/api/command', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: cmd, source: 'voice'})
+    }).then(r => r.json()).then(j => {
+      watchTask = j.task_id;
+      vstatus.textContent = `💬 "${cmd}" → task #${j.task_id}`;
+    });
+  };
+  rec.onend = () => { if (wakeOn) rec.start(); };  // keep listening
+  rec.onerror = e => {
+    if (e.error === 'not-allowed') { toggleWake(); vstatus.textContent = '⚠️ ไม่ได้รับสิทธิ์ไมค์'; }
+  };
+  rec.start();
+}
+
+function toggleWake() {
+  if (!SR) { vstatus.textContent = '⚠️ เบราว์เซอร์นี้ไม่รองรับ wake word (ใช้ Chrome/Safari)'; return; }
+  wakeOn = !wakeOn;
+  wakeBtn.classList.toggle('on', wakeOn);
+  if (wakeOn) {
+    startWake();
+    vstatus.textContent = '👂 hands-free เปิดอยู่ — พูด "คอมมานเดอร์ + คำสั่ง"';
+  } else {
+    if (rec) rec.stop();
+    vstatus.textContent = 'กดค้างที่ 🎙 เพื่อสั่งงานด้วยเสียง';
+  }
+}
+wakeBtn.addEventListener('click', toggleWake);
 </script>
 </body>
 </html>
