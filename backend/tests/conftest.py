@@ -18,6 +18,14 @@ import app.models  # noqa: F401 — populate Base.metadata before create_all
 from app.database import Base
 
 
+@pytest.fixture(autouse=True)
+def _isolate_deliverables(tmp_path, monkeypatch):
+    """Never let tests write briefs into the real deliverables dir."""
+    from app.services import deliverable
+
+    monkeypatch.setattr(deliverable, "DELIVERABLES_DIR", tmp_path / "deliverables")
+
+
 @pytest.fixture()
 def db():
     engine = create_engine(

@@ -211,6 +211,20 @@
   .dept-h .cnt { color: var(--dim); font-weight: normal; }
   .dept-ev { color: var(--dim); font-size: 11px; padding: 2px 0 2px 14px; border-left: 1px dashed var(--border); margin-left: 4px; }
   .dept-ev b { color: var(--text); font-weight: normal; }
+  /* deliverables */
+  .brief-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 7px;
+    cursor: pointer; font-size: 12px;
+  }
+  .brief-item:hover { border-color: var(--accent); }
+  .brief-item .fn { color: var(--text); }
+  .brief-item .meta { color: var(--dim); font-size: 10px; margin-left: auto; }
+  #brief-view {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin-top: 10px; max-height: 420px; overflow-y: auto;
+    white-space: pre-wrap; font-size: 12px; color: var(--text); line-height: 1.55;
+  }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 5px 6px; border-bottom: 1px dashed #16203380; font-size: 12px; }
   .st-done { color: var(--green); } .st-waiting_approval { color: var(--amber); }
@@ -239,6 +253,7 @@
     <a href="#tasks">▤ Tasks</a>
     <a href="#approvals">✓ Approvals</a>
     <a href="#activity">≋ Activity</a>
+    <a href="#deliverables">📄 Deliverables</a>
   </nav>
   <div class="side-h" id="agents-side">Agents</div>
   <div id="side-agents"></div>
@@ -319,6 +334,12 @@
   <div class="row-bot">
     <div class="panel" id="tasks"><h2>🗂 Tasks</h2><table id="task-table"></table></div>
     <div class="panel" id="activity"><h2>🏛 Boardroom — แผนกถกกัน, CEO ตัดสิน</h2><div class="feed" id="board-feed"></div></div>
+  </div>
+
+  <div class="panel" id="deliverables">
+    <h2>📄 Deliverables — เอกสารสรุปต่อภารกิจ</h2>
+    <div id="brief-list"></div>
+    <pre id="brief-view" style="display:none"></pre>
   </div>
 
 </div>
@@ -466,6 +487,28 @@ async function loadDaily() {
 }
 loadDaily();
 setInterval(loadDaily, 30000);
+
+// ---------- deliverables ----------
+async function loadBriefs() {
+  try {
+    const j = await (await fetch('/api/deliverables')).json();
+    document.getElementById('brief-list').innerHTML = j.briefs.length === 0
+      ? '<div class="empty">ยังไม่มีเอกสาร — สั่งงานให้เสร็จ 1 ภารกิจแล้วเอกสารจะขึ้นที่นี่</div>'
+      : j.briefs.map(b => `
+        <div class="brief-item" onclick="openBrief('${b.filename}')">
+          <span>📄</span><span class="fn">${b.filename}</span>
+          <span class="meta">${b.size_kb} KB · ${b.modified.substring(0,16).replace('T',' ')}</span>
+        </div>`).join('');
+  } catch (e) { /* keep old content */ }
+}
+async function openBrief(fn) {
+  const v = document.getElementById('brief-view');
+  v.style.display = 'block';
+  v.textContent = 'กำลังโหลด…';
+  v.textContent = await (await fetch(`/api/deliverables/${encodeURIComponent(fn)}`)).text();
+}
+loadBriefs();
+setInterval(loadBriefs, 30000);
 
 async function decide(id, decision) {
   await fetch(`/api/approvals/${id}/decide`, {

@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 
 from .config import get_settings
-from .routers import approvals, commands, dashboard, reports, voice
+from .routers import approvals, commands, dashboard, deliverables, reports, voice
 
 logging.basicConfig(level=logging.INFO)
 
@@ -13,6 +13,7 @@ app.include_router(approvals.router)
 app.include_router(reports.router)
 app.include_router(dashboard.router)
 app.include_router(voice.router)
+app.include_router(deliverables.router)
 
 
 @app.on_event("startup")

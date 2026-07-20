@@ -34,10 +34,20 @@ def run_graph_bg(task_id: int, thread_id: str, text: str) -> None:
             notify_approval(intr)
         else:
             task.status = "done"
-            task.result = {"report": result.get("final_report", "")}
+            brief = _make_brief(task_id, text, result)
+            task.result = {"report": result.get("final_report", ""), "brief": brief}
             from ..services.telegram_bot import notify_report
             notify_report(result.get("final_report", ""))
         db.commit()
+
+
+def _make_brief(task_id: int, text: str, state: dict) -> str | None:
+    """Render the Markdown brief; never let deliverable errors fail the task."""
+    try:
+        from ..services.deliverable import build_brief
+        return build_brief(task_id, text, state)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def resume_graph_bg(task_id: int, thread_id: str, decision: str) -> None:
@@ -53,7 +63,8 @@ def resume_graph_bg(task_id: int, thread_id: str, decision: str) -> None:
         if task is None:
             return
         task.status = "done"
-        task.result = {"report": result.get("final_report", "")}
+        brief = _make_brief(task_id, task.description or task.title, result)
+        task.result = {"report": result.get("final_report", ""), "brief": brief}
         db.commit()
     from ..services.telegram_bot import notify_report
     notify_report(result.get("final_report", ""))
