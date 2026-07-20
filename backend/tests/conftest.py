@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.database as database
+import app.models  # noqa: F401 — populate Base.metadata before create_all
 from app.database import Base
 
 
