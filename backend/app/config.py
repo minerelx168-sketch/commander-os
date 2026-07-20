@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://commander:commander_pw@localhost:5433/commander_os"
 
     anthropic_api_key: str = ""
-    llm_model: str = "claude-sonnet-4-20250514"
+    google_api_key: str = ""
+    llm_provider: str = "gemini"  # anthropic | gemini
+    llm_model: str = "gemini-3.5-flash"
     llm_mock: bool = True
 
     telegram_bot_token: str = ""

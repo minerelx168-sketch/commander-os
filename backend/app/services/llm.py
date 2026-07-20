@@ -51,13 +51,22 @@ def complete(
     if settings.llm_mock:
         text, in_tok, out_tok = _mock_complete(purpose)
     else:
-        from langchain_anthropic import ChatAnthropic
+        if settings.llm_provider == "gemini":
+            from langchain_google_genai import ChatGoogleGenerativeAI
 
-        llm = ChatAnthropic(
-            model=settings.llm_model,
-            api_key=settings.anthropic_api_key,
-            max_tokens=4096,
-        )
+            llm = ChatGoogleGenerativeAI(
+                model=settings.llm_model,
+                google_api_key=settings.google_api_key,
+                max_output_tokens=4096,
+            )
+        else:
+            from langchain_anthropic import ChatAnthropic
+
+            llm = ChatAnthropic(
+                model=settings.llm_model,
+                api_key=settings.anthropic_api_key,
+                max_tokens=4096,
+            )
         msg = llm.invoke([("system", system), ("user", user)])
         text = msg.content if isinstance(msg.content, str) else str(msg.content)
         usage = getattr(msg, "usage_metadata", None) or {}

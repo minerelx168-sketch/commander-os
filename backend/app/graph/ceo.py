@@ -38,8 +38,11 @@ def ceo_plan(state: CommanderState) -> CommanderState:
             task_id=state.get("task_id"),
         )
     try:
-        plan = json.loads(raw).get("subtasks", [])
-    except json.JSONDecodeError:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):  # strip markdown fences (Gemini habit)
+            cleaned = cleaned.split("```")[1].removeprefix("json").strip()
+        plan = json.loads(cleaned).get("subtasks", [])
+    except (json.JSONDecodeError, IndexError):
         plan = []
     _audit("ceo", state.get("task_id"), "plan_created", {"subtasks": plan})
     return {"plan": plan}
