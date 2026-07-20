@@ -52,6 +52,25 @@ def _mock_complete(purpose: str) -> tuple[str, int, int]:
     return text, 500, 200
 
 
+def _extract_text(content) -> str:
+    """Normalize LLM message content to plain text.
+
+    Claude (Fable/Sonnet 5) returns a LIST of content blocks — possibly with
+    thinking blocks first; str() on that list leaks signatures into reports.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(p for p in parts if p).strip()
+    return str(content)
+
+
 def _resolve_model(settings, agent: str) -> tuple[str, str]:
     """(provider, model) for an agent — per-agent override, else global default.
 
@@ -103,7 +122,7 @@ def complete(
                 max_tokens=4096,
             )
         msg = llm.invoke([("system", system), ("user", user)])
-        text = msg.content if isinstance(msg.content, str) else str(msg.content)
+        text = _extract_text(msg.content)
         usage = getattr(msg, "usage_metadata", None) or {}
         in_tok = usage.get("input_tokens", 0)
         out_tok = usage.get("output_tokens", 0)

@@ -47,6 +47,20 @@ def test_ceo_model_falls_back_without_key(monkeypatch):
     assert _resolve_model(s, "ceo") == (s.llm_provider, s.llm_model)
 
 
+def test_extract_text_handles_claude_content_blocks():
+    from app.services.llm import _extract_text
+
+    assert _extract_text("plain") == "plain"
+    blocks = [
+        {"type": "thinking", "thinking": "secret", "signature": "CAIS..."},
+        {"type": "text", "text": "รายงานจริง"},
+        {"type": "text", "text": "บรรทัดสอง"},
+    ]
+    out = _extract_text(blocks)
+    assert out == "รายงานจริง\nบรรทัดสอง"
+    assert "signature" not in out and "secret" not in out
+
+
 def test_daily_activity_grouped_by_day_and_dept(client, db):
     from app.models import AuditLog
 
