@@ -70,8 +70,13 @@ def owner_gate(state: CommanderState) -> CommanderState:
         "approval_decision": decision,
     }
     if decision in ("approve", "reject"):
-        # forward to meta-ads-agent — it executes via Meta API (or its own mock)
-        outcome = meta_ads_client.decide_recommendation(rec["id"], decision)
+        # forward to meta-ads-agent — it executes via Meta API (or its own mock).
+        # Upstream failures (e.g. 409 = reco already decided in a previous task)
+        # must not brick the resume: record the outcome and move on to synthesis.
+        try:
+            outcome = meta_ads_client.decide_recommendation(rec["id"], decision)
+        except Exception as e:  # noqa: BLE001
+            outcome = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
         with SessionLocal() as db:
             db.add(AuditLog(agent="ceo", task_id=task_id,
                             event=f"recommendation_{decision}d",

@@ -69,6 +69,22 @@ def _make_brief(task_id: int, text: str, state: dict) -> str | None:
 
 
 def resume_graph_bg(task_id: int, thread_id: str, decision: str) -> None:
+    try:
+        _resume_graph(task_id, thread_id, decision)
+    except Exception as e:  # noqa: BLE001 — same guard as run_graph_bg: never leave a task stuck
+        log.exception("resume crashed for task %s", task_id)
+        SessionLocal = get_sessionmaker()
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            if task is not None and task.status == "waiting_approval":
+                task.status = "failed"
+                task.result = {"report": f"resume ล้มเหลว: {type(e).__name__} — {str(e)[:300]}"}
+                db.commit()
+        from ..services.telegram_bot import notify_report
+        notify_report(f"⚠️ งาน #{task_id} resume ล้มเหลว: {type(e).__name__} — {str(e)[:200]}")
+
+
+def _resume_graph(task_id: int, thread_id: str, decision: str) -> None:
     from langgraph.types import Command
 
     graph = build_graph()
