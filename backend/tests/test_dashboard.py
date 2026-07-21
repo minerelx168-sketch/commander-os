@@ -47,12 +47,14 @@ def test_dashboard_page(client):
     r = client.get("/dashboard")
     assert r.status_code == 200
     assert "Commander OS" in r.text
-    assert "Jarvis" in r.text
     assert "System Health" in r.text
-    # tab-based UI: Overview / Projects / Departments
-    assert "view-overview" in r.text
+    # Sureflow-style chat-first UI: Command Center / Projects / Departments
+    assert "view-chat" in r.text
     assert "view-projects" in r.text
     assert "view-departments" in r.text
+    assert "agent-strip" in r.text
+    assert "chat-feed" in r.text
+    assert "Command Center" in r.text
 
 
 def test_projects_api(client, db):
