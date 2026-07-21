@@ -1,4 +1,5 @@
 """Command router — entry point for owner commands (API/Telegram)."""
+import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends
@@ -9,10 +10,27 @@ from ..graph.build import build_graph
 from ..models import Task
 from ..schemas import CommandIn, CommandOut, TaskOut
 
+log = logging.getLogger("commander.commands")
 router = APIRouter(prefix="/api", tags=["commands"])
 
 
 def run_graph_bg(task_id: int, thread_id: str, text: str) -> None:
+    try:
+        _run_graph(task_id, thread_id, text)
+    except Exception as e:  # noqa: BLE001 — a crashed graph must NEVER leave a task stuck
+        log.exception("graph crashed for task %s", task_id)
+        SessionLocal = get_sessionmaker()
+        with SessionLocal() as db:
+            task = db.get(Task, task_id)
+            if task is not None and task.status == "in_progress":
+                task.status = "failed"
+                task.result = {"report": f"งานล้มเหลว: {type(e).__name__} — {str(e)[:300]}"}
+                db.commit()
+        from ..services.telegram_bot import notify_report
+        notify_report(f"⚠️ งาน #{task_id} ล้มเหลว: {type(e).__name__} — {str(e)[:200]}")
+
+
+def _run_graph(task_id: int, thread_id: str, text: str) -> None:
     graph = build_graph()
     config = {"configurable": {"thread_id": thread_id}}
     SessionLocal = get_sessionmaker()

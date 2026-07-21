@@ -21,6 +21,9 @@ services:
     env_file: ./backend/.env
     environment:
       DATABASE_URL: postgresql+psycopg://commander:commander_pw@postgres:5432/commander_os
+      META_AGENT_URL: http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8100:8100"
     depends_on:
