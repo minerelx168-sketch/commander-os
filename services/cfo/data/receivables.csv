@@ -1,0 +1,11 @@
+customer_id,project,principal,outstanding,due_date,days_overdue,status
+LN-1001,sinchai-refinance,300000,180000,2026-08-05,0,current
+LN-1002,sinchai-refinance,250000,140000,2026-08-12,0,current
+LN-1003,sinchai-refinance,500000,410000,2026-07-10,11,overdue
+LN-1004,sinchai-refinance,180000,180000,2026-06-15,36,overdue
+LN-1005,sinchai-refinance,420000,95000,2026-08-20,0,current
+LN-1006,sinchai-refinance,600000,600000,2026-05-30,52,overdue
+LN-1007,sinchai-refinance,150000,60000,2026-07-18,3,overdue
+LN-1008,sinchai-refinance,275000,275000,2026-08-28,0,current
+LN-1009,sinchai-refinance,340000,220000,2026-06-25,26,overdue
+LN-1010,sinchai-refinance,200000,200000,2026-04-15,97,overdue

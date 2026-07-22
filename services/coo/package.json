@@ -1,0 +1,25 @@
+{
+  "name": "coo-command",
+  "version": "0.1.0",
+  "description": "COO Command — ระบบสั่งการ AI Chief Operating Officer แบบอัตโนมัติ (autonomous back-office operations, agent loop, COO Operational Brief) ที่เชื่อมต่อกับ Manus LLM ได้",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "brief": "node scripts/run-brief.js",
+    "loop": "node scripts/run-loop.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "coo",
+    "agentic",
+    "automation",
+    "manus",
+    "llm",
+    "operations"
+  ],
+  "license": "MIT"
+}

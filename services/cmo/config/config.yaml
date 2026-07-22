@@ -1,0 +1,33 @@
+# ============================================================
+#  CMO Command System — Configuration
+#  ปรับค่าตรงนี้เพื่อกำหนดพฤติกรรมของ CMO agent
+# ============================================================
+
+# --- Gemini LLM ---
+gemini:
+  # ตั้งค่า API key ผ่าน environment variable: GEMINI_API_KEY
+  model: "gemini-2.0-flash"      # override ได้ด้วย env GEMINI_MODEL
+  temperature: 0.4
+  # ถ้าไม่มี API key ระบบจะ fallback ไปใช้ rule-based ideation ที่อิงข้อมูลจริง
+
+# --- เกณฑ์ตัดสินประสิทธิภาพ (thresholds) ---
+thresholds:
+  roas_kill: 1.5          # ROAS ต่ำกว่านี้ = พิจารณาหยุด/ลดงบ
+  roas_scale: 3.0         # ROAS สูงกว่านี้ (+ volume พอ) = พิจารณาเพิ่มงบ
+  cpa_ceiling: 400        # ต้นทุนต่อ conversion (บาท) เกินนี้ = ผลงานแย่
+  min_conversions: 10     # ข้อมูลน้อยกว่านี้ = sample เล็กเกินไป อย่าเพิ่งสั่ง (แค่ watch)
+  min_spend: 3000         # ใช้งบน้อยกว่านี้ = ยังไม่ตัดสิน
+
+# --- Guardrail การโยกงบ ---
+budget:
+  max_shift_pct: 0.30     # โยกงบต่อช่องทางได้สูงสุด 30% ต่อรอบ (กันสวิงแรง)
+  min_floor: 2000         # ห้ามลดงบต่ำกว่าเพดานนี้ (คงการมองเห็นตลาดไว้)
+  budget_neutral: true    # ผลรวมการโยกงบต้องเป็นกลาง (ตัดที่ไหน อัดที่นั่นเท่ากัน)
+  require_human_approval: true   # ทุกคำสั่งต้องรออนุมัติจากคน
+
+# --- Paths ---
+paths:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  reports_dir: "output/reports"
+  commands_dir: "output/commands"

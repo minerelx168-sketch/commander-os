@@ -1,0 +1,28 @@
+{
+  "name": "cfo-command",
+  "version": "1.0.0",
+  "description": "CFO Command — Autonomous AI Chief Financial Officer. Cash-flow radar, P&L analysis, proactive risk alerts, and asynchronous executive briefs powered by Claude.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "brief": "node src/cli.js brief",
+    "monitor": "node src/cli.js monitor",
+    "seed": "node src/cli.js seed"
+  },
+  "keywords": [
+    "cfo",
+    "finance",
+    "cash-flow",
+    "claude",
+    "agent",
+    "autonomous"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3"
+  }
+}

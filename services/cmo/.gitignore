@@ -1,0 +1,15 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# generated run artifacts (keep dirs via .gitkeep, ignore timestamped files)
+data/processed/clean_*.csv
+data/processed/metrics_*.csv
+output/reports/cmo_summary_*.md
+output/commands/command_queue_*.json

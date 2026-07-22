@@ -1,0 +1,19 @@
+{
+  "queue": [
+    {
+      "id": "DOC-9001",
+      "type": "pdpa_consent",
+      "customer": "คุณสมชาย ใจดี",
+      "accountId": "LN-1001",
+      "status": "pending"
+    },
+    {
+      "id": "DOC-9002",
+      "type": "loan_contract",
+      "customer": "บจก. รุ่งเรืองพาณิชย์",
+      "accountId": "LN-1003",
+      "status": "pending"
+    }
+  ],
+  "generated": []
+}

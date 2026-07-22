@@ -1,65 +1,58 @@
-# Commander OS 🧠
+# 👑 Commander OS — CEO Command Hub
 
-AI Commander Operating System — **AI CEO** รับคำสั่งจากเจ้าของ แตกงาน มอบหมายให้ AI ระดับ
-C-level ประจำแผนก แล้วรวมผลรายงานกลับ ทุก action ที่กระทบของจริงต้องผ่านการอนุมัติ
-(Human-in-the-Loop) ผ่าน **Telegram**
+**คุณคือ CEO** — สั่งการเองทั้งหมด แผนก C-level (CMO / CFO / COO / Datalyst) เป็น
+ที่ปรึกษาและมือทำงาน โดยแต่ละแผนกใช้โค้ดต้นแบบจาก repo ของคุณเอง และเลือกได้ว่า
+จะให้ AI ตัวไหน (Claude / Gemini / Manus) ขับเคลื่อนแผนกนั้น
 
-## Phase 1 scope
-
-- **CEO agent** — วางแผน (task decomposition), route ให้แผนก, สรุปรายงานภาษาไทย
-- **CMO agent** — วิเคราะห์ Meta Ads ผ่าน [meta-ads-agent](https://github.com/minerelx168-sketch/MetaAdsOptimization) REST API
-- **HITL approvals** — LangGraph `interrupt()` + คิวอนุมัติ + ปุ่ม ✅/❌ ใน Telegram
-- **Cost tracker** — บันทึก token/บาท ทุก LLM call ลง `cost_entries`
-- **Daily report** — สรุปงาน+ค่าใช้จ่ายส่ง Telegram (`python -m app.jobs.daily_report`)
+## โครงสร้าง
 
 ```
-Owner (Telegram/API)
-   └─▶ CEO (plan) ─▶ CMO (analyze via meta-ads-agent) ─▶ [interrupt: รออนุมัติ]
-                                                             │ approve/reject
-                                                             ▼
-                                          CEO (synthesize) ─▶ รายงานภาษาไทย ─▶ Telegram
+hub/            FastAPI hub + UI (port 8100) — หน้ารวมทุกอย่าง
+services/
+  cmo/          จาก minerelx168-sketch/CMO_command   (FastAPI, port 8201)
+  coo/          จาก minerelx168-sketch/COO_command   (Node,   port 8202)
+  cfo/          จาก minerelx168-sketch/CFO_command   (Node,   port 8203)
+  datalyst/     Data Analyst service (สร้างใหม่)      (FastAPI, port 8204)
+scripts/        start_all.sh, e2e_live.sh, set_default_providers.sh
 ```
 
-## Quick start
+## หน้า UI (http://localhost:8100)
+
+1. **⌘ Command Overall** — พิมพ์คำถามลงกล่อง → ทั้ง 4 C-level ตอบพร้อมกันเป็น
+   **tree diagram** (CEO บนสุด → แตกกิ่งลง 4 แผนก) แต่ละใบให้ มุมมอง / ผลดี /
+   ความเสี่ยง / คำแนะนำ ในมุมที่ตัวเองถนัด
+2. **📣 CMO** — สั่งงานจริง: ระบบดึงข้อมูลสดจาก service ของแผนก + บทเรียนสะสม
+   (LLM Learning) เข้า prompt แล้วให้ AI ลงมือทำ ผลงานถูกกลั่นเป็นบทเรียน
+   ป้อนกลับอัตโนมัติ ทำให้เก่งขึ้นเรื่อยๆ
+3. **💰 CFO / 🛰 COO / 📊 Datalyst** — หน้าเดียวกับ CMO ครบทุกแผนก
+4. **🤖 Agents** — dropdown เลือก AI provider ต่อแผนก: Claude (Anthropic) /
+   Gemini (Google) / Manus / Mock — สลับได้ทันที ไม่ต้อง restart
+
+## เริ่มใช้งาน
 
 ```bash
-# 1. Postgres
-docker compose up -d postgres
+# ครั้งแรก: ติดตั้ง dependencies
+cd hub && python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cd ../services/cmo && python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
+cd ../cfo && npm install
 
-# 2. Backend (MOCK mode — no keys needed)
-cd backend
-cp .env.example .env
-bash scripts/setup_venv.sh
-source .venv/bin/activate
-uvicorn app.main:app --port 8100
+# รันทั้งระบบ
+bash scripts/start_all.sh
+# เปิด http://localhost:8100
 
-# 3. Smoke test (in another shell)
-bash scripts/smoke.sh
+# ทดสอบ
+cd hub && .venv/bin/python -m pytest tests/ -q
 ```
 
-## Tests
+## API keys (`hub/.env`)
 
-```bash
-cd backend && source .venv/bin/activate && python -m pytest tests/ -v
-```
-
-## Going live
-
-แก้ `backend/.env`:
-
-| ตัวแปร | ค่า |
+| ตัวแปร | ใช้กับ |
 |---|---|
-| `LLM_MOCK=0` + `ANTHROPIC_API_KEY` | เปิดสมองจริง (Claude) |
-| `TELEGRAM_MOCK=0` + `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | bot จริง (คุยกับ @BotFather, หา chat_id จาก @userinfobot) |
-| `META_AGENT_MOCK=0` + `META_AGENT_URL` | ชี้ไปที่ meta-ads-agent ที่รันอยู่ (:8000) |
+| `ANTHROPIC_API_KEY` | Claude (claude-fable-5) |
+| `GOOGLE_API_KEY` | Gemini |
+| `MANUS_API_KEY` + `MANUS_API_URL` | Manus (OpenAI-compatible) |
 
-จากนั้นพิมพ์หาบอทใน Telegram ได้เลย เช่น *"วิเคราะห์แคมเปญวันนี้ มีอะไรต้องปรับไหม"*
-หรือ `/report` เพื่อดูรายงานประจำวัน
+ไม่มี key = provider นั้นขึ้น "no key" ในหน้า Agents และ fallback เป็น mock
 
-## Roadmap
-
-- Phase 2: Command Center dashboard (Next.js + WebSocket) + CFO
-- Phase 3: Voice (Jarvis mode — Whisper STT + Thai TTS) + COO
-- Phase 4: Wake word, CTO/CSO, model routing
-
-สถาปัตยกรรมเต็ม: `~/.hermes/plans/2026-07-19_ai-commander-os-architecture.md`
+> รูปแบบเดิม (LangGraph boardroom + Postgres) ถูกถอดออกทั้งหมด —
+> เก็บไว้ที่ branch `legacy-langgraph`

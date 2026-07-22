@@ -1,0 +1,15 @@
+date,project,direction,category,amount,status,description
+2026-07-24,sinchai-refinance,out,principal_disbursed,1200000,committed,Committed disbursement to refinance client (large)
+2026-07-25,sinchai-refinance,out,staff_salary,220000,scheduled,July payroll
+2026-07-28,sinchai-refinance,out,funding_cost,95000,scheduled,Interest due to funding partner
+2026-08-01,sinchai-refinance,out,office_rent,55000,scheduled,August office rent
+2026-07-26,sinchai-refinance,in,interest_income,175000,expected,Expected interest collection
+2026-07-26,sinchai-refinance,in,principal_collected,500000,expected,Expected principal repayments
+2026-08-02,sinchai-refinance,in,interest_income,180000,expected,Expected interest collection
+2026-08-05,sinchai-refinance,in,principal_collected,560000,expected,Expected principal repayments
+2026-07-23,baan-kaffe,out,cogs_ingredients,42000,scheduled,Supplier payment (beans & dairy)
+2026-07-25,baan-kaffe,out,staff_wages,40000,scheduled,Wages (second half)
+2026-07-30,baan-kaffe,out,equipment_loan,25000,scheduled,Equipment loan installment
+2026-08-01,baan-kaffe,out,rent,45000,scheduled,August shop rent
+2026-07-27,baan-kaffe,in,sales,120000,expected,Expected weekly sales
+2026-08-03,baan-kaffe,in,sales,125000,expected,Expected weekly sales

@@ -1,6 +1,11 @@
 .venv/
+node_modules/
 __pycache__/
 *.pyc
-.env
 .pytest_cache/
-deliverables/
+*.db
+.env
+logs/
+hub/memory/hub_store.json
+services/*/output/
+services/*/memory/*.json

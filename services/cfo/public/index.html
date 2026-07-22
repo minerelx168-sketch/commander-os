@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CFO Command — Autonomous Financial Operations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">₿</div>
+        <div>
+          <div class="brand-name">CFO Command</div>
+          <div class="brand-sub">AGENTIC FINANCE OPS</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a class="nav-item active" data-view="command">◧ Command Center</a>
+        <a class="nav-item" data-view="cashflow">≈ Cash Flow</a>
+        <a class="nav-item" data-view="pnl">▤ P&amp;L</a>
+        <a class="nav-item" data-view="alerts">⚑ Red Flags</a>
+        <a class="nav-item" data-view="receivables">◔ Receivables</a>
+        <a class="nav-item" data-view="memory">◇ Memory</a>
+      </nav>
+
+      <div class="agents-label">AGENTS</div>
+      <div id="agentList" class="agent-list"></div>
+
+      <div class="sidebar-foot">
+        <div id="connState" class="conn-pill">● checking…</div>
+        <div class="model-line" id="modelLine"></div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-label">CHAT WITH AN AGENT</div>
+        <div id="agentTiles" class="agent-tiles"></div>
+      </header>
+
+      <section class="content">
+        <!-- KPI row -->
+        <div id="kpis" class="kpis"></div>
+
+        <div class="grid">
+          <!-- Left column: brief + projects -->
+          <div class="col-left">
+            <div class="card brief-card">
+              <div class="card-head">
+                <div class="card-title">CFO Executive Financial Brief</div>
+                <div class="card-actions">
+                  <span id="briefSource" class="chip"></span>
+                  <button id="refreshBrief" class="btn-ghost">↻ Refresh</button>
+                </div>
+              </div>
+              <div id="briefBody" class="brief-body">กำลังโหลด…</div>
+            </div>
+
+            <div id="projectCards"></div>
+          </div>
+
+          <!-- Right column: chat -->
+          <div class="col-right">
+            <div class="card chat-card">
+              <div class="chat-head">
+                <div class="chat-avatar">₿</div>
+                <div>
+                  <div class="chat-name">CFO</div>
+                  <div class="chat-sub">#cfo-channel · Command Layer</div>
+                </div>
+                <div id="chatStatus" class="chat-status">● online</div>
+              </div>
+              <div id="chatLog" class="chat-log"></div>
+              <div class="chat-input">
+                <textarea id="chatInput" rows="1" placeholder="สั่งการ CFO… เช่น 'สรุปความเสี่ยงพอร์ตสินเชื่อ' — Enter เพื่อส่ง"></textarea>
+                <button id="chatSend" class="btn-send">SEND</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "as_of": "2026-07-21",
+  "projects": [
+    {
+      "id": "sinchai-refinance",
+      "name": "Sinchai Refinance",
+      "type": "lending",
+      "description": "ธุรกิจสินเชื่อ/รีไฟแนนซ์ — บริหารเงินทุนหมุนเวียนและติดตามยอดชำระ",
+      "opening_cash": 2450000,
+      "opening_cash_date": "2026-07-01"
+    },
+    {
+      "id": "baan-kaffe",
+      "name": "Baan Kaffe",
+      "type": "storefront",
+      "description": "ร้านกาแฟหน้าร้านจริง — บริหารต้นทุนคงที่และค่าใช้จ่ายปฏิบัติการ",
+      "opening_cash": 380000,
+      "opening_cash_date": "2026-07-01"
+    }
+  ]
+}

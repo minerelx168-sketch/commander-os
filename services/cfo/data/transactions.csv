@@ -1,0 +1,50 @@
+date,project,type,category,cost_type,pnl,amount,description
+2026-06-15,sinchai-refinance,income,interest_income,na,yes,712000,June interest income (monthly)
+2026-06-15,sinchai-refinance,income,fee_income,na,yes,118000,June origination & service fees
+2026-06-15,sinchai-refinance,income,principal_collected,na,no,1920000,June principal repayments collected
+2026-06-10,sinchai-refinance,expense,principal_disbursed,na,no,2350000,June new loans disbursed
+2026-06-01,sinchai-refinance,expense,office_rent,fixed,yes,55000,June office rent
+2026-06-25,sinchai-refinance,expense,staff_salary,fixed,yes,220000,June payroll
+2026-06-15,sinchai-refinance,expense,marketing,variable,yes,90000,June lead-generation ads
+2026-06-02,sinchai-refinance,expense,software,fixed,yes,12000,June SaaS & loan-management system
+2026-06-06,sinchai-refinance,expense,utilities,fixed,yes,8500,June utilities
+2026-06-14,sinchai-refinance,expense,collection_legal,variable,yes,20000,June collections & legal
+2026-06-28,sinchai-refinance,expense,funding_cost,variable,yes,94000,June interest paid to funding partner
+2026-07-05,sinchai-refinance,income,interest_income,na,yes,181000,Week 1 interest collected
+2026-07-12,sinchai-refinance,income,interest_income,na,yes,166000,Week 2 interest collected
+2026-07-19,sinchai-refinance,income,interest_income,na,yes,173000,Week 3 interest collected
+2026-07-08,sinchai-refinance,income,fee_income,na,yes,45000,Origination fees
+2026-07-15,sinchai-refinance,income,fee_income,na,yes,38000,Service fees
+2026-07-05,sinchai-refinance,income,principal_collected,na,no,520000,Principal repayments week 1
+2026-07-12,sinchai-refinance,income,principal_collected,na,no,480000,Principal repayments week 2
+2026-07-19,sinchai-refinance,income,principal_collected,na,no,610000,Principal repayments week 3
+2026-07-02,sinchai-refinance,expense,principal_disbursed,na,no,800000,New loans disbursed
+2026-07-09,sinchai-refinance,expense,principal_disbursed,na,no,750000,New loans disbursed
+2026-07-16,sinchai-refinance,expense,principal_disbursed,na,no,900000,New loans disbursed
+2026-07-01,sinchai-refinance,expense,office_rent,fixed,yes,55000,July office rent
+2026-07-02,sinchai-refinance,expense,software,fixed,yes,12000,July SaaS & loan-management system
+2026-07-06,sinchai-refinance,expense,utilities,fixed,yes,8200,July utilities
+2026-07-03,sinchai-refinance,expense,marketing,variable,yes,52000,Lead-gen campaign burst (new channel)
+2026-07-10,sinchai-refinance,expense,marketing,variable,yes,49000,Lead-gen campaign
+2026-07-17,sinchai-refinance,expense,marketing,variable,yes,58000,Lead-gen campaign scale-up
+2026-07-14,sinchai-refinance,expense,collection_legal,variable,yes,17000,Collections & legal
+2026-06-15,baan-kaffe,income,sales,na,yes,512000,June total sales
+2026-06-01,baan-kaffe,expense,rent,fixed,yes,45000,June shop rent
+2026-06-25,baan-kaffe,expense,staff_wages,fixed,yes,76000,June wages
+2026-06-15,baan-kaffe,expense,cogs_ingredients,variable,yes,88000,June ingredients & coffee beans
+2026-06-08,baan-kaffe,expense,utilities,fixed,yes,13500,June utilities
+2026-06-12,baan-kaffe,expense,maintenance,variable,yes,6000,June routine maintenance
+2026-06-06,baan-kaffe,expense,marketing,variable,yes,8000,June local promos
+2026-06-09,baan-kaffe,expense,packaging,variable,yes,12000,June cups & packaging
+2026-07-06,baan-kaffe,income,sales,na,yes,118000,Week 1 sales
+2026-07-13,baan-kaffe,income,sales,na,yes,132000,Week 2 sales
+2026-07-20,baan-kaffe,income,sales,na,yes,127000,Week 3 sales
+2026-07-01,baan-kaffe,expense,rent,fixed,yes,45000,July shop rent
+2026-07-05,baan-kaffe,expense,staff_wages,fixed,yes,38000,Wages (first half)
+2026-07-03,baan-kaffe,expense,cogs_ingredients,variable,yes,28000,Ingredients & coffee beans
+2026-07-10,baan-kaffe,expense,cogs_ingredients,variable,yes,31000,Ingredients & coffee beans
+2026-07-17,baan-kaffe,expense,cogs_ingredients,variable,yes,33000,Ingredients & coffee beans
+2026-07-08,baan-kaffe,expense,utilities,fixed,yes,14000,July utilities
+2026-07-12,baan-kaffe,expense,maintenance,variable,yes,47000,Espresso machine major repair + compressor
+2026-07-06,baan-kaffe,expense,marketing,variable,yes,9000,Local promos
+2026-07-09,baan-kaffe,expense,packaging,variable,yes,7000,Cups & packaging

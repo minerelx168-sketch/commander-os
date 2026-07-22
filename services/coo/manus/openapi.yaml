@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: COO Command API
+  version: 0.1.0
+  description: >
+    REST API ของ COO Command สำหรับให้ Manus LLM (หรือ LLM อื่นที่รองรับ tool-calling)
+    ค้นหาและเรียกใช้เครื่องมือปฏิบัติการหลังบ้าน และสั่งรัน agent loop
+    เพื่อออก COO Operational Brief
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: ตรวจสถานะบริการ
+      responses:
+        '200':
+          description: OK
+
+  /api/tools:
+    get:
+      operationId: listTools
+      summary: รายการเครื่องมือทั้งหมดพร้อม schema (ให้ Manus ค้นหา tools)
+      responses:
+        '200':
+          description: รายการ tools + function-calling schemas
+
+  /api/tools/{name}:
+    post:
+      operationId: callTool
+      summary: เรียกใช้เครื่องมือหนึ่งตัว
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: >
+            ชื่อเครื่องมือ เช่น pipeline_check, pipeline_send_reminder,
+            document_generate, document_list, announcement_schedule,
+            announcement_dispatch, announcement_list, coo_brief
+      security:
+        - CooKey: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: พารามิเตอร์ของเครื่องมือ (ดูจาก /api/tools)
+      responses:
+        '200':
+          description: ผลลัพธ์การเรียกเครื่องมือ
+        '400':
+          description: พารามิเตอร์ผิดหรือเครื่องมือทำงานล้มเหลว
+        '401':
+          description: unauthorized
+
+  /api/agent/run:
+    post:
+      operationId: runAgent
+      summary: สั่งรัน COO agent loop หนึ่งรอบ แล้วคืน COO Operational Brief
+      security:
+        - CooKey: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                directive:
+                  type: string
+                  description: คำสั่งงานสำหรับรอบนี้ (ไม่ใส่ = รอบปฏิบัติการประจำ)
+                provider:
+                  type: string
+                  enum: [mock, manus]
+                  description: เลือก LLM provider สำหรับรอบนี้
+      responses:
+        '200':
+          description: ผลการทำงาน + brief
+
+  /api/state:
+    get:
+      operationId: getState
+      summary: สถานะรวมสำหรับ dashboard (pipeline, เอกสาร, ประกาศ, log, brief ล่าสุด)
+      responses:
+        '200':
+          description: state
+
+  /api/brief/latest:
+    get:
+      operationId: latestBrief
+      summary: ดึง COO Operational Brief ล่าสุด
+      responses:
+        '200':
+          description: brief
+
+components:
+  securitySchemes:
+    CooKey:
+      type: apiKey
+      in: header
+      name: x-coo-key

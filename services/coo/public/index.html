@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>COO Command — Agentic Operations</title>
+<style>
+  :root {
+    --bg: #0a0e1a; --panel: #111726; --panel2: #0d1320; --border: #1e2a44;
+    --text: #dbe4f5; --muted: #7f8db0; --accent: #6d8bff; --green: #37d69a;
+    --amber: #ffb547; --red: #ff5c72; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(1200px 600px at 70% -10%, #16203a 0%, var(--bg) 55%); color: var(--text); }
+  header { display: flex; align-items: center; gap: 14px; padding: 18px 26px; border-bottom: 1px solid var(--border); }
+  .logo { width: 40px; height: 40px; border-radius: 11px;
+    background: linear-gradient(135deg, #6d8bff, #37d69a); display: grid; place-items: center; font-size: 20px; }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .3px; }
+  header .sub { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 2px; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 22px; }
+  .agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .agent { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+  .agent .name { font-weight: 600; font-size: 13px; }
+  .agent .role { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px; margin-top: 2px; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--green);
+    background: rgba(55,214,154,.1); border: 1px solid rgba(55,214,154,.25); padding: 2px 8px; border-radius: 20px; float: right; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .row:last-child { border-bottom: none; }
+  .muted { color: var(--muted); }
+  .pill { font-size: 10px; padding: 2px 9px; border-radius: 20px; font-weight: 600; }
+  .pill.over { background: rgba(255,92,114,.12); color: var(--red); }
+  .pill.ok { background: rgba(55,214,154,.12); color: var(--green); }
+  .pill.warn { background: rgba(255,181,71,.12); color: var(--amber); }
+  button { background: linear-gradient(135deg, #6d8bff, #5a74e8); color: #fff; border: none;
+    padding: 11px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .controls { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; flex-wrap: wrap; }
+  pre { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+    white-space: pre-wrap; font-size: 12.5px; line-height: 1.7; max-height: 460px; overflow: auto; margin: 0; }
+  .stat { display: flex; gap: 16px; margin-bottom: 4px; }
+  .stat .box { flex: 1; background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .stat .n { font-size: 22px; font-weight: 700; }
+  .stat .l { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 3px; }
+  .logline { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; padding: 3px 0; }
+  .provider { font-size: 11px; color: var(--muted); }
+  .provider b { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🛰️</div>
+  <div>
+    <h1>COO Command</h1>
+    <div class="sub">Agentic Back-Office Operations</div>
+  </div>
+  <div style="margin-left:auto" class="provider">LLM provider: <b id="provider">—</b></div>
+</header>
+
+<div class="wrap">
+  <div class="agents" id="agents"></div>
+
+  <div class="controls">
+    <button id="runBtn">▶ รันรอบปฏิบัติการ (Run COO Agent)</button>
+    <button class="ghost" id="refreshBtn">↻ รีเฟรช</button>
+    <button class="ghost" id="resetBtn">⟲ รีเซ็ตข้อมูล</button>
+    <span class="muted" id="status"></span>
+  </div>
+
+  <div class="stat">
+    <div class="box"><div class="n" id="s-over">—</div><div class="l">บัญชีเกินกำหนด</div></div>
+    <div class="box"><div class="n" id="s-amt">—</div><div class="l">ยอดค้างรวม (บาท)</div></div>
+    <div class="box"><div class="n" id="s-doc">—</div><div class="l">เอกสารรอสร้าง</div></div>
+    <div class="box"><div class="n" id="s-ann">—</div><div class="l">ประกาศที่ตั้งไว้</div></div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <h2>💳 Pipeline — บัญชีเกินกำหนดชำระ</h2>
+        <div id="overdue"></div>
+      </div>
+      <div class="card">
+        <h2>📄 เอกสาร & 📢 ประกาศ</h2>
+        <div id="docs"></div>
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h2>📋 COO Operational Brief ล่าสุด</h2>
+        <pre id="brief">— ยังไม่มี brief กด "รันรอบปฏิบัติการ" เพื่อสร้าง —</pre>
+      </div>
+      <div class="card">
+        <h2>🖥️ System Log</h2>
+        <div id="logs"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const AGENTS = [
+  { name: 'COO', role: 'Command Layer', icon: '🛰️' },
+  { name: 'Documents', role: 'Compliance', icon: '📄' },
+  { name: 'Pipeline', role: 'Revenue Ops', icon: '💳' },
+  { name: 'Announce', role: 'Facility', icon: '📢' },
+  { name: 'Reporter', role: 'Async Brief', icon: '📋' },
+];
+document.getElementById('agents').innerHTML = AGENTS.map(a => `
+  <div class="agent">
+    <span class="badge"><span class="dot"></span>working</span>
+    <div class="name">${a.icon} ${a.name}</div>
+    <div class="role">${a.role}</div>
+  </div>`).join('');
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => (n ?? 0).toLocaleString('th-TH');
+
+async function refresh() {
+  const r = await fetch('/api/state'); const s = await r.json();
+  $('provider').textContent = s.provider;
+  const p = s.pipeline || {};
+  $('s-over').textContent = fmt(p.overdueCount);
+  $('s-amt').textContent = fmt(p.totalOverdueAmount);
+  $('s-doc').textContent = fmt((s.documents?.pending || []).length);
+  $('s-ann').textContent = fmt((s.announcements?.scheduled || []).length);
+
+  $('overdue').innerHTML = (p.overdue || []).length
+    ? p.overdue.map(o => `<div class="row"><span>${o.customer} <span class="muted">(${o.id})</span></span>
+        <span><span class="pill over">เกิน ${o.overdueDays} วัน</span> &nbsp;${fmt(o.installment)} ฿</span></div>`).join('')
+    : '<div class="muted">ไม่มีบัญชีเกินกำหนด</div>';
+
+  const docs = s.documents || {}; const ann = s.announcements || {};
+  $('docs').innerHTML =
+    (docs.pending || []).map(d => `<div class="row"><span>📄 ${d.customer}</span><span class="pill warn">${d.type}</span></div>`).join('') +
+    (docs.generated || []).slice(-3).map(d => `<div class="row"><span class="muted">✓ ${d.filename}</span><span class="pill ok">สร้างแล้ว</span></div>`).join('') +
+    (ann.scheduled || []).map(a => `<div class="row"><span>📢 ${a.title}</span><span class="pill warn">ตั้งเวลา</span></div>`).join('') || '<div class="muted">—</div>';
+
+  if (s.latestBrief) $('brief').textContent = s.latestBrief.text;
+  $('logs').innerHTML = (s.logs || []).slice(-14).reverse()
+    .map(l => `<div class="logline">[${l.level}] (${l.scope}) ${l.message}</div>`).join('');
+}
+
+$('runBtn').onclick = async () => {
+  const btn = $('runBtn'); btn.disabled = true; $('status').textContent = 'กำลังรัน agent loop...';
+  try {
+    const r = await fetch('/api/agent/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const data = await r.json();
+    $('brief').textContent = data.brief.text;
+    $('status').textContent = `เสร็จ: ${data.actions.length} action, ${data.brief.blockers.length} blocker`;
+  } catch (e) { $('status').textContent = 'ผิดพลาด: ' + e.message; }
+  btn.disabled = false; refresh();
+};
+$('refreshBtn').onclick = refresh;
+$('resetBtn').onclick = async () => { await fetch('/api/reset', { method: 'POST' }); $('brief').textContent = '— รีเซ็ตแล้ว —'; refresh(); };
+
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

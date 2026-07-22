@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CMO Command Center</title>
+<style>
+  :root{
+    --bg:#070b16; --panel:#0d1424; --panel2:#111a2e; --line:#1c2740;
+    --text:#e6edf7; --muted:#8493ad; --accent:#6c7bff; --accent2:#7c5cff;
+    --green:#39d98a; --amber:#ffb020; --red:#ff5c72; --chip:#16203a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif;
+    background:radial-gradient(1200px 600px at 70% -10%,#12203f 0%,var(--bg) 55%);color:var(--text);height:100vh;overflow:hidden}
+  .app{display:grid;grid-template-columns:236px 1fr;height:100vh}
+  /* sidebar */
+  .side{background:linear-gradient(180deg,#0b1120,#080d18);border-right:1px solid var(--line);padding:18px 14px;overflow:auto}
+  .brand{display:flex;gap:10px;align-items:center;margin-bottom:22px}
+  .brand .logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:18px}
+  .brand h1{font-size:15px;margin:0;letter-spacing:.2px}
+  .brand small{color:var(--muted);font-size:10px;letter-spacing:1.5px;text-transform:uppercase}
+  .nav a{display:flex;gap:10px;align-items:center;color:var(--muted);text-decoration:none;padding:9px 10px;border-radius:8px;font-size:13px;margin-bottom:2px}
+  .nav a.active,.nav a:hover{background:var(--panel2);color:var(--text)}
+  .sec{color:var(--muted);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;margin:18px 6px 8px}
+  .agent-mini{display:flex;justify-content:space-between;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:8px 10px;margin-bottom:6px}
+  .agent-mini b{font-size:12px} .agent-mini small{color:var(--muted);font-size:10px;display:block;text-transform:uppercase;letter-spacing:.5px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  .dot.idle{background:#4a5878;box-shadow:none}
+  .pill{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--green)}
+  .pill.idle{color:var(--muted)}
+  /* main */
+  .main{display:flex;flex-direction:column;overflow:hidden}
+  .topbar{padding:16px 22px 8px;font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase}
+  .cards{display:flex;gap:12px;padding:4px 22px 14px;overflow-x:auto}
+  .card{min-width:170px;background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;padding:14px}
+  .card.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset,0 8px 30px -18px var(--accent)}
+  .card .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}
+  .ico{width:30px;height:30px;border-radius:8px;background:var(--chip);display:grid;place-items:center;font-size:15px}
+  .card b{font-size:14px} .card small{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px}
+  .content{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;padding:0 22px 20px;overflow:hidden;flex:1}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
+  .box h3{margin:0;padding:13px 16px;border-bottom:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+  .btn{background:linear-gradient(135deg,var(--accent),var(--accent2));border:0;color:#fff;padding:7px 13px;border-radius:8px;font-size:12px;cursor:pointer}
+  .btn.ghost{background:var(--chip);color:var(--text)}
+  /* chat */
+  .chat{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:82%;padding:10px 13px;border-radius:12px;font-size:13px;line-height:1.5;white-space:pre-wrap}
+  .msg.me{align-self:flex-end;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+  .msg.cmo{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}
+  .msg .who{font-size:10px;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:1px}
+  .composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+  .composer input{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:10px 12px;font-size:13px;outline:none}
+  /* right column */
+  .right{display:flex;flex-direction:column;gap:16px;overflow:hidden}
+  .queue{overflow:auto;padding:10px 14px;font-size:12px}
+  .cmd{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px;background:var(--panel2)}
+  .cmd .h{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+  .tag{font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600}
+  .tag.INCREASE{background:rgba(57,217,138,.15);color:var(--green)}
+  .tag.DECREASE{background:rgba(255,176,32,.15);color:var(--amber)}
+  .tag.PAUSE{background:rgba(255,92,114,.15);color:var(--red)}
+  .cmd small{color:var(--muted)}
+  .report{overflow:auto;padding:14px 16px;font-size:12px;line-height:1.6}
+  .report h1{font-size:15px} .report h2{font-size:13px;color:var(--accent)} .report h3{font-size:12px;border:0;padding:6px 0}
+  .report table{border-collapse:collapse;width:100%;margin:6px 0}
+  .report th,.report td{border:1px solid var(--line);padding:4px 7px;text-align:left;font-size:11px}
+  .report code{background:var(--chip);padding:1px 5px;border-radius:4px}
+  .empty{color:var(--muted);font-size:12px;padding:14px}
+  .typing{color:var(--muted);font-size:12px;font-style:italic}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">◆</div>
+      <div><h1>CMO Command</h1><small>Agentic Growth Ops</small></div>
+    </div>
+    <nav class="nav">
+      <a class="active">▦ Command Center</a>
+      <a>◇ Agents</a>
+      <a>▤ Tasks</a>
+      <a>◷ Schedule</a>
+      <a>⌘ Tools</a>
+      <a>⇄ Lead Pipeline</a>
+      <a>✦ Content</a>
+      <a>❖ Knowledge Vault</a>
+    </nav>
+    <div class="sec">Agents</div>
+    <div id="agentMini"></div>
+  </aside>
+
+  <!-- MAIN -->
+  <section class="main">
+    <div class="topbar">Chat with an Agent</div>
+    <div class="cards" id="cards"></div>
+
+    <div class="content">
+      <!-- chat -->
+      <div class="box">
+        <h3><span>📣 CMO · <span style="color:var(--muted)">#cmo-channel · Market Voice</span></span>
+          <button class="btn" onclick="runAnalysis()">▶ Run Analysis</button></h3>
+        <div class="chat" id="chat"></div>
+        <div class="composer">
+          <input id="input" placeholder="สั่งงาน CMO… เช่น 'ช่องทางไหนควรหยุด?' (Enter เพื่อส่ง)"
+                 onkeydown="if(event.key==='Enter')send()"/>
+          <button class="btn" onclick="send()">Send</button>
+        </div>
+      </div>
+
+      <!-- right column: queue + report -->
+      <div class="right">
+        <div class="box" style="flex:0 0 42%">
+          <h3><span>🗂️ Command Queue <span style="color:var(--muted)" id="qcount"></span></span>
+            <span class="tag" style="background:var(--chip);color:var(--amber)">PENDING APPROVAL</span></h3>
+          <div class="queue" id="queue"><div class="empty">ยังไม่มีคำสั่ง — กด Run Analysis</div></div>
+        </div>
+        <div class="box" style="flex:1">
+          <h3>📊 CMO Executive Command Summary</h3>
+          <div class="report" id="report"><div class="empty">ยังไม่มีรายงาน</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let selected = "CMO";
+
+// ---- tiny markdown renderer (headings, tables, bold, code, lists) ----
+function md(src){
+  const lines = src.split("\n"); let html=""; let inTable=false;
+  const inline = s => s
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")
+    .replace(/`(.+?)`/g,"<code>$1</code>");
+  for(let i=0;i<lines.length;i++){
+    let l=lines[i];
+    if(/^\|(.+)\|$/.test(l)){
+      const cells=l.split("|").slice(1,-1).map(c=>c.trim());
+      const isSep=cells.every(c=>/^:?-+:?$/.test(c));
+      if(isSep) continue;
+      if(!inTable){html+="<table>";inTable=true;
+        html+="<tr>"+cells.map(c=>"<th>"+inline(c)+"</th>").join("")+"</tr>";}
+      else html+="<tr>"+cells.map(c=>"<td>"+inline(c)+"</td>").join("")+"</tr>";
+      continue;
+    } else if(inTable){html+="</table>";inTable=false;}
+    if(/^### /.test(l)) html+="<h3>"+inline(l.slice(4))+"</h3>";
+    else if(/^## /.test(l)) html+="<h2>"+inline(l.slice(3))+"</h2>";
+    else if(/^# /.test(l)) html+="<h1>"+inline(l.slice(2))+"</h1>";
+    else if(/^> /.test(l)) html+="<div style='color:var(--muted)'>"+inline(l.slice(2))+"</div>";
+    else if(/^- /.test(l)) html+="<div>• "+inline(l.slice(2))+"</div>";
+    else if(/^---/.test(l)) html+="<hr style='border-color:var(--line)'>";
+    else if(l.trim()==="") html+="<div style='height:6px'></div>";
+    else html+="<div>"+inline(l)+"</div>";
+  }
+  if(inTable)html+="</table>";
+  return html;
+}
+
+function renderAgents(agents){
+  $("#agentMini").innerHTML = agents.map(a=>`
+    <div class="agent-mini">
+      <div><b>${a.name}</b><small>${a.role}</small></div>
+      <div class="pill ${a.status==='working'?'':'idle'}"><span class="dot ${a.status==='working'?'':'idle'}"></span>${a.status}</div>
+    </div>`).join("");
+  $("#cards").innerHTML = agents.map(a=>`
+    <div class="card ${a.name===selected?'sel':''}" ${a.live?`onclick="selectAgent('${a.name}')"`:''} style="${a.live?'':'opacity:.55'}">
+      <div class="top"><div class="ico">${a.icon}</div>
+        <div class="pill ${a.status==='working'?'':'idle'}"><span class="dot ${a.status==='working'?'':'idle'}"></span>${a.status}</div></div>
+      <b>${a.name}</b><br><small>${a.role}</small>
+    </div>`).join("");
+}
+function selectAgent(n){ if(n==='CMO'){selected=n; load();} }
+
+function renderQueue(q){
+  const cmds=(q&&q.commands)||[];
+  $("#qcount").textContent = cmds.length? `(${cmds.length})`:"";
+  if(!cmds.length){$("#queue").innerHTML='<div class="empty">ไม่มีคำสั่งค้าง</div>';return;}
+  $("#queue").innerHTML = cmds.map(c=>`
+    <div class="cmd">
+      <div class="h"><b>${c.project} · ${c.channel}</b><span class="tag ${c.action}">${c.action}</span></div>
+      <div>${Number(c.current_budget).toLocaleString()} → <b>${Number(c.proposed_budget).toLocaleString()}</b>
+        <span style="color:${c.delta<0?'var(--amber)':'var(--green)'}">(${c.delta>0?'+':''}${Number(c.delta).toLocaleString()})</span></div>
+      <small>${c.reason}</small>
+    </div>`).join("");
+}
+
+function addMsg(who,text){
+  const el=document.createElement("div");
+  el.className="msg "+(who==='me'?'me':'cmo');
+  el.innerHTML=`<div class="who">${who==='me'?'You':'CMO · Market Voice'}</div>`+md(text);
+  $("#chat").appendChild(el); $("#chat").scrollTop=1e9;
+  return el;
+}
+
+async function load(){
+  const s=await (await fetch("/api/state")).json();
+  renderAgents(s.agents); renderQueue(s.queue);
+  $("#report").innerHTML = md(s.report_md||"");
+}
+async function send(){
+  const v=$("#input").value.trim(); if(!v)return;
+  $("#input").value=""; addMsg("me",v);
+  const t=addMsg("cmo","CMO is typing…"); t.querySelector(".who").nextSibling;
+  t.innerHTML=`<div class="who">CMO · Market Voice</div><div class="typing">CMO is typing…</div>`;
+  try{
+    const r=await (await fetch("/api/chat",{method:"POST",headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:v})})).json();
+    t.innerHTML=`<div class="who">CMO · Market Voice · ${r.source}</div>`+md(r.reply);
+  }catch(e){ t.innerHTML=`<div class="who">CMO</div>เกิดข้อผิดพลาด: ${e}`; }
+  $("#chat").scrollTop=1e9;
+}
+async function runAnalysis(){
+  addMsg("cmo","กำลังรันวิเคราะห์พอร์ตทั้งหมด…");
+  const r=await (await fetch("/api/run",{method:"POST"})).json();
+  renderQueue(r.queue); $("#report").innerHTML=md(r.report_md);
+  addMsg("cmo",`เสร็จแล้ว ✅ Run ${r.run_id} — ดูรายงานและ Command Queue ด้านขวา`);
+}
+load();
+</script>
+</body>
+</html>

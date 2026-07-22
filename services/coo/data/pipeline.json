@@ -1,0 +1,53 @@
+{
+  "accounts": [
+    {
+      "id": "LN-1001",
+      "customer": "คุณสมชาย ใจดี",
+      "phone": "081-111-1111",
+      "product": "สินเชื่อรีไฟแนนซ์รถยนต์",
+      "principal": 350000,
+      "installment": 12500,
+      "dueDate": "2026-07-05",
+      "status": "overdue",
+      "lastReminderAt": null
+    },
+    {
+      "id": "LN-1002",
+      "customer": "คุณสุดา รักเรียน",
+      "phone": "082-222-2222",
+      "product": "สินเชื่อส่วนบุคคล",
+      "principal": 120000,
+      "installment": 5400,
+      "dueDate": "2026-07-18",
+      "status": "overdue",
+      "lastReminderAt": null
+    },
+    {
+      "id": "LN-1003",
+      "customer": "บจก. รุ่งเรืองพาณิชย์",
+      "phone": "083-333-3333",
+      "product": "สินเชื่อ SME",
+      "principal": 900000,
+      "installment": 28000,
+      "dueDate": "2026-08-01",
+      "status": "current",
+      "lastReminderAt": null
+    },
+    {
+      "id": "LN-1004",
+      "customer": "คุณวีระ ตั้งมั่น",
+      "phone": "084-444-4444",
+      "product": "สินเชื่อรีไฟแนนซ์บ้าน",
+      "principal": 2200000,
+      "installment": 18500,
+      "dueDate": "2026-06-28",
+      "status": "overdue",
+      "lastReminderAt": "2026-07-10T09:00:00.000Z"
+    }
+  ],
+  "leads": [
+    { "id": "LD-501", "name": "คุณอนันต์", "stage": "new", "value": 500000, "owner": "sales-1" },
+    { "id": "LD-502", "name": "คุณพิมพ์", "stage": "qualified", "value": 150000, "owner": "sales-2" },
+    { "id": "LD-503", "name": "หจก. ทองคำ", "stage": "proposal", "value": 1200000, "owner": "sales-1" }
+  ]
+}
