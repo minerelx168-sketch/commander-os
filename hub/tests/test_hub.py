@@ -115,6 +115,41 @@ def test_docs_sync_without_drive_returns_error(client):
     assert j["synced"] == 0 and "Drive" in j["error"]
 
 
+def test_librarian_projects_and_classification(client):
+    # create project folders (local; Drive mirrors when connected)
+    r = client.post("/api/docs/projects", json={"name": "YourFin"})
+    assert "YourFin" in r.json()["projects"]
+    client.post("/api/docs/projects", json={"name": "FlowerVending"})
+    assert client.post("/api/docs/projects", json={"name": "a/b"}).status_code == 400
+
+    # librarian classifies an incoming doc into the right project folder
+    with patch("app.llm.chat", return_value={"text": "YourFin", "provider": "gemini",
+                                             "model": "m", "ok": True}), \
+         patch("app.llm.provider_ready", return_value=True):
+        client.post("/api/line/webhook", json={"events": [{"type": "message",
+            "message": {"type": "text", "text": "ตารางผ่อนมือถือ งวดละ 1,200 บาท"}}]})
+    j = client.get("/api/docs").json()
+    doc = j["documents"][0]
+    assert doc["project"] == "YourFin"
+    # physically filed into the project subfolder
+    import app.docs as docs
+    assert (docs.LOCAL_DIR / "YourFin" / doc["name"]).exists()
+    # knowledge digest is grouped by project for the LLM to learn from
+    assert "### โปรเจค: YourFin" in docs.knowledge_context()
+
+
+def test_librarian_reclassify_unfiled(client):
+    with patch("app.llm.chat", side_effect=_fake_chat):  # returns non-project text -> unfiled
+        client.post("/api/line/webhook", json={"events": [{"type": "message",
+            "message": {"type": "text", "text": "โน้ตยังไม่เข้าโปรเจค"}}]})
+    client.post("/api/docs/projects", json={"name": "YourFin"})
+    with patch("app.llm.chat", return_value={"text": "YourFin", "provider": "gemini",
+                                             "model": "m", "ok": True}), \
+         patch("app.llm.provider_ready", return_value=True):
+        j = client.post("/api/docs/reclassify").json()
+    assert j["filed"] == 1 and j["unfiled"] == 0
+
+
 def test_bad_inputs(client):
     assert client.post("/api/consult", json={"question": "  "}).status_code == 400
     assert client.post("/api/decisions", json={"question": "", "decision": ""}).status_code == 400

@@ -59,21 +59,130 @@ def _save_meta(meta: list) -> None:
 
 
 def _record(name: str, source: str, location: str, mime: str,
-            drive_id: str | None = None, text: str | None = None) -> dict:
+            drive_id: str | None = None, text: str | None = None,
+            project: str | None = None) -> dict:
     meta = _load_meta()
     entry = {"id": len(meta) + 1, "name": name, "source": source, "location": location,
              "mime": mime, "drive_id": drive_id, "text": (text or "")[:3000] or None,
+             "project": project,
              "at": datetime.now(timezone.utc).isoformat()}
     meta.append(entry)
     _save_meta(meta)
     return entry
 
 
+# ── projects (Drive folders per business project, e.g. "YourFin") ──
+
+def list_projects() -> list[str]:
+    """Project names = subfolders of the Drive root folder + local subdirs."""
+    names = {p.name for p in LOCAL_DIR.iterdir() if p.is_dir()}
+    if drive_ready() and config.GDRIVE_FOLDER_ID:
+        try:
+            q = (f"'{config.GDRIVE_FOLDER_ID}' in parents and trashed=false "
+                 "and mimeType='application/vnd.google-apps.folder'")
+            for f in _drive().files().list(q=q, fields="files(name)", pageSize=100).execute()["files"]:
+                names.add(f["name"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("list drive projects failed: %s", e)
+    return sorted(names)
+
+
+def create_project(name: str) -> dict:
+    """Create the project folder locally and (when connected) in Drive."""
+    (LOCAL_DIR / name).mkdir(exist_ok=True)
+    drive_id = None
+    if drive_ready():
+        try:
+            drive_id = _project_folder_id(name)
+        except Exception as e:  # noqa: BLE001
+            log.warning("create drive project failed: %s", e)
+    return {"name": name, "drive_id": drive_id, "projects": list_projects()}
+
+
+def _project_folder_id(name: str) -> str:
+    """Find-or-create the Drive subfolder for a project."""
+    svc = _drive()
+    q = (f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+         + (f" and '{config.GDRIVE_FOLDER_ID}' in parents" if config.GDRIVE_FOLDER_ID else ""))
+    found = svc.files().list(q=q, fields="files(id)", pageSize=1).execute()["files"]
+    if found:
+        return found[0]["id"]
+    body: dict = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    if config.GDRIVE_FOLDER_ID:
+        body["parents"] = [config.GDRIVE_FOLDER_ID]
+    return svc.files().create(body=body, fields="id").execute()["id"]
+
+
+# ── the librarian: scan -> classify -> file into the right project ──
+
+def describe_image(content: bytes, mime: str) -> str | None:
+    """OCR/describe an image via Gemini multimodal so it can be classified."""
+    if not config.GOOGLE_API_KEY:
+        return None
+    try:
+        model = config.PROVIDERS["gemini"]["model"]
+        r = httpx.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            params={"key": config.GOOGLE_API_KEY},
+            json={"contents": [{"parts": [
+                {"text": "อ่านเอกสาร/รูปนี้แล้วสรุปเป็นภาษาไทย: เป็นเอกสารอะไร มีข้อมูลสำคัญอะไร (ตัวเลข ชื่อ วันที่) ตอบไม่เกิน 6 บรรทัด"},
+                {"inline_data": {"mime_type": mime, "data": base64.b64encode(content).decode()}},
+            ]}]},
+            timeout=120,
+        )
+        r.raise_for_status()
+        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except Exception as e:  # noqa: BLE001
+        log.warning("image describe failed: %s", e)
+        return None
+
+
+def classify_project(name: str, text: str | None) -> str | None:
+    """Ask the LLM which project folder this document belongs to."""
+    from . import llm
+    projects = list_projects()
+    if not projects or not (text or name):
+        return None
+    provider = next((p for p in ("gemini", "anthropic", "manus") if llm.provider_ready(p)), None)
+    if provider is None:
+        return None
+    out = llm.chat(
+        provider,
+        ("คุณคือบรรณารักษ์เอกสารธุรกิจ จัดเอกสารเข้าโปรเจคที่ถูกต้อง\n"
+         f"รายชื่อโปรเจคที่มี: {', '.join(projects)}\n"
+         "ตอบชื่อโปรเจคเพียงคำเดียวจากรายชื่อข้างต้นเท่านั้น ห้ามอธิบาย "
+         "ถ้าไม่แน่ใจจริงๆ ให้ตอบ UNKNOWN"),
+        f"ชื่อไฟล์: {name}\nเนื้อหา:\n{(text or '')[:1500]}",
+    )
+    if not out["ok"]:
+        return None
+    answer = out["text"].strip().splitlines()[0].strip()
+    return answer if answer in projects else None
+
+
+def _file_into_project(entry_name: str, drive_id: str | None, project: str) -> None:
+    """Move the stored file into its project folder (local mirror + Drive)."""
+    src = LOCAL_DIR / entry_name
+    if src.exists():
+        dest = LOCAL_DIR / project
+        dest.mkdir(exist_ok=True)
+        src.rename(dest / entry_name)
+    if drive_id and drive_ready():
+        try:
+            svc = _drive()
+            folder = _project_folder_id(project)
+            prev = ",".join(svc.files().get(fileId=drive_id, fields="parents").execute().get("parents", []))
+            svc.files().update(fileId=drive_id, addParents=folder,
+                               removeParents=prev, fields="id").execute()
+        except Exception as e:  # noqa: BLE001
+            log.warning("drive move failed: %s", e)
+
+
 # ── ingest ──
 
 def save_document(name: str, content: bytes, mime: str, source: str,
                   text: str | None = None) -> dict:
-    """Upload to Drive when connected; always keep a local mirror."""
+    """Librarian pipeline: store -> scan -> classify -> file into project."""
     (LOCAL_DIR / name).write_bytes(content)
     drive_id = None
     location = "local"
@@ -81,14 +190,23 @@ def save_document(name: str, content: bytes, mime: str, source: str,
         try:
             from googleapiclient.http import MediaIoBaseUpload
             media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mime)
-            body = {"name": name}
+            body: dict = {"name": name}
             if config.GDRIVE_FOLDER_ID:
                 body["parents"] = [config.GDRIVE_FOLDER_ID]
             f = _drive().files().create(body=body, media_body=media, fields="id").execute()
             drive_id, location = f["id"], "drive"
         except Exception as e:  # noqa: BLE001 — Drive down must not lose the doc
             log.warning("drive upload failed, kept local: %s", e)
-    return _record(name, source, location, mime, drive_id, text)
+
+    # scan: images get OCR'd/described so they carry classifiable text
+    if text is None and mime.startswith("image/"):
+        text = describe_image(content, mime)
+
+    # classify + file into the right project folder (e.g. ตารางผ่อนมือถือ -> YourFin)
+    project = classify_project(name, text)
+    if project:
+        _file_into_project(name, drive_id, project)
+    return _record(name, source, location, mime, drive_id, text, project)
 
 
 def sync_from_drive() -> dict:
@@ -121,16 +239,36 @@ def list_documents(limit: int = 50) -> list:
     return _load_meta()[-limit:][::-1]
 
 
+def reclassify_all() -> dict:
+    """Re-run the librarian over unfiled documents (after creating new projects)."""
+    meta = _load_meta()
+    filed = 0
+    for m in meta:
+        if m.get("project"):
+            continue
+        project = classify_project(m["name"], m.get("text"))
+        if project:
+            _file_into_project(m["name"], m.get("drive_id"), project)
+            m["project"] = project
+            filed += 1
+    _save_meta(meta)
+    return {"filed": filed, "unfiled": sum(1 for m in meta if not m.get("project"))}
+
+
 def knowledge_context(max_chars: int = 3500) -> str:
-    """Digest of the CEO's documents injected into every advisor prompt."""
-    parts = []
+    """Digest of the CEO's documents (grouped by project) for advisor prompts."""
+    by_project: dict[str, list] = {}
     for m in reversed(_load_meta()):
-        head = f"[เอกสาร: {m['name']} ({m['at'][:10]})]"
-        parts.append(f"{head}\n{m['text']}" if m.get("text") else head)
+        by_project.setdefault(m.get("project") or "ทั่วไป", []).append(m)
+    parts = []
+    for project, ms in sorted(by_project.items()):
+        parts.append(f"### โปรเจค: {project}")
+        for m in ms:
+            head = f"[เอกสาร: {m['name']} ({m['at'][:10]})]"
+            parts.append(f"{head}\n{m['text']}" if m.get("text") else head)
     if not parts:
         return ""
-    out = "\n\n".join(parts)
-    return out[:max_chars]
+    return "\n\n".join(parts)[:max_chars]
 
 
 # ── LINE webhook ──
@@ -180,9 +318,11 @@ def handle_line_events(payload: dict) -> list:
                 continue
             saved.append(entry)
             where = "Google Drive ✅" if entry["location"] == "drive" else "คลังในเครื่อง (Drive ยังไม่เชื่อมต่อ) ⚠️"
+            filed = (f"\n🗂 จัดเข้าโปรเจค: {entry['project']}" if entry.get("project")
+                     else "\n🗂 ยังไม่รู้ว่าโปรเจคไหน — สร้างโปรเจคในหน้าเอกสารแล้วกด reclassify ได้")
             if ev.get("replyToken"):
                 _line_reply(ev["replyToken"],
-                            f"📁 รับเอกสาร \"{entry['name']}\" แล้ว → {where}\nบอร์ดที่ปรึกษาจะใช้ศึกษางานของคุณทันที")
+                            f"📁 รับเอกสาร \"{entry['name']}\" แล้ว → {where}{filed}\nบอร์ดที่ปรึกษาจะใช้ศึกษางานของคุณทันที")
         except Exception as e:  # noqa: BLE001 — one bad event must not kill the webhook
             log.exception("line event failed")
             if ev.get("replyToken"):

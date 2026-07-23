@@ -125,10 +125,28 @@ def set_provider(dept: str, body: ProviderIn) -> dict:
 def documents(limit: int = 50) -> dict:
     return {
         "documents": docs.list_documents(limit),
+        "projects": docs.list_projects(),
         "drive_connected": docs.drive_ready(),
         "line_connected": docs.line_ready(),
         "knowledge_chars": len(docs.knowledge_context()),
     }
+
+
+class ProjectIn(BaseModel):
+    name: str
+
+
+@app.post("/api/docs/projects")
+def create_project(body: ProjectIn) -> dict:
+    name = body.name.strip()
+    if not name or "/" in name:
+        raise HTTPException(400, "invalid project name")
+    return docs.create_project(name)
+
+
+@app.post("/api/docs/reclassify")
+def reclassify() -> dict:
+    return docs.reclassify_all()
 
 
 @app.post("/api/docs/sync")

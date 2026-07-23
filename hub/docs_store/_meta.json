@@ -8,5 +8,57 @@
   "drive_id": null,
   "text": "บันทึกธุรกิจ: ตู้กดดอกไม้เอกมัยมี 2 ตู้ ยอดขายเฉลี่ยวันละ 4,500 บาท ต้นทุนดอกไม้ 40% ค่าเช่าแบ่ง GP 10%",
   "at": "2026-07-23T08:58:52.867548+00:00"
+ },
+ {
+  "id": 2,
+  "name": "line_note_20260723_090000.txt",
+  "source": "line",
+  "location": "local",
+  "mime": "text/plain",
+  "drive_id": null,
+  "text": "บันทึกทดสอบ verify-1784797200",
+  "at": "2026-07-23T09:00:00.487963+00:00"
+ },
+ {
+  "id": 3,
+  "name": "line_note_20260723_090102.txt",
+  "source": "line",
+  "location": "local",
+  "mime": "text/plain",
+  "drive_id": null,
+  "text": "บันทึกตรวจสอบ verify-1784797262",
+  "at": "2026-07-23T09:01:02.445366+00:00"
+ },
+ {
+  "id": 4,
+  "name": "line_note_20260723_090141.txt",
+  "source": "line",
+  "location": "local",
+  "mime": "text/plain",
+  "drive_id": null,
+  "text": "reverify-1784797302",
+  "at": "2026-07-23T09:01:41.583384+00:00"
+ },
+ {
+  "id": 5,
+  "name": "line_note_20260723_090618.txt",
+  "source": "line",
+  "location": "local",
+  "mime": "text/plain",
+  "drive_id": null,
+  "text": "ตารางผ่อนมือถือ iPhone 17 ลูกค้าผ่อนงวดละ 1,250 บาท 24 งวด ดอกเบี้ย 1.2% ต่อเดือน",
+  "project": "YourFin",
+  "at": "2026-07-23T09:06:21.138632+00:00"
+ },
+ {
+  "id": 6,
+  "name": "line_note_20260723_090621.txt",
+  "source": "line",
+  "location": "local",
+  "mime": "text/plain",
+  "drive_id": null,
+  "text": "สต็อกดอกกุหลาบตู้เอกมัย เหลือ 12 ช่อ เติมพรุ่งนี้ 30 ช่อ",
+  "project": "FlowerVending",
+  "at": "2026-07-23T09:06:23.159192+00:00"
  }
 ]

@@ -239,6 +239,16 @@
   <h1 class="page">เอกสาร — คลังความรู้ธุรกิจของคุณ (LINE → Google Drive)</h1>
   <div class="stats" id="doc-stats" style="grid-template-columns: repeat(4, 1fr);"></div>
   <div class="panel">
+    <h2>🗂 โปรเจคของคุณ (โฟลเดอร์ใน Google Drive) — บรรณารักษ์จะจัดเอกสารเข้าโปรเจคให้อัตโนมัติ</h2>
+    <div id="proj-tags" style="margin-bottom:12px;"></div>
+    <div class="decide-bar" style="margin-top:0;">
+      <input id="new-project" placeholder="ชื่อโปรเจคใหม่ เช่น YourFin…">
+      <button class="btn sm" onclick="addProject()">+ สร้างโปรเจค</button>
+      <button class="btn sm ghost" onclick="reclassify()">🗂 จัดเอกสารที่ค้างเข้าโปรเจค</button>
+      <span class="empty" id="proj-status"></span>
+    </div>
+  </div>
+  <div class="panel">
     <h2>🔄 การเชื่อมต่อ</h2>
     <div id="doc-conn"></div>
     <div class="decide-bar" style="margin-top:12px;">
@@ -436,16 +446,42 @@ async function loadDocs() {
     <div class="stat"><div class="lbl">Google Drive</div><div class="num ${j.drive_connected ? 'n-ok' : 'n-err'}">${j.drive_connected ? '● เชื่อมแล้ว' : '○ ยังไม่เชื่อม'}</div></div>
     <div class="stat"><div class="lbl">LINE Bot</div><div class="num ${j.line_connected ? 'n-ok' : 'n-err'}">${j.line_connected ? '● เชื่อมแล้ว' : '○ ยังไม่เชื่อม'}</div></div>
     <div class="stat"><div class="lbl">ความรู้ป้อนบอร์ด</div><div class="num">${(j.knowledge_chars / 1000).toFixed(1)}k</div></div>`;
+  document.getElementById('proj-tags').innerHTML = (j.projects || []).map(p =>
+    `<span class="tag t-faster" style="display:inline-block;margin-bottom:6px;">📁 ${esc(p)}</span>`).join(' ')
+    || '<span class="empty">ยังไม่มีโปรเจค — สร้างโปรเจคแรก เช่น YourFin</span>';
   document.getElementById('doc-conn').innerHTML = `
     <div class="hist-item" style="cursor:default"><div class="q">💬 LINE → ตั้ง webhook ไปที่ <span class="mono">POST /api/line/webhook</span> ${j.line_connected ? '<span class="tag t-saved">พร้อมใช้</span>' : '<span class="tag t-missed">ใส่ LINE_CHANNEL_SECRET + LINE_CHANNEL_ACCESS_TOKEN ใน hub/.env</span>'}</div></div>
     <div class="hist-item" style="cursor:default"><div class="q">☁️ Google Drive → service account ${j.drive_connected ? '<span class="tag t-saved">พร้อมใช้</span>' : '<span class="tag t-missed">ใส่ GDRIVE_SERVICE_ACCOUNT_JSON + GDRIVE_FOLDER_ID ใน hub/.env</span>'}</div></div>
-    <div class="hist-item" style="cursor:default"><div class="q">🧠 บอร์ดทั้ง 4 ที่ปรึกษาอ่านคลังนี้อัตโนมัติทุกครั้งที่คุณถามใน Boardroom</div></div>`;
+    <div class="hist-item" style="cursor:default"><div class="q">🧠 บอร์ดทั้ง 4 ที่ปรึกษาอ่านคลังนี้ (แยกตามโปรเจค) อัตโนมัติทุกครั้งที่คุณถามใน Boardroom</div></div>`;
   document.getElementById('doc-list').innerHTML = j.documents.map(d => `
     <div class="dec-item">
-      <div class="d">📄 ${esc(d.name)}</div>
+      <div class="d">📄 ${esc(d.name)} ${d.project ? `<span class="tag t-faster">📁 ${esc(d.project)}</span>` : '<span class="tag t-neutral">ยังไม่จัดโปรเจค</span>'}</div>
       <div class="meta">#${d.id} · ${SRC_TH[d.source] || d.source} → ${d.location === 'drive' ? '☁️ Google Drive' : '💾 เครื่องนี้'} · ${(d.at || '').substring(0, 16).replace('T', ' ')}</div>
       ${d.text ? `<div class="q">${esc(d.text.substring(0, 220))}${d.text.length > 220 ? '…' : ''}</div>` : ''}
     </div>`).join('') || '<div class="empty">ยังไม่มี — ส่งไฟล์/ข้อความเข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div>';
+}
+
+async function addProject() {
+  const inp = document.getElementById('new-project');
+  const name = inp.value.trim();
+  if (!name) return;
+  const el = document.getElementById('proj-status');
+  el.textContent = '⏳ กำลังสร้าง…';
+  const r = await fetch('/api/docs/projects', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name})
+  });
+  el.textContent = r.ok ? `✅ สร้างโปรเจค ${name} แล้ว` : '⚠️ สร้างไม่สำเร็จ';
+  inp.value = '';
+  loadDocs();
+}
+
+async function reclassify() {
+  const el = document.getElementById('proj-status');
+  el.textContent = '⏳ บรรณารักษ์กำลังจัดเอกสาร…';
+  const j = await (await fetch('/api/docs/reclassify', {method: 'POST'})).json();
+  el.textContent = `✅ จัดเข้าโปรเจค ${j.filed} ไฟล์ (ค้าง ${j.unfiled})`;
+  loadDocs();
 }
 
 async function syncDrive() {
