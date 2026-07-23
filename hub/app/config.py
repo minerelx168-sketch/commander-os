@@ -38,5 +38,11 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 MANUS_API_URL = os.getenv("MANUS_API_URL", "https://api.manus.im/v1/chat/completions")
 
+# --- Documents: Google Drive + LINE ---
+GDRIVE_SA_JSON = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "")   # path to service-account .json
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")            # target Drive folder
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
+LINE_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+
 MEMORY_DIR = ROOT / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)

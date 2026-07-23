@@ -8,11 +8,11 @@ Pages (single-page UI in static/index.html):
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import config, depts, llm, store
+from . import config, depts, docs, llm, store
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="Commander Hub — C-Suite Advisory")
@@ -117,3 +117,31 @@ def set_provider(dept: str, body: ProviderIn) -> dict:
     if body.provider not in config.PROVIDERS:
         raise HTTPException(400, f"unknown provider: {body.provider}")
     return {"providers": store.set_provider(dept, body.provider)}
+
+
+# ── Documents: LINE -> Google Drive -> advisor knowledge ──
+
+@app.get("/api/docs")
+def documents(limit: int = 50) -> dict:
+    return {
+        "documents": docs.list_documents(limit),
+        "drive_connected": docs.drive_ready(),
+        "line_connected": docs.line_ready(),
+        "knowledge_chars": len(docs.knowledge_context()),
+    }
+
+
+@app.post("/api/docs/sync")
+def docs_sync() -> dict:
+    return docs.sync_from_drive()
+
+
+@app.post("/api/line/webhook")
+async def line_webhook(request: Request) -> dict:
+    body = await request.body()
+    if docs.line_ready() and not docs.verify_line_signature(
+            body, request.headers.get("X-Line-Signature", "")):
+        raise HTTPException(401, "bad LINE signature")
+    import json as _json
+    saved = docs.handle_line_events(_json.loads(body or b"{}"))
+    return {"saved": len(saved)}

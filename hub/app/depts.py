@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import config, llm, store
+from . import config, docs, llm, store
 
 log = logging.getLogger("hub.depts")
 
@@ -93,8 +93,13 @@ def _round(template: str, build_user) -> dict:
 
 
 def consult_all(question: str) -> dict:
+    # CEO's document library (LINE -> Drive) grounds every advisor
+    knowledge = docs.knowledge_context()
+    q_ctx = (f"{question}\n\n[คลังเอกสารธุรกิจของ CEO — ใช้เป็นบริบทจริง อย่าเดาสวนข้อมูลนี้]\n{knowledge}"
+             if knowledge else question)
+
     # Round 1 — independent opinions inside each lane
-    opinions = _round(OPINION_SYSTEM, lambda d: question)
+    opinions = _round(OPINION_SYSTEM, lambda d: q_ctx)
 
     # Round 2 — cross-examination: each advisor critiques the other three
     def cross_user(dept: str) -> str:

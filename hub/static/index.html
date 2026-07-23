@@ -198,6 +198,7 @@
   <nav id="nav">
     <button data-view="board" class="active">🏛 Boardroom</button>
     <button data-view="decisions">⚖️ Decisions</button>
+    <button data-view="docs">📁 เอกสาร</button>
     <button data-view="agents">🤖 Agents</button>
   </nav>
   <div class="side-h">Advisors</div>
@@ -233,7 +234,25 @@
   </div>
 </section>
 
-<!-- ===== PAGE 3: AGENTS ===== -->
+<!-- ===== PAGE 3: DOCUMENTS (LINE -> Drive -> advisor knowledge) ===== -->
+<section class="view" id="view-docs">
+  <h1 class="page">เอกสาร — คลังความรู้ธุรกิจของคุณ (LINE → Google Drive)</h1>
+  <div class="stats" id="doc-stats" style="grid-template-columns: repeat(4, 1fr);"></div>
+  <div class="panel">
+    <h2>🔄 การเชื่อมต่อ</h2>
+    <div id="doc-conn"></div>
+    <div class="decide-bar" style="margin-top:12px;">
+      <button class="btn sm" onclick="syncDrive()">⟳ SYNC จาก GOOGLE DRIVE</button>
+      <span class="empty" id="sync-status"></span>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>📚 เอกสารที่บอร์ดใช้ศึกษางานของคุณ</h2>
+    <div id="doc-list"><div class="empty">ยังไม่มี — ส่งไฟล์/ข้อความเข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div></div>
+  </div>
+</section>
+
+<!-- ===== PAGE 4: AGENTS ===== -->
 <section class="view" id="view-agents">
   <h1 class="page">Agents — เลือก AI ให้แต่ละที่ปรึกษา</h1>
   <div class="panel">
@@ -257,6 +276,7 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
   b.classList.add('active');
   document.getElementById('view-' + b.dataset.view).classList.add('active');
   if (b.dataset.view === 'decisions') loadDecisions();
+  if (b.dataset.view === 'docs') loadDocs();
 }));
 
 // ---------- state ----------
@@ -404,6 +424,36 @@ async function score(id, verdict) {
     body: JSON.stringify({outcome, verdict})
   });
   loadDecisions();
+}
+
+// ---------- documents ----------
+const SRC_TH = { line: '💬 LINE', drive: '☁️ Drive', upload: '⬆️ อัพโหลด' };
+
+async function loadDocs() {
+  const j = await (await fetch('/api/docs')).json();
+  document.getElementById('doc-stats').innerHTML = `
+    <div class="stat"><div class="lbl">เอกสารทั้งหมด</div><div class="num n-cy">${j.documents.length}</div></div>
+    <div class="stat"><div class="lbl">Google Drive</div><div class="num ${j.drive_connected ? 'n-ok' : 'n-err'}">${j.drive_connected ? '● เชื่อมแล้ว' : '○ ยังไม่เชื่อม'}</div></div>
+    <div class="stat"><div class="lbl">LINE Bot</div><div class="num ${j.line_connected ? 'n-ok' : 'n-err'}">${j.line_connected ? '● เชื่อมแล้ว' : '○ ยังไม่เชื่อม'}</div></div>
+    <div class="stat"><div class="lbl">ความรู้ป้อนบอร์ด</div><div class="num">${(j.knowledge_chars / 1000).toFixed(1)}k</div></div>`;
+  document.getElementById('doc-conn').innerHTML = `
+    <div class="hist-item" style="cursor:default"><div class="q">💬 LINE → ตั้ง webhook ไปที่ <span class="mono">POST /api/line/webhook</span> ${j.line_connected ? '<span class="tag t-saved">พร้อมใช้</span>' : '<span class="tag t-missed">ใส่ LINE_CHANNEL_SECRET + LINE_CHANNEL_ACCESS_TOKEN ใน hub/.env</span>'}</div></div>
+    <div class="hist-item" style="cursor:default"><div class="q">☁️ Google Drive → service account ${j.drive_connected ? '<span class="tag t-saved">พร้อมใช้</span>' : '<span class="tag t-missed">ใส่ GDRIVE_SERVICE_ACCOUNT_JSON + GDRIVE_FOLDER_ID ใน hub/.env</span>'}</div></div>
+    <div class="hist-item" style="cursor:default"><div class="q">🧠 บอร์ดทั้ง 4 ที่ปรึกษาอ่านคลังนี้อัตโนมัติทุกครั้งที่คุณถามใน Boardroom</div></div>`;
+  document.getElementById('doc-list').innerHTML = j.documents.map(d => `
+    <div class="dec-item">
+      <div class="d">📄 ${esc(d.name)}</div>
+      <div class="meta">#${d.id} · ${SRC_TH[d.source] || d.source} → ${d.location === 'drive' ? '☁️ Google Drive' : '💾 เครื่องนี้'} · ${(d.at || '').substring(0, 16).replace('T', ' ')}</div>
+      ${d.text ? `<div class="q">${esc(d.text.substring(0, 220))}${d.text.length > 220 ? '…' : ''}</div>` : ''}
+    </div>`).join('') || '<div class="empty">ยังไม่มี — ส่งไฟล์/ข้อความเข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div>';
+}
+
+async function syncDrive() {
+  const el = document.getElementById('sync-status');
+  el.textContent = '⏳ กำลัง sync…';
+  const j = await (await fetch('/api/docs/sync', {method: 'POST'})).json();
+  el.textContent = j.error ? `⚠️ ${j.error}` : `✅ ดึงมาใหม่ ${j.synced} ไฟล์ (รวม ${j.total})`;
+  loadDocs();
 }
 
 // ---------- agents ----------
