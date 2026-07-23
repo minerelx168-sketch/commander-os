@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>👑 Commander Hub — CEO Command</title>
+<title>👑 Commander Hub — C-Suite Advisory</title>
 <style>
   :root {
     /* Jarvis / arc-reactor palette: deep blue-black + glowing cyan */
     --bg: #010409; --panel: #050b16; --panel2: #081120; --border: #0e2a45;
     --text: #cfeaff; --dim: #4f7ea8; --accent: #00d4ff; --green: #34d399;
-    --amber: #fbbf24; --red: #f87171; --purple: #35c9ff; --purple2: #0a84c0;
+    --amber: #fbbf24; --red: #f87171;
     --glow: 0 0 14px rgba(0, 212, 255, .35);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -50,9 +50,15 @@
     border-color: var(--accent); font-weight: 700; box-shadow: var(--glow), inset 0 0 18px rgba(0,212,255,.08);
     text-shadow: 0 0 8px rgba(0,212,255,.5);
   }
-  nav .dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
-  nav .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
   .side-h { margin: 16px 4px 8px; color: var(--dim); font-size: 9px; letter-spacing: 3px; text-transform: uppercase; font-family: "SF Mono", monospace; }
+  .advisor {
+    display: flex; align-items: center; gap: 10px; padding: 9px 11px; margin-bottom: 6px;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .advisor .ic { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; background: radial-gradient(circle at 50% 50%, #0c3a5e, #02070f 75%); border: 1px solid var(--border); }
+  .advisor .nm { font-size: 12.5px; font-weight: 700; }
+  .advisor .rl { color: var(--dim); font-size: 8.5px; letter-spacing: 1px; text-transform: uppercase; font-family: "SF Mono", monospace; }
+  .advisor .pv { margin-left: auto; color: var(--dim); font-size: 8.5px; font-family: "SF Mono", monospace; }
   .side-foot { margin-top: auto; padding-top: 14px; color: var(--dim); font-size: 10px; text-align: center; }
 
   /* ===== main ===== */
@@ -68,7 +74,7 @@
   .panel h2 { font-size: 10px; letter-spacing: 2.5px; color: var(--dim); margin-bottom: 12px; text-transform: uppercase; font-family: "SF Mono", monospace; }
   .empty { color: var(--dim); font-style: italic; }
 
-  /* ===== Command Overall: ask box + tree ===== */
+  /* ===== boardroom: ask box ===== */
   .askbox { display: flex; gap: 12px; }
   .askbox textarea {
     flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
@@ -76,67 +82,83 @@
     outline: none; resize: none; min-height: 54px; max-height: 130px; line-height: 1.4;
   }
   .askbox textarea:focus { border-color: var(--accent); box-shadow: var(--glow); }
-  .askbox button {
+  .btn {
     background: linear-gradient(135deg, #0a84c0, #005f8f); color: #eaffff; border: 1px solid var(--accent);
     font-family: "SF Mono", monospace; font-size: 13px; letter-spacing: 2.5px; font-weight: 700;
-    padding: 15px 36px; border-radius: 12px; cursor: pointer; align-self: stretch;
+    padding: 15px 36px; border-radius: 12px; cursor: pointer;
     box-shadow: var(--glow); text-shadow: 0 0 8px rgba(0,212,255,.6); transition: all .15s;
   }
-  .askbox button:hover { box-shadow: 0 0 24px rgba(0,212,255,.55); }
-  .askbox button:disabled { opacity: .5; cursor: wait; }
+  .btn:hover { box-shadow: 0 0 24px rgba(0,212,255,.55); }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  .btn.sm { font-size: 11px; padding: 10px 20px; letter-spacing: 1.5px; }
+  .btn.ghost { background: transparent; color: var(--accent); }
 
-  /* tree diagram */
-  .tree { margin-top: 18px; display: none; }
-  .tree.show { display: block; }
-  .tree-root {
-    max-width: 620px; margin: 0 auto; text-align: center;
+  /* rounds */
+  .round { margin-top: 18px; }
+  .round-h {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    color: var(--accent); font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase;
+    font-family: "SF Mono", monospace; text-shadow: 0 0 8px rgba(0,212,255,.4);
+  }
+  .round-h::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--accent), transparent); opacity: .5; }
+  .round-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .op-card {
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px; font-size: 12px; line-height: 1.6; transition: border-color .2s;
+  }
+  .op-card:hover { border-color: var(--accent); box-shadow: var(--glow); }
+  .op-card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .op-card .ic { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 50% 50%, #0c3a5e, #02070f 75%); border: 1px solid var(--border); font-size: 14px; }
+  .op-card .nm { font-weight: 700; font-size: 13px; }
+  .op-card .pv { margin-left: auto; color: var(--dim); font-size: 9px; font-family: "SF Mono", monospace; }
+  .op-card .body { white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
+  .op-card.err { border-color: rgba(248,113,113,.45); }
+  .op-card.verdict { border-color: rgba(0,212,255,.4); background: linear-gradient(180deg, rgba(0,212,255,.06), var(--panel2)); }
+  .q-banner {
+    max-width: 680px; margin: 0 auto 4px; text-align: center;
     background: radial-gradient(circle at 50% 0%, #0c3a5e, #04101f 75%);
     border: 1px solid var(--accent); border-radius: 14px; padding: 14px 20px;
     box-shadow: var(--glow), inset 0 0 22px rgba(0,212,255,.1);
   }
-  .tree-root .who { color: var(--accent); font-size: 10px; letter-spacing: 2px; font-family: "SF Mono", monospace; text-shadow: 0 0 8px rgba(0,212,255,.6); }
-  .tree-root .q { margin-top: 6px; font-size: 14px; }
-  .tree-trunk { width: 2px; height: 26px; margin: 0 auto; background: var(--accent); box-shadow: var(--glow); }
-  .tree-rail { height: 2px; background: var(--accent); margin: 0 11%; position: relative; box-shadow: var(--glow); }
-  .tree-branches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-  .tree-branch { display: flex; flex-direction: column; align-items: center; }
-  .tree-branch .drop { width: 2px; height: 20px; background: var(--accent); box-shadow: var(--glow); }
-  .consult-card {
-    width: 100%; background: var(--panel2); border: 1px solid var(--border);
-    border-radius: 12px; padding: 12px 14px; font-size: 12px; line-height: 1.55;
-    transition: border-color .2s;
+  .q-banner .who { color: var(--accent); font-size: 10px; letter-spacing: 2px; font-family: "SF Mono", monospace; text-shadow: 0 0 8px rgba(0,212,255,.6); }
+  .q-banner .q { margin-top: 6px; font-size: 14px; }
+  .decide-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .decide-bar input {
+    flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    font-family: inherit; font-size: 13px; padding: 13px 16px; border-radius: 10px; outline: none;
   }
-  .consult-card:hover { border-color: var(--accent); box-shadow: var(--glow); }
-  .consult-card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .consult-card .ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: #0c2237; border: 1px solid var(--border); font-size: 14px; }
-  .consult-card .nm { font-weight: 700; font-size: 13px; }
-  .consult-card .pv { margin-left: auto; color: var(--dim); font-size: 9px; font-family: "SF Mono", monospace; }
-  .consult-card .body { white-space: pre-wrap; color: var(--text); max-height: 340px; overflow-y: auto; }
-  .consult-card.err { border-color: rgba(248,113,113,.45); }
+  .decide-bar input:focus { border-color: var(--accent); box-shadow: var(--glow); }
+
   .hist-item { padding: 11px 0; border-bottom: 1px dashed #0e2a4580; cursor: pointer; }
   .hist-item:hover .q { color: var(--accent); text-shadow: 0 0 8px rgba(0,212,255,.4); }
   .hist-item .q { font-size: 12.5px; }
   .hist-item .at { color: var(--dim); font-size: 10px; font-family: "SF Mono", monospace; }
 
-  /* ===== dept task pages ===== */
-  .dept-hero { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
-  .dept-hero .ic {
-    width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; font-size: 24px;
-    background: radial-gradient(circle at 50% 50%, #0c3a5e, #02070f 75%); border: 1px solid var(--accent);
-    box-shadow: var(--glow), inset 0 0 10px rgba(0,212,255,.25);
+  /* ===== decisions page ===== */
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 14px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; text-align: center; }
+  .stat .lbl { color: var(--dim); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; font-family: "SF Mono", monospace; }
+  .stat .num { font-size: 24px; margin-top: 5px; text-shadow: 0 0 10px rgba(0,212,255,.3); }
+  .n-ok { color: var(--green); } .n-warn { color: var(--amber); } .n-err { color: var(--red); } .n-cy { color: var(--accent); }
+  .dec-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; margin-bottom: 10px; }
+  .dec-item .q { color: var(--dim); font-size: 11.5px; margin-bottom: 4px; }
+  .dec-item .d { font-weight: 600; margin-bottom: 6px; }
+  .dec-item .meta { color: var(--dim); font-size: 9.5px; font-family: "SF Mono", monospace; margin-bottom: 8px; }
+  .tag { font-size: 10px; padding: 5px 12px; border-radius: 9px; font-family: "SF Mono", monospace; margin-right: 6px; }
+  .t-saved { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.35); }
+  .t-faster { background: rgba(0,212,255,.1); color: var(--accent); border: 1px solid rgba(0,212,255,.35); }
+  .t-neutral { background: rgba(79,126,168,.12); color: var(--dim); border: 1px solid var(--border); }
+  .t-missed { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.35); }
+  .score-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .score-row input { flex: 1; min-width: 180px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; padding: 10px 13px; border-radius: 9px; outline: none; }
+  .score-btn {
+    font-size: 11px; padding: 10px 16px; border-radius: 9px; cursor: pointer;
+    font-family: "SF Mono", monospace; background: transparent; border: 1px solid;
   }
-  .dept-hero .nm { font-size: 18px; font-weight: 700; text-shadow: 0 0 10px rgba(0,212,255,.35); }
-  .dept-hero .rl { color: var(--dim); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; font-family: "SF Mono", monospace; }
-  .dept-hero .badges { margin-left: auto; display: flex; gap: 8px; }
-  .badge { font-size: 10px; letter-spacing: .5px; padding: 6px 14px; border-radius: 10px; font-family: "SF Mono", monospace; }
-  .b-on { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.35); }
-  .b-off { background: rgba(79,126,168,.12); color: var(--dim); border: 1px solid var(--border); }
-  .b-ai { background: rgba(0,212,255,.1); color: var(--accent); border: 1px solid rgba(0,212,255,.35); }
-  .task-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
-  .task-item .cmd { font-weight: 600; margin-bottom: 6px; }
-  .task-item .res { color: var(--text); font-size: 12px; white-space: pre-wrap; line-height: 1.55; max-height: 260px; overflow-y: auto; }
-  .task-item .meta { color: var(--dim); font-size: 9.5px; margin-top: 6px; font-family: "SF Mono", monospace; }
-  .lesson { color: var(--dim); font-size: 11.5px; padding: 3px 0 3px 12px; border-left: 2px solid var(--accent); margin-bottom: 5px; }
+  .sb-saved { color: var(--green); border-color: var(--green); }
+  .sb-faster { color: var(--accent); border-color: var(--accent); }
+  .sb-neutral { color: var(--dim); border-color: var(--dim); }
+  .sb-missed { color: var(--red); border-color: var(--red); }
 
   /* ===== agents page ===== */
   .agent-row {
@@ -157,8 +179,10 @@
   }
   .agent-row select:focus { border-color: var(--accent); box-shadow: var(--glow); }
   .ready-tag { font-size: 10px; padding: 6px 12px; border-radius: 9px; font-family: "SF Mono", monospace; }
+  .b-on { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.35); }
+  .b-off { background: rgba(79,126,168,.12); color: var(--dim); border: 1px solid var(--border); }
 
-  @media (max-width: 1100px) { .tree-branches { grid-template-columns: repeat(2, 1fr); } .tree-rail { display: none; } }
+  @media (max-width: 1100px) { .round-grid { grid-template-columns: repeat(2, 1fr); } .stats { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
@@ -168,41 +192,30 @@
     <div class="mark">👑</div>
     <div>
       <div class="t1">Commander Hub</div>
-      <div class="t2">You are the CEO</div>
+      <div class="t2">C-Suite Advisory</div>
     </div>
   </div>
   <nav id="nav">
-    <button data-view="overall" class="active">⌘ Command Overall</button>
-    <div class="side-h">Departments</div>
-    <button data-view="cmo">📣 CMO <span class="dot" id="dot-cmo"></span></button>
-    <button data-view="cfo">💰 CFO <span class="dot" id="dot-cfo"></span></button>
-    <button data-view="coo">🛰 COO <span class="dot" id="dot-coo"></span></button>
-    <button data-view="datalyst">📊 Datalyst <span class="dot" id="dot-datalyst"></span></button>
-    <div class="side-h">System</div>
+    <button data-view="board" class="active">🏛 Boardroom</button>
+    <button data-view="decisions">⚖️ Decisions</button>
     <button data-view="agents">🤖 Agents</button>
   </nav>
+  <div class="side-h">Advisors</div>
+  <div id="advisor-list"></div>
   <div class="side-foot mono" id="conn">connecting…</div>
 </aside>
 
 <main>
 
-<!-- ===== PAGE 1: COMMAND OVERALL ===== -->
-<section class="view active" id="view-overall">
-  <h1 class="page">Command Overall — ถามบอร์ดที่ปรึกษา</h1>
+<!-- ===== PAGE 1: BOARDROOM ===== -->
+<section class="view active" id="view-board">
+  <h1 class="page">Boardroom — โยนโจทย์ยากให้บอร์ดถกก่อนคุณตัดสิน</h1>
   <div class="panel">
     <div class="askbox">
-      <textarea id="ask-text" rows="1" placeholder="พิมพ์คำถามถึงบอร์ด… ทั้ง 4 C-level จะให้ความเห็นความเสี่ยง/ผลดีในมุมที่ตัวเองถนัด"></textarea>
-      <button id="ask-btn" onclick="askBoard()">CONSULT</button>
+      <textarea id="ask-text" rows="1" placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะให้ความเห็น → วิพากษ์กันเอง → ให้คำตัดสินสุดท้าย"></textarea>
+      <button class="btn" id="ask-btn" onclick="askBoard()">CONSULT</button>
     </div>
-    <div class="tree" id="tree">
-      <div class="tree-root">
-        <span class="who">👑 CEO — YOU</span>
-        <div class="q" id="tree-q"></div>
-      </div>
-      <div class="tree-trunk"></div>
-      <div class="tree-rail"></div>
-      <div class="tree-branches" id="tree-branches"></div>
-    </div>
+    <div id="board-out"></div>
   </div>
   <div class="panel">
     <h2>ประวัติการปรึกษา</h2>
@@ -210,17 +223,21 @@
   </div>
 </section>
 
-<!-- ===== PAGES 2-5: DEPT TASK PAGES (rendered from one template) ===== -->
-<section class="view" id="view-cmo"></section>
-<section class="view" id="view-cfo"></section>
-<section class="view" id="view-coo"></section>
-<section class="view" id="view-datalyst"></section>
-
-<!-- ===== PAGE 6: AGENTS ===== -->
-<section class="view" id="view-agents">
-  <h1 class="page">Agents — เลือก AI ให้แต่ละ C-level</h1>
+<!-- ===== PAGE 2: DECISIONS (Proven by Decision) ===== -->
+<section class="view" id="view-decisions">
+  <h1 class="page">Decisions — วัดผลที่ปรึกษาจากการตัดสินใจจริง</h1>
+  <div class="stats" id="dec-stats"></div>
   <div class="panel">
-    <h2>ผูก AI provider เข้ากับแผนก (Claude / Gemini / Manus)</h2>
+    <h2>บันทึกการตัดสินใจ + ให้คะแนนย้อนหลังเมื่อรู้ผลจริง</h2>
+    <div id="dec-list"><div class="empty">ยังไม่มี — ตัดสินใจจากหน้า Boardroom แล้วบันทึกไว้ที่นี่</div></div>
+  </div>
+</section>
+
+<!-- ===== PAGE 3: AGENTS ===== -->
+<section class="view" id="view-agents">
+  <h1 class="page">Agents — เลือก AI ให้แต่ละที่ปรึกษา</h1>
+  <div class="panel">
+    <h2>ผูก AI provider เข้ากับที่ปรึกษา (Claude / Gemini / Manus)</h2>
     <div id="agent-rows"><div class="empty">กำลังโหลด…</div></div>
   </div>
 </section>
@@ -229,8 +246,9 @@
 
 <script>
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
-let STATE = { depts: [], providers: [], consults: [] };
+let STATE = { depts: [], providers: [], consults: [], decision_stats: {} };
 const DEPT_KEYS = ['cmo', 'cfo', 'coo', 'datalyst'];
+let lastConsult = null;
 
 // ---------- tabs ----------
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
@@ -238,7 +256,7 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
   document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   document.getElementById('view-' + b.dataset.view).classList.add('active');
-  if (DEPT_KEYS.includes(b.dataset.view)) renderDeptPage(b.dataset.view);
+  if (b.dataset.view === 'decisions') loadDecisions();
 }));
 
 // ---------- state ----------
@@ -246,37 +264,56 @@ async function loadState() {
   try {
     STATE = await (await fetch('/api/state')).json();
     document.getElementById('conn').textContent = '🟢 hub live';
-    for (const d of STATE.depts)
-      document.getElementById('dot-' + d.key)?.classList.toggle('on', d.online);
+    document.getElementById('advisor-list').innerHTML = STATE.depts.map(d => `
+      <div class="advisor">
+        <div class="ic">${d.icon}</div>
+        <div><div class="nm">${d.name}</div><div class="rl">${esc(d.role)}</div></div>
+        <span class="pv">${esc(d.provider)}</span>
+      </div>`).join('');
     renderHistory(STATE.consults);
     renderAgents();
   } catch (e) { document.getElementById('conn').textContent = '🔴 hub offline'; }
 }
 loadState();
-setInterval(loadState, 15000);
+setInterval(loadState, 20000);
 
-// ---------- page 1: consult tree ----------
-function consultCard(dept, a) {
+// ---------- boardroom ----------
+function opCard(dept, a, cls) {
   const d = STATE.depts.find(x => x.key === dept) || { icon: '🤖', name: dept };
   return `
-    <div class="tree-branch">
-      <div class="drop"></div>
-      <div class="consult-card ${a.ok ? '' : 'err'}">
-        <div class="head">
-          <div class="ic">${d.icon}</div>
-          <div><div class="nm">${d.name}</div></div>
-          <span class="pv">${esc(a.provider)}</span>
-        </div>
-        <div class="body">${esc(a.text)}</div>
+    <div class="op-card ${cls || ''} ${a.ok ? '' : 'err'}">
+      <div class="head">
+        <div class="ic">${d.icon}</div>
+        <div class="nm">${d.name}</div>
+        <span class="pv">${esc(a.provider)}</span>
       </div>
+      <div class="body">${esc(a.text)}</div>
     </div>`;
 }
 
-function showTree(question, answers) {
-  document.getElementById('tree-q').textContent = question;
-  document.getElementById('tree-branches').innerHTML =
-    DEPT_KEYS.map(k => answers[k] ? consultCard(k, answers[k]) : '').join('');
-  document.getElementById('tree').classList.add('show');
+function renderConsult(c) {
+  lastConsult = c;
+  const grid = (round, cls) => DEPT_KEYS.map(k => round[k] ? opCard(k, round[k], cls) : '').join('');
+  document.getElementById('board-out').innerHTML = `
+    <div class="round">
+      <div class="q-banner"><span class="who">👑 CEO — YOU</span><div class="q">${esc(c.question)}</div></div>
+    </div>
+    <div class="round">
+      <div class="round-h">Round 1 — ความเห็นในกรอบความเชี่ยวชาญ</div>
+      <div class="round-grid">${grid(c.opinions)}</div>
+    </div>
+    <div class="round">
+      <div class="round-h">Round 2 — Cross-Examination วิพากษ์กันเอง</div>
+      <div class="round-grid">${grid(c.cross_exam)}</div>
+    </div>
+    <div class="round">
+      <div class="round-h">Round 3 — คำตัดสินสุดท้ายต่อ CEO</div>
+      <div class="round-grid">${grid(c.verdicts, 'verdict')}</div>
+    </div>
+    <div class="decide-bar">
+      <input id="my-decision" placeholder="คุณตัดสินใจอย่างไร? บันทึกไว้เพื่อวัดผลที่ปรึกษาภายหลัง…">
+      <button class="btn sm" onclick="recordDecision()">บันทึกการตัดสินใจ</button>
+    </div>`;
 }
 
 async function askBoard() {
@@ -284,22 +321,20 @@ async function askBoard() {
   const btn = document.getElementById('ask-btn');
   const q = ta.value.trim();
   if (!q) return;
-  btn.disabled = true; btn.textContent = 'CONSULTING…';
-  document.getElementById('tree-q').textContent = q;
-  document.getElementById('tree-branches').innerHTML =
-    DEPT_KEYS.map(() => '<div class="tree-branch"><div class="drop"></div><div class="consult-card"><div class="empty">กำลังคิด…</div></div></div>').join('');
-  document.getElementById('tree').classList.add('show');
+  btn.disabled = true; btn.textContent = 'BOARD IS DEBATING…';
+  document.getElementById('board-out').innerHTML =
+    '<div class="round"><div class="round-h">บอร์ดกำลังถก 3 รอบ (ความเห็น → วิพากษ์ → คำตัดสิน)…</div></div>';
   try {
     const r = await fetch('/api/consult', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({question: q})
     });
-    const j = await r.json();
-    showTree(j.question, j.answers);
+    if (!r.ok) throw new Error(await r.text());
+    renderConsult(await r.json());
     ta.value = '';
     loadState();
   } catch (e) {
-    document.getElementById('tree-branches').innerHTML = `<div class="empty">⚠️ ${esc(String(e))}</div>`;
+    document.getElementById('board-out').innerHTML = `<div class="empty">⚠️ ${esc(String(e))}</div>`;
   }
   btn.disabled = false; btn.textContent = 'CONSULT';
 }
@@ -307,83 +342,71 @@ document.getElementById('ask-text').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askBoard(); }
 });
 
+async function recordDecision() {
+  const inp = document.getElementById('my-decision');
+  const decision = inp.value.trim();
+  if (!decision || !lastConsult) return;
+  await fetch('/api/decisions', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({consult_id: lastConsult.id, question: lastConsult.question, decision})
+  });
+  inp.value = '';
+  inp.placeholder = '✅ บันทึกแล้ว — ไปให้คะแนนได้ที่หน้า Decisions เมื่อรู้ผลจริง';
+}
+
 function renderHistory(consults) {
   document.getElementById('consult-hist').innerHTML = (consults || []).map(c => `
-    <div class="hist-item" onclick='showTree(${JSON.stringify(c.question)}, ${JSON.stringify(c.answers)})'>
+    <div class="hist-item" onclick="openConsult(${c.id})">
       <div class="q">${esc(c.question)}</div>
-      <div class="at">${(c.at || '').substring(0, 16).replace('T', ' ')}</div>
+      <div class="at">#${c.id} · ${(c.at || '').substring(0, 16).replace('T', ' ')}</div>
     </div>`).join('') || '<div class="empty">ยังไม่มี</div>';
 }
 
-// ---------- pages 2-5: dept task pages ----------
-function renderDeptPage(key) {
-  const d = STATE.depts.find(x => x.key === key) || { icon: '🤖', name: key.toUpperCase(), role: '', provider: 'mock', online: false };
-  const view = document.getElementById('view-' + key);
-  view.innerHTML = `
-    <h1 class="page">${d.name} — สั่งงานจริง</h1>
-    <div class="dept-hero">
-      <div class="ic">${d.icon}</div>
-      <div>
-        <div class="nm">${d.name}</div>
-        <div class="rl">${esc(d.role)}</div>
-      </div>
-      <div class="badges">
-        <span class="badge ${d.online ? 'b-on' : 'b-off'}">${d.online ? '● service online' : '○ service offline'}</span>
-        <span class="badge b-ai">AI: ${esc(d.provider)}</span>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="askbox">
-        <textarea id="task-text-${key}" rows="1" placeholder="มอบหมายงานให้ ${d.name} ลงมือทำจริง… (Enter เพื่อส่ง)"></textarea>
-        <button id="task-btn-${key}" onclick="runTask('${key}')">ASSIGN</button>
-      </div>
-    </div>
-    <div class="panel">
-      <h2>🧠 LLM Learning — บทเรียนสะสมของ ${d.name}</h2>
-      <div id="lessons-${key}"><div class="empty">ยังไม่มี</div></div>
-    </div>
-    <div class="panel">
-      <h2>ประวัติงาน</h2>
-      <div id="tasks-${key}"><div class="empty">กำลังโหลด…</div></div>
-    </div>`;
-  document.getElementById('task-text-' + key).addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runTask(key); }
+async function openConsult(id) {
+  const c = await (await fetch('/api/consults/' + id)).json();
+  renderConsult(c);
+  window.scrollTo(0, 0);
+}
+
+// ---------- decisions ----------
+const TAG_TH = { saved: '🛡 กันความเสียหาย', faster: '⚡ ตัดสินใจเร็วขึ้น', neutral: '— เฉยๆ', missed: '✗ พลาดจุดบอด' };
+
+async function loadDecisions() {
+  const j = await (await fetch('/api/decisions')).json();
+  const s = j.stats;
+  document.getElementById('dec-stats').innerHTML = `
+    <div class="stat"><div class="lbl">ตัดสินใจทั้งหมด</div><div class="num n-cy">${s.total}</div></div>
+    <div class="stat"><div class="lbl">กันความเสียหาย</div><div class="num n-ok">${s.saved}</div></div>
+    <div class="stat"><div class="lbl">เร็วขึ้น</div><div class="num n-cy">${s.faster}</div></div>
+    <div class="stat"><div class="lbl">เฉยๆ</div><div class="num">${s.neutral}</div></div>
+    <div class="stat"><div class="lbl">พลาดจุดบอด</div><div class="num n-err">${s.missed}</div></div>`;
+  document.getElementById('dec-list').innerHTML = (j.decisions || []).map(d => `
+    <div class="dec-item">
+      <div class="q">โจทย์: ${esc(d.question)}</div>
+      <div class="d">👑 ตัดสินใจ: ${esc(d.decision)}</div>
+      <div class="meta">#${d.id} · ${(d.at || '').substring(0, 16).replace('T', ' ')}${d.consult_id ? ` · จาก consult #${d.consult_id}` : ''}</div>
+      ${d.verdict
+        ? `<span class="tag t-${d.verdict}">${TAG_TH[d.verdict]}</span> <span class="q">${esc(d.outcome || '')}</span>`
+        : `<div class="score-row">
+            <input id="outcome-${d.id}" placeholder="ผลลัพธ์จริงที่เกิดขึ้น…">
+            <button class="score-btn sb-saved" onclick="score(${d.id}, 'saved')">🛡 กันเสียหาย</button>
+            <button class="score-btn sb-faster" onclick="score(${d.id}, 'faster')">⚡ เร็วขึ้น</button>
+            <button class="score-btn sb-neutral" onclick="score(${d.id}, 'neutral')">— เฉยๆ</button>
+            <button class="score-btn sb-missed" onclick="score(${d.id}, 'missed')">✗ พลาด</button>
+          </div>`}
+    </div>`).join('') || '<div class="empty">ยังไม่มี — ตัดสินใจจากหน้า Boardroom แล้วบันทึกไว้ที่นี่</div>';
+}
+
+async function score(id, verdict) {
+  const outcome = document.getElementById('outcome-' + id).value.trim();
+  await fetch(`/api/decisions/${id}/score`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({outcome, verdict})
   });
-  loadDeptTasks(key);
+  loadDecisions();
 }
 
-async function loadDeptTasks(key) {
-  try {
-    const j = await (await fetch(`/api/dept/${key}/tasks`)).json();
-    document.getElementById('tasks-' + key).innerHTML = (j.tasks || []).map(t => `
-      <div class="task-item">
-        <div class="cmd">#${t.id} · ${esc(t.command)}</div>
-        <div class="res">${esc(t.result)}</div>
-        <div class="meta">${esc(t.provider)} · ${(t.at || '').substring(0, 16).replace('T', ' ')}</div>
-      </div>`).join('') || '<div class="empty">ยังไม่มีงาน</div>';
-    document.getElementById('lessons-' + key).innerHTML = (j.lessons || []).map(l =>
-      `<div class="lesson">${esc(l)}</div>`).join('') || '<div class="empty">ยังไม่มี — จะสะสมเองเมื่อทำงาน</div>';
-  } catch (e) { /* keep */ }
-}
-
-async function runTask(key) {
-  const ta = document.getElementById('task-text-' + key);
-  const btn = document.getElementById('task-btn-' + key);
-  const cmd = ta.value.trim();
-  if (!cmd) return;
-  btn.disabled = true; btn.textContent = 'WORKING…';
-  try {
-    await fetch(`/api/dept/${key}/task`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({command: cmd})
-    });
-    ta.value = '';
-    await loadDeptTasks(key);
-  } catch (e) { alert('⚠️ ' + e); }
-  btn.disabled = false; btn.textContent = 'ASSIGN';
-}
-
-// ---------- page 6: agents ----------
+// ---------- agents ----------
 function renderAgents() {
   document.getElementById('agent-rows').innerHTML = STATE.depts.map(d => `
     <div class="agent-row">

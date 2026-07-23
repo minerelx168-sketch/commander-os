@@ -1,9 +1,9 @@
-"""Commander Hub — you are the CEO. FastAPI app + JSON API for the command UI.
+"""Commander Hub — C-Suite strategic advisory board. No task automation.
 
 Pages (single-page UI in static/index.html):
-  1. Command Overall — ask the board; CMO/CFO/COO/Datalyst consult as a tree
-  2-5. Dept task pages — assign real work per department (with LLM learning)
-  6. Agents — pick which AI provider powers each C-level
+  1. Boardroom — ask a hard question; 3 rounds: opinions -> cross-exam -> verdicts
+  2. Decisions — Proven-by-Decision log: record what you decided, score the advice
+  3. Agents — pick which AI provider powers each advisor
 """
 import logging
 from pathlib import Path
@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from . import config, depts, llm, store
 
 logging.basicConfig(level=logging.INFO)
-app = FastAPI(title="Commander Hub — CEO Command")
+app = FastAPI(title="Commander Hub — C-Suite Advisory")
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -23,12 +23,19 @@ class AskIn(BaseModel):
     question: str
 
 
-class TaskIn(BaseModel):
-    command: str
-
-
 class ProviderIn(BaseModel):
     provider: str
+
+
+class DecisionIn(BaseModel):
+    consult_id: int | None = None
+    question: str
+    decision: str
+
+
+class ScoreIn(BaseModel):
+    outcome: str
+    verdict: str  # saved | faster | neutral | missed
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -53,7 +60,8 @@ def state() -> dict:
         ],
         "providers": [{"key": k, **v, "ready": llm.provider_ready(k)}
                       for k, v in config.PROVIDERS.items()],
-        "consults": store.get_consults(5),
+        "consults": store.get_consults(8),
+        "decision_stats": store.decision_stats(),
     }
 
 
@@ -70,21 +78,36 @@ def consults(limit: int = 10) -> dict:
     return {"consults": store.get_consults(limit)}
 
 
-@app.post("/api/dept/{dept}/task")
-def dept_task(dept: str, body: TaskIn) -> dict:
-    if dept not in config.DEPTS:
-        raise HTTPException(404, f"unknown dept: {dept}")
-    cmd = body.command.strip()
-    if not cmd:
-        raise HTTPException(400, "command is required")
-    return depts.run_task(dept, cmd)
+@app.get("/api/consults/{consult_id}")
+def consult_detail(consult_id: int) -> dict:
+    c = store.get_consult(consult_id)
+    if c is None:
+        raise HTTPException(404, "consult not found")
+    return c
 
 
-@app.get("/api/dept/{dept}/tasks")
-def dept_tasks(dept: str, limit: int = 30) -> dict:
-    if dept not in config.DEPTS:
-        raise HTTPException(404, f"unknown dept: {dept}")
-    return {"tasks": store.get_tasks(dept, limit), "lessons": store.get_lessons(dept)}
+# ── Proven by Decision ──
+
+@app.post("/api/decisions")
+def add_decision(body: DecisionIn) -> dict:
+    if not body.question.strip() or not body.decision.strip():
+        raise HTTPException(400, "question and decision are required")
+    return store.add_decision(body.consult_id, body.question.strip(), body.decision.strip())
+
+
+@app.get("/api/decisions")
+def decisions(limit: int = 30) -> dict:
+    return {"decisions": store.get_decisions(limit), "stats": store.decision_stats()}
+
+
+@app.post("/api/decisions/{decision_id}/score")
+def score_decision(decision_id: int, body: ScoreIn) -> dict:
+    if body.verdict not in ("saved", "faster", "neutral", "missed"):
+        raise HTTPException(400, "verdict must be saved|faster|neutral|missed")
+    d = store.score_decision(decision_id, body.outcome.strip(), body.verdict)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    return d
 
 
 @app.put("/api/dept/{dept}/provider")

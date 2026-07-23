@@ -1,4 +1,4 @@
-"""Hub tests — consult tree, dept tasks + learning, provider switching."""
+"""Hub tests — 3-round advisory flow, decision log, provider switching."""
 from unittest.mock import patch
 
 import pytest
@@ -23,54 +23,69 @@ def test_state_shape(client):
     s = client.get("/api/state").json()
     assert {d["key"] for d in s["depts"]} == {"cmo", "cfo", "coo", "datalyst"}
     assert {p["key"] for p in s["providers"]} >= {"anthropic", "gemini", "manus", "mock"}
-    for d in s["depts"]:
-        assert {"name", "icon", "role", "provider", "provider_ready", "online"} <= set(d)
+    assert set(s["decision_stats"]) == {"total", "scored", "saved", "faster", "neutral", "missed"}
 
 
-def test_consult_returns_all_four_answers(client):
-    with patch("app.llm.chat", side_effect=_fake_chat):
+def test_consult_runs_three_rounds(client):
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
         r = client.post("/api/consult", json={"question": "ควรเปิดสาขาใหม่ไหม"})
     assert r.status_code == 200
     j = r.json()
-    assert j["question"] == "ควรเปิดสาขาใหม่ไหม"
-    assert set(j["answers"]) == {"cmo", "cfo", "coo", "datalyst"}
-    assert all(a["text"] for a in j["answers"].values())
-    # history persisted
-    h = client.get("/api/consults").json()["consults"]
-    assert h[0]["question"] == "ควรเปิดสาขาใหม่ไหม"
+    for rnd in ("opinions", "cross_exam", "verdicts"):
+        assert set(j[rnd]) == {"cmo", "cfo", "coo", "datalyst"}, rnd
+        assert all(a["text"] for a in j[rnd].values())
+    assert m.call_count == 12  # 4 advisors x 3 rounds
+    # cross-exam prompt carries the other advisors' round-1 opinions
+    cross_calls = [c for c in m.call_args_list if "วิพากษ์" in c.args[1]]
+    assert cross_calls and "ความเห็นของที่ปรึกษาคนอื่น" in cross_calls[0].args[2]
+    # persisted + retrievable by id
+    assert client.get(f"/api/consults/{j['id']}").json()["question"] == "ควรเปิดสาขาใหม่ไหม"
 
 
-def test_dept_task_logs_and_learns(client):
-    with patch("app.llm.chat", side_effect=_fake_chat), \
-         patch("app.depts._svc_context", return_value="(no data)"):
-        r = client.post("/api/dept/cmo/task", json={"command": "ทำแผนโปรโมชั่น"})
-    assert r.status_code == 200
-    t = r.json()
-    assert t["dept"] == "cmo" and t["command"] == "ทำแผนโปรโมชั่น" and t["id"] == 1
-    j = client.get("/api/dept/cmo/tasks").json()
-    assert j["tasks"][0]["command"] == "ทำแผนโปรโมชั่น"
-    assert len(j["lessons"]) == 1  # LLM learning captured a lesson
+def test_guardrails_in_prompts(client):
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        client.post("/api/consult", json={"question": "x"})
+    opinion_systems = [c.args[1] for c in m.call_args_list if "กฎเหล็ก" in c.args[1]]
+    assert len(opinion_systems) == 4
+    joined = "\n".join(opinion_systems)
+    assert "ห้ามออกความเห็นเรื่องสภาพคล่อง" in joined      # CMO guardrail
+    assert "ห้ามออกความเห็นเรื่องกลยุทธ์การตลาด" in joined  # CFO guardrail
+    # forced answer structure present in every opinion prompt
+    for s in opinion_systems:
+        for part in ("มุมมอง/โอกาส", "ความเสี่ยงที่ซ่อนอยู่", "คำแนะนำขั้นเด็ดขาด"):
+            assert part in s
+
+
+def test_decision_log_and_scoring(client):
+    r = client.post("/api/decisions", json={"consult_id": 1, "question": "โจทย์", "decision": "ลุย"})
+    d = r.json()
+    assert d["id"] == 1 and d["verdict"] is None
+    r = client.post("/api/decisions/1/score", json={"outcome": "รอด", "verdict": "saved"})
+    assert r.json()["verdict"] == "saved"
+    j = client.get("/api/decisions").json()
+    assert j["stats"]["total"] == 1 and j["stats"]["saved"] == 1
+    assert client.post("/api/decisions/1/score", json={"outcome": "", "verdict": "nope"}).status_code == 400
+    assert client.post("/api/decisions/99/score", json={"outcome": "", "verdict": "saved"}).status_code == 404
 
 
 def test_provider_switch(client):
     r = client.put("/api/dept/cfo/provider", json={"provider": "anthropic"})
     assert r.json()["providers"]["cfo"] == "anthropic"
-    s = client.get("/api/state").json()
-    cfo = next(d for d in s["depts"] if d["key"] == "cfo")
-    assert cfo["provider"] == "anthropic"
     assert client.put("/api/dept/cfo/provider", json={"provider": "nope"}).status_code == 400
     assert client.put("/api/dept/nope/provider", json={"provider": "mock"}).status_code == 404
 
 
-def test_index_serves_ui(client):
+def test_index_serves_advisory_ui(client):
     html = client.get("/").text
-    for marker in ("Command Overall", "view-overall", "view-cmo", "view-cfo",
-                   "view-coo", "view-datalyst", "view-agents", "tree-branches",
-                   "askBoard", "setProvider"):
+    for marker in ("view-board", "view-decisions", "view-agents", "Cross-Examination",
+                   "Round 1", "Round 3", "askBoard", "recordDecision", "setProvider"):
         assert marker in html, marker
+    # automation-era pages are gone
+    for stale in ("view-cmo", "runTask", "LLM Learning"):
+        assert stale not in html, f"stale automation marker: {stale}"
 
 
 def test_bad_inputs(client):
     assert client.post("/api/consult", json={"question": "  "}).status_code == 400
-    assert client.post("/api/dept/cmo/task", json={"command": ""}).status_code == 400
-    assert client.post("/api/dept/nope/task", json={"command": "x"}).status_code == 404
+    assert client.post("/api/decisions", json={"question": "", "decision": ""}).status_code == 400
+    assert client.get("/api/consults/999").status_code == 404
