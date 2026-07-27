@@ -48,16 +48,34 @@ def _gemini(system: str, user: str) -> str:
 
 
 def _manus(system: str, user: str) -> str:
-    r = httpx.post(
-        config.MANUS_API_URL,
-        headers={"Authorization": f"Bearer {config.MANUS_API_KEY}"},
-        json={"model": config.PROVIDERS["manus"]["model"],
-              "messages": [{"role": "system", "content": system},
-                           {"role": "user", "content": user}]},
-        timeout=TIMEOUT,
-    )
+    """Manus native task API: create task -> poll until completed -> collect text.
+
+    Manus is agent/task-oriented (POST /v1/tasks, header API_KEY) rather than
+    an OpenAI-style chat endpoint. Fast mode keeps advisory latency tolerable.
+    """
+    base = config.MANUS_API_URL
+    headers = {"API_KEY": config.MANUS_API_KEY}
+    r = httpx.post(f"{base}/tasks", headers=headers,
+                   json={"prompt": f"{system}\n\n---\n\n{user}", "mode": "fast"},
+                   timeout=TIMEOUT)
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    task_id = r.json()["task_id"]
+
+    import time
+    deadline = time.monotonic() + 280
+    while time.monotonic() < deadline:
+        time.sleep(6)
+        t = httpx.get(f"{base}/tasks/{task_id}", headers=headers, timeout=30).json()
+        status = t.get("status")
+        if status in ("completed", "failed", "stopped"):
+            texts = [c.get("text", "")
+                     for m in t.get("output", []) if m.get("role") != "user"
+                     for c in m.get("content", []) if c.get("type") == "output_text"]
+            out = "\n".join(x for x in texts if x).strip()
+            if status != "completed" and not out:
+                raise RuntimeError(f"manus task {status}")
+            return out or f"(Manus task {status} — ดูรายละเอียด: {t.get('metadata', {}).get('task_url', '')})"
+    raise TimeoutError("manus task still running after 280s")
 
 
 def _mock(system: str, user: str) -> str:

@@ -29,14 +29,14 @@ DEPTS = {
 PROVIDERS = {
     "anthropic": {"label": "Claude (Anthropic)", "model": os.getenv("ANTHROPIC_MODEL", "claude-fable-5")},
     "gemini": {"label": "Gemini (Google)", "model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash")},
-    "manus": {"label": "Manus", "model": os.getenv("MANUS_MODEL", "manus-1")},
+    "manus": {"label": "Manus", "model": os.getenv("MANUS_MODEL", "manus-1.6-agent")},
     "mock": {"label": "Mock (offline)", "model": "mock"},
 }
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
-MANUS_API_URL = os.getenv("MANUS_API_URL", "https://api.manus.im/v1/chat/completions")
+MANUS_API_URL = os.getenv("MANUS_API_URL", "https://api.manus.im/v1").rstrip("/").removesuffix("/chat/completions")
 
 # --- Documents: Google Drive + LINE ---
 GDRIVE_SA_JSON = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "")   # path to service-account .json
