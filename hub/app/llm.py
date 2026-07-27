@@ -78,18 +78,35 @@ def _manus(system: str, user: str) -> str:
     raise TimeoutError("manus task still running after 280s")
 
 
+def _zai(system: str, user: str) -> str:
+    """Z.AI (GLM) — OpenAI-compatible chat completions."""
+    r = httpx.post(
+        config.ZAI_API_URL,
+        headers={"Authorization": f"Bearer {config.ZAI_API_KEY}"},
+        json={"model": config.PROVIDERS["zai"]["model"],
+              "messages": [{"role": "system", "content": system},
+                           {"role": "user", "content": user}]},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    msg = r.json()["choices"][0]["message"]
+    return (msg.get("content") or "").strip()
+
+
 def _mock(system: str, user: str) -> str:
     return ("[mock] ยังไม่ได้เชื่อม AI provider สำหรับแผนกนี้ — ไปที่หน้า Agents "
             "เพื่อเลือก provider ที่มี API key แล้วถามใหม่อีกครั้ง\n"
             f"(คำถามที่ได้รับ: {user[:120]})")
 
 
-_CALLERS = {"anthropic": _anthropic, "gemini": _gemini, "manus": _manus, "mock": _mock}
+_CALLERS = {"anthropic": _anthropic, "gemini": _gemini, "manus": _manus,
+            "zai": _zai, "mock": _mock}
 
 _HAS_KEY = {
     "anthropic": lambda: bool(config.ANTHROPIC_API_KEY),
     "gemini": lambda: bool(config.GOOGLE_API_KEY),
     "manus": lambda: bool(config.MANUS_API_KEY),
+    "zai": lambda: bool(config.ZAI_API_KEY),
     "mock": lambda: True,
 }
 
