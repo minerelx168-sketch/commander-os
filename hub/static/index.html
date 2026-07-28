@@ -9,7 +9,7 @@
     /* Jarvis / arc-reactor palette: deep blue-black + glowing cyan */
     --bg: #010409; --panel: #050b16; --panel2: #081120; --border: #0e2a45;
     --text: #cfeaff; --dim: #4f7ea8; --accent: #00d4ff; --green: #34d399;
-    --amber: #fbbf24; --red: #f87171;
+    --amber: #fbbf24; --red: #f87171; --purple: #a78bfa;
     --glow: 0 0 14px rgba(0, 212, 255, .35);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,9 +56,12 @@
     background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
   }
   .advisor .ic { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; background: radial-gradient(circle at 50% 50%, #0c3a5e, #02070f 75%); border: 1px solid var(--border); }
-  .advisor .nm { font-size: 12.5px; font-weight: 700; }
+  .advisor .nm { font-size: 12.5px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
   .advisor .rl { color: var(--dim); font-size: 8.5px; letter-spacing: 1px; text-transform: uppercase; font-family: "SF Mono", monospace; }
   .advisor .pv { margin-left: auto; color: var(--dim); font-size: 8.5px; font-family: "SF Mono", monospace; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot.on { background: var(--green); box-shadow: 0 0 7px var(--green); }
+  .dot.off { background: #34506b; }
   .side-foot { margin-top: auto; padding-top: 14px; color: var(--dim); font-size: 10px; text-align: center; }
 
   /* ===== main ===== */
@@ -75,6 +78,17 @@
   .empty { color: var(--dim); font-style: italic; }
 
   /* ===== boardroom: ask box ===== */
+  .askrow { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .askrow label { color: var(--dim); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; font-family: "SF Mono", monospace; }
+  select.pick {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    font-family: inherit; font-size: 13px; padding: 11px 14px; border-radius: 10px; outline: none; cursor: pointer; min-width: 220px;
+  }
+  select.pick:focus { border-color: var(--accent); box-shadow: var(--glow); }
+  .toggle { display: flex; align-items: center; gap: 7px; cursor: pointer; color: var(--text); font-size: 12.5px;
+            background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .toggle:hover { border-color: var(--accent); }
+  .toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
   .askbox { display: flex; gap: 12px; }
   .askbox textarea {
     flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
@@ -92,6 +106,9 @@
   .btn:disabled { opacity: .5; cursor: wait; }
   .btn.sm { font-size: 11px; padding: 10px 20px; letter-spacing: 1.5px; }
   .btn.ghost { background: transparent; color: var(--accent); }
+  .btn.danger { background: transparent; color: var(--red); border-color: var(--red); box-shadow: 0 0 12px rgba(248,113,113,.3); text-shadow: none; }
+  .btn.warn { background: transparent; color: var(--amber); border-color: var(--amber); box-shadow: none; text-shadow: none; }
+  .btn.alt { background: transparent; color: var(--purple); border-color: var(--purple); box-shadow: none; text-shadow: none; }
 
   /* rounds */
   .round { margin-top: 18px; }
@@ -100,7 +117,17 @@
     color: var(--accent); font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase;
     font-family: "SF Mono", monospace; text-shadow: 0 0 8px rgba(0,212,255,.4);
   }
-  .round-h::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--accent), transparent); opacity: .5; }
+  .round-h .line { flex: 1; height: 1px; background: linear-gradient(90deg, var(--accent), transparent); opacity: .5; }
+  .step-act {
+    font-size: 10px; padding: 6px 11px; border-radius: 8px; cursor: pointer; letter-spacing: .5px;
+    font-family: "SF Mono", monospace; background: transparent; border: 1px solid var(--border); color: var(--dim);
+  }
+  .step-act:hover { color: var(--accent); border-color: var(--accent); }
+  .step-act.branch:hover { color: var(--purple); border-color: var(--purple); }
+  .directive-note {
+    background: rgba(167,139,250,.08); border-left: 2px solid var(--purple); color: var(--text);
+    padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 12px;
+  }
   .round-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
   .op-card {
     background: var(--panel2); border: 1px solid var(--border); border-radius: 12px;
@@ -114,6 +141,33 @@
   .op-card .body { white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
   .op-card.err { border-color: rgba(248,113,113,.45); }
   .op-card.verdict { border-color: rgba(0,212,255,.4); background: linear-gradient(180deg, rgba(0,212,255,.06), var(--panel2)); }
+  .chair-card {
+    background: linear-gradient(180deg, rgba(0,212,255,.1), var(--panel2));
+    border: 1px solid var(--accent); border-radius: 14px; padding: 18px 22px;
+    box-shadow: var(--glow), inset 0 0 26px rgba(0,212,255,.06);
+  }
+  .chair-card .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .chair-card .ic { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; background: radial-gradient(circle at 50% 50%, #0c3a5e, #02070f 75%); border: 1px solid var(--accent); }
+  .chair-card .nm { font-weight: 700; font-size: 15px; }
+  .chair-card .body { white-space: pre-wrap; font-size: 13.5px; line-height: 1.75; }
+  .research-card {
+    background: linear-gradient(180deg, rgba(52,211,153,.07), var(--panel2));
+    border: 1px solid rgba(52,211,153,.5); border-radius: 14px; padding: 18px 22px;
+  }
+  .research-card .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .research-card .ic { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 18px; background: radial-gradient(circle at 50% 50%, #0c3a5e, #02070f 75%); border: 1px solid rgba(52,211,153,.5); }
+  .research-card .nm { font-weight: 700; font-size: 15px; }
+  .research-card .body { white-space: pre-wrap; font-size: 13px; line-height: 1.75; }
+  .research-card.err { border-color: rgba(248,113,113,.5); background: rgba(248,113,113,.05); }
+  .srcs { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 12px; }
+  .srcs .h { color: var(--dim); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; font-family: "SF Mono", monospace; margin-bottom: 8px; }
+  .src { display: flex; gap: 8px; padding: 5px 0; font-size: 11.5px; align-items: baseline; }
+  .src .n { color: var(--green); font-family: "SF Mono", monospace; flex-shrink: 0; }
+  .src a { color: var(--accent); text-decoration: none; word-break: break-all; }
+  .src a:hover { text-decoration: underline; }
+  .qchips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .qchip { font-size: 10.5px; padding: 4px 10px; border-radius: 8px; background: rgba(52,211,153,.1); color: var(--green); border: 1px solid rgba(52,211,153,.3); font-family: "SF Mono", monospace; }
+
   .q-banner {
     max-width: 680px; margin: 0 auto 4px; text-align: center;
     background: radial-gradient(circle at 50% 0%, #0c3a5e, #04101f 75%);
@@ -122,17 +176,41 @@
   }
   .q-banner .who { color: var(--accent); font-size: 10px; letter-spacing: 2px; font-family: "SF Mono", monospace; text-shadow: 0 0 8px rgba(0,212,255,.6); }
   .q-banner .q { margin-top: 6px; font-size: 14px; }
-  .decide-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .q-banner .meta { margin-top: 8px; color: var(--dim); font-size: 10px; font-family: "SF Mono", monospace; }
+
+  /* decision gate between rounds */
+  .gate {
+    margin-top: 20px; background: linear-gradient(180deg, rgba(251,191,36,.07), var(--panel2));
+    border: 1px solid var(--amber); border-radius: 14px; padding: 16px 18px;
+  }
+  .gate .title { color: var(--amber); font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase; font-family: "SF Mono", monospace; margin-bottom: 4px; }
+  .gate .sub { color: var(--dim); font-size: 12px; margin-bottom: 12px; }
+  .gate input {
+    width: 100%; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    font-family: inherit; font-size: 13px; padding: 13px 16px; border-radius: 10px; outline: none; margin-bottom: 12px;
+  }
+  .gate input:focus { border-color: var(--amber); }
+  .gate .acts { display: flex; gap: 10px; flex-wrap: wrap; }
+  .running {
+    margin-top: 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--panel2); border: 1px solid var(--accent); border-radius: 14px; padding: 16px 18px;
+  }
+  .running .txt { color: var(--accent); font-size: 12px; letter-spacing: 1.5px; font-family: "SF Mono", monospace; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .stopped-bar { margin-top: 20px; background: rgba(248,113,113,.07); border: 1px solid var(--red); border-radius: 14px; padding: 16px 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  .decide-bar { display: flex; gap: 10px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
   .decide-bar input {
-    flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    flex: 1; min-width: 200px; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
     font-family: inherit; font-size: 13px; padding: 13px 16px; border-radius: 10px; outline: none;
   }
   .decide-bar input:focus { border-color: var(--accent); box-shadow: var(--glow); }
 
-  .hist-item { padding: 11px 0; border-bottom: 1px dashed #0e2a4580; cursor: pointer; }
+  .hist-item { padding: 11px 0; border-bottom: 1px dashed #0e2a4580; cursor: pointer; display: flex; align-items: center; gap: 10px; }
   .hist-item:hover .q { color: var(--accent); text-shadow: 0 0 8px rgba(0,212,255,.4); }
   .hist-item .q { font-size: 12.5px; }
   .hist-item .at { color: var(--dim); font-size: 10px; font-family: "SF Mono", monospace; }
+  .hist-item .del { margin-left: auto; }
 
   /* ===== decisions page ===== */
   .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 14px; }
@@ -149,6 +227,7 @@
   .t-faster { background: rgba(0,212,255,.1); color: var(--accent); border: 1px solid rgba(0,212,255,.35); }
   .t-neutral { background: rgba(79,126,168,.12); color: var(--dim); border: 1px solid var(--border); }
   .t-missed { background: rgba(248,113,113,.12); color: var(--red); border: 1px solid rgba(248,113,113,.35); }
+  .t-branch { background: rgba(167,139,250,.12); color: var(--purple); border: 1px solid rgba(167,139,250,.35); }
   .score-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .score-row input { flex: 1; min-width: 180px; background: var(--panel); border: 1px solid var(--border); color: var(--text); font-family: inherit; font-size: 12px; padding: 10px 13px; border-radius: 9px; outline: none; }
   .score-btn {
@@ -164,7 +243,7 @@
   .agent-row {
     display: flex; align-items: center; gap: 14px; background: var(--panel2);
     border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 10px;
-    transition: border-color .2s;
+    transition: border-color .2s; flex-wrap: wrap;
   }
   .agent-row:hover { border-color: var(--accent); box-shadow: var(--glow); }
   .agent-row .ic {
@@ -182,7 +261,20 @@
   .b-on { background: rgba(52,211,153,.12); color: var(--green); border: 1px solid rgba(52,211,153,.35); }
   .b-off { background: rgba(79,126,168,.12); color: var(--dim); border: 1px solid var(--border); }
 
+  /* upload */
+  .drop {
+    border: 1px dashed var(--border); border-radius: 12px; padding: 20px; text-align: center;
+    color: var(--dim); cursor: pointer; transition: all .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); color: var(--accent); background: rgba(0,212,255,.04); }
+
   @media (max-width: 1100px) { .round-grid { grid-template-columns: repeat(2, 1fr); } .stats { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 720px) {
+    body { flex-direction: column; }
+    aside { width: 100%; height: auto; position: static; }
+    main { height: auto; padding: 16px; }
+    .round-grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -210,16 +302,26 @@
 
 <!-- ===== PAGE 1: BOARDROOM ===== -->
 <section class="view active" id="view-board">
-  <h1 class="page">Boardroom — โยนโจทย์ยากให้บอร์ดถกก่อนคุณตัดสิน</h1>
+  <h1 class="page">Boardroom — โยนโจทย์ยากให้บอร์ดถกทีละรอบ คุณคุมทุกจุดตัดสินใจ</h1>
   <div class="panel">
+    <div class="askrow">
+      <label>โปรเจคที่จะถก</label>
+      <select class="pick" id="ask-project">
+        <option value="">— ทุกโปรเจค (ใช้เอกสารทั้งคลัง) —</option>
+      </select>
+      <label class="toggle" title="บอร์ดจะสืบข้อมูลจริงจากอินเทอร์เน็ต คัดกรอง แล้วใช้ประกอบการถก">
+        <input type="checkbox" id="ask-web" checked> 🌐 สืบข้อมูลจากอินเทอร์เน็ตก่อนถก
+      </label>
+      <span class="empty" id="scope-note"></span>
+    </div>
     <div class="askbox">
-      <textarea id="ask-text" rows="1" placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะให้ความเห็น → วิพากษ์กันเอง → ให้คำตัดสินสุดท้าย"></textarea>
+      <textarea id="ask-text" rows="1" placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะให้ความเห็น → วิพากษ์กันเอง → คำตัดสิน → บทสรุปประธาน"></textarea>
       <button class="btn" id="ask-btn" onclick="askBoard()">CONSULT</button>
     </div>
     <div id="board-out"></div>
   </div>
   <div class="panel">
-    <h2>ประวัติการปรึกษา</h2>
+    <h2>ประวัติการปรึกษา (กิ่งที่แตกออกไปจะขึ้น ↳ ใต้ต้นทาง)</h2>
     <div id="consult-hist"><div class="empty">ยังไม่มี</div></div>
   </div>
 </section>
@@ -234,10 +336,26 @@
   </div>
 </section>
 
-<!-- ===== PAGE 3: DOCUMENTS (LINE -> Drive -> advisor knowledge) ===== -->
+<!-- ===== PAGE 3: DOCUMENTS (LINE / upload / Drive -> advisor knowledge) ===== -->
 <section class="view" id="view-docs">
-  <h1 class="page">เอกสาร — คลังความรู้ธุรกิจของคุณ (LINE → Google Drive)</h1>
+  <h1 class="page">เอกสาร — คลังความรู้ธุรกิจของคุณ (LINE / อัพโหลด / Google Drive)</h1>
   <div class="stats" id="doc-stats" style="grid-template-columns: repeat(4, 1fr);"></div>
+
+  <div class="panel">
+    <h2>⬆️ อัพโหลดเอกสารจากเครื่องนี้</h2>
+    <div class="askrow">
+      <label>เข้าโปรเจค</label>
+      <select class="pick" id="up-project">
+        <option value="">— ให้บรรณารักษ์ AI จัดให้อัตโนมัติ —</option>
+      </select>
+    </div>
+    <div class="drop" id="drop" onclick="document.getElementById('up-file').click()">
+      📎 คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางตรงนี้ (PDF / รูป / CSV / ข้อความ)
+    </div>
+    <input type="file" id="up-file" multiple style="display:none" onchange="uploadFiles(this.files)">
+    <div class="empty" id="up-status" style="margin-top:10px;"></div>
+  </div>
+
   <div class="panel">
     <h2>🗂 โปรเจคของคุณ (โฟลเดอร์ใน Google Drive) — บรรณารักษ์จะจัดเอกสารเข้าโปรเจคให้อัตโนมัติ</h2>
     <div id="proj-tags" style="margin-bottom:12px;"></div>
@@ -258,7 +376,7 @@
   </div>
   <div class="panel">
     <h2>📚 เอกสารที่บอร์ดใช้ศึกษางานของคุณ</h2>
-    <div id="doc-list"><div class="empty">ยังไม่มี — ส่งไฟล์/ข้อความเข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div></div>
+    <div id="doc-list"><div class="empty">ยังไม่มี — อัพโหลด หรือส่งไฟล์เข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div></div>
   </div>
 </section>
 
@@ -266,7 +384,7 @@
 <section class="view" id="view-agents">
   <h1 class="page">Agents — เลือก AI ให้แต่ละที่ปรึกษา</h1>
   <div class="panel">
-    <h2>ผูก AI provider เข้ากับที่ปรึกษา (Claude / Gemini / Manus)</h2>
+    <h2>ผูก AI provider เข้ากับที่ปรึกษา (Claude / Gemini / Manus) · จุดเขียว = service ของแผนกออนไลน์</h2>
     <div id="agent-rows"><div class="empty">กำลังโหลด…</div></div>
   </div>
 </section>
@@ -275,9 +393,12 @@
 
 <script>
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;');
-let STATE = { depts: [], providers: [], consults: [], decision_stats: {} };
+let STATE = { depts: [], providers: [], projects: [], consults: [], decision_stats: {} };
 const DEPT_KEYS = ['cmo', 'cfo', 'coo', 'datalyst'];
-let lastConsult = null;
+let SESSION = null;      // current consult session (with next_step)
+let RUNNING = false;
+let ABORT = null;        // AbortController for the in-flight round
+let WEB_TOGGLE_SET = false;
 
 // ---------- tabs ----------
 document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => {
@@ -290,22 +411,41 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
 }));
 
 // ---------- state ----------
+function fillProjects(sel, projects, keepValue) {
+  const cur = keepValue ?? sel.value;
+  const first = sel.options[0] ? sel.options[0].outerHTML : '';
+  sel.innerHTML = first + (projects || []).map(p =>
+    `<option value="${esc(p)}">📁 ${esc(p)}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
 async function loadState() {
   try {
     STATE = await (await fetch('/api/state')).json();
     document.getElementById('conn').textContent = '🟢 hub live';
     document.getElementById('advisor-list').innerHTML = STATE.depts.map(d => `
-      <div class="advisor">
+      <div class="advisor" title="${d.online ? 'service ออนไลน์' : 'service ออฟไลน์ — บอร์ดยังตอบได้จาก LLM + คลังเอกสาร'}">
         <div class="ic">${d.icon}</div>
-        <div><div class="nm">${d.name}</div><div class="rl">${esc(d.role)}</div></div>
+        <div><div class="nm"><span class="dot ${d.online ? 'on' : 'off'}"></span>${d.name}</div>
+             <div class="rl">${esc(d.role)}</div></div>
         <span class="pv">${esc(d.provider)}</span>
       </div>`).join('');
+    fillProjects(document.getElementById('ask-project'), STATE.projects);
+    fillProjects(document.getElementById('up-project'), STATE.projects);
+    const rs = STATE.research || {};
+    document.getElementById('scope-note').textContent =
+      `🌐 ค้นเว็บผ่าน ${rs.label || '-'}` +
+      (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+    if (!WEB_TOGGLE_SET) {   // respect the CEO's choice; only seed it once
+      document.getElementById('ask-web').checked = rs.default_on !== false;
+      WEB_TOGGLE_SET = true;
+    }
     renderHistory(STATE.consults);
     renderAgents();
   } catch (e) { document.getElementById('conn').textContent = '🔴 hub offline'; }
 }
 loadState();
-setInterval(loadState, 20000);
+setInterval(() => { if (!RUNNING) loadState(); }, 20000);
 
 // ---------- boardroom ----------
 function opCard(dept, a, cls) {
@@ -321,64 +461,216 @@ function opCard(dept, a, cls) {
     </div>`;
 }
 
-function renderConsult(c) {
-  lastConsult = c;
-  const grid = (round, cls) => DEPT_KEYS.map(k => round[k] ? opCard(k, round[k], cls) : '').join('');
-  document.getElementById('board-out').innerHTML = `
+function chairCard(a) {
+  return `
+    <div class="chair-card ${a.ok ? '' : 'err'}">
+      <div class="head">
+        <div class="ic">⚖️</div>
+        <div><div class="nm">ประธานบอร์ด — บทสรุปเพื่อการตัดสินใจ</div>
+             <div class="rl mono" style="color:var(--dim);font-size:9px;">CHAIRMAN SYNTHESIS · ${esc(a.provider)}</div></div>
+      </div>
+      <div class="body">${esc(a.text)}</div>
+    </div>`;
+}
+
+function researchCard(a) {
+  const srcs = (a.sources || []).map((s, i) => `
+    <div class="src"><span class="n">[${i + 1}]</span>
+      <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a></div>`).join('');
+  return `
+    <div class="research-card ${a.ok ? '' : 'err'}">
+      <div class="head">
+        <div class="ic">🌐</div>
+        <div><div class="nm">ฝ่ายวิจัยข้อมูล — ข้อมูลจากอินเทอร์เน็ตที่ผ่านการคัดกรอง</div>
+             <div class="rl mono" style="color:var(--dim);font-size:9px;">RESEARCH ANALYST · ${esc(a.provider)}</div></div>
+      </div>
+      ${(a.queries || []).length ? `<div class="qchips">${a.queries.map(q => `<span class="qchip">🔍 ${esc(q)}</span>`).join('')}</div>` : ''}
+      <div class="body">${esc(a.text)}</div>
+      ${srcs ? `<div class="srcs"><div class="h">แหล่งข้อมูลที่ดึงมาคัดกรอง (${(a.sources || []).length})</div>${srcs}</div>` : ''}
+    </div>`;
+}
+
+function stepBlock(s, idx) {
+  const label = (SESSION.step_labels || {})[s.key] || s.key;
+  let body;
+  if (s.key === 'research') {
+    body = researchCard(s.results.analyst || { text: '(ไม่มีผลสืบค้น)', provider: '-', ok: false });
+  } else if (s.key === 'synthesis') {
+    body = chairCard(s.results.chair || { text: '(ไม่มีบทสรุป)', provider: '-', ok: false });
+  } else {
+    body = `<div class="round-grid">${DEPT_KEYS.map(k => s.results[k]
+        ? opCard(k, s.results[k], s.key === 'verdicts' ? 'verdict' : '') : '').join('')}</div>`;
+  }
+  return `
     <div class="round">
-      <div class="q-banner"><span class="who">👑 CEO — YOU</span><div class="q">${esc(c.question)}</div></div>
-    </div>
-    <div class="round">
-      <div class="round-h">Round 1 — ความเห็นในกรอบความเชี่ยวชาญ</div>
-      <div class="round-grid">${grid(c.opinions)}</div>
-    </div>
-    <div class="round">
-      <div class="round-h">Round 2 — Cross-Examination วิพากษ์กันเอง</div>
-      <div class="round-grid">${grid(c.cross_exam)}</div>
-    </div>
-    <div class="round">
-      <div class="round-h">Round 3 — คำตัดสินสุดท้ายต่อ CEO</div>
-      <div class="round-grid">${grid(c.verdicts, 'verdict')}</div>
-    </div>
+      <div class="round-h">
+        <span>${esc(label)}</span>
+        <span class="line"></span>
+        <button class="step-act" onclick="resetTo('${s.key}')" title="ลบรอบนี้และรอบถัดไปทิ้ง แล้วถกใหม่ — บอร์ดจะรู้ว่าแนวเดิมถูกปัดตก">↩ ย้อนกลับมาแก้จุดนี้</button>
+        <button class="step-act branch" onclick="branchAt('${s.key}')" title="เปิดไทม์ไลน์ใหม่จากจุดนี้ โดยเก็บของเดิมไว้ครบ">🔀 แตกกิ่งจากจุดนี้</button>
+      </div>
+      ${s.directive ? `<div class="directive-note">👑 คำสั่ง CEO ก่อนรอบนี้: ${esc(s.directive)}</div>` : ''}
+      ${body}
+    </div>`;
+}
+
+function gateBlock() {
+  const label = SESSION.next_label || SESSION.next_step;
+  const isLast = SESSION.next_step === 'synthesis';
+  return `
+    <div class="gate">
+      <div class="title">🛑 จุดตัดสินใจของ CEO</div>
+      <div class="sub">บอร์ดหยุดรอคำสั่งคุณก่อนเข้า <b>${esc(label)}</b> — จะสั่งเพิ่มก่อนก็ได้ หรือข้ามไปสรุปเลย</div>
+      <input id="directive" placeholder="สั่งบอร์ดเพิ่มเติมก่อนเข้ารอบนี้ เช่น 'เน้นความเสี่ยงด้านกระแสเงินสดเป็นหลัก' (เว้นว่างได้)">
+      <div class="acts">
+        <button class="btn sm" onclick="advance()">▶ ดำเนินการต่อ — ${esc(label)}</button>
+        ${isLast ? '' : '<button class="btn sm warn" onclick="advance(\'synthesis\')">⏭ ข้ามไปบทสรุปประธานเลย</button>'}
+        <button class="btn sm danger" onclick="stopBoard()">⏹ จบการประชุมที่นี่</button>
+      </div>
+    </div>`;
+}
+
+function decideBlock() {
+  return `
     <div class="decide-bar">
       <input id="my-decision" placeholder="คุณตัดสินใจอย่างไร? บันทึกไว้เพื่อวัดผลที่ปรึกษาภายหลัง…">
       <button class="btn sm" onclick="recordDecision()">บันทึกการตัดสินใจ</button>
+      <button class="btn sm alt" onclick="branchAt(SESSION.steps[0] && SESSION.steps[0].key)">🔀 ลองอีกทางจากต้น</button>
     </div>`;
+}
+
+function renderSession(s, runningLabel) {
+  SESSION = s;
+  const lineage = s.parent_id
+    ? `<span class="tag t-branch">🔀 แตกกิ่งจาก #${s.parent_id} ที่ ${esc(s.branched_from || '')}</span>` : '';
+  const proj = s.project ? `<span class="tag t-faster">📁 ${esc(s.project)}</span>` : '';
+  const web = s.web_research ? '<span class="tag t-saved">🌐 สืบเว็บ</span>' : '';
+  let html = `
+    <div class="round">
+      <div class="q-banner">
+        <span class="who">👑 CEO — YOU</span>
+        <div class="q">${esc(s.question)}</div>
+        <div class="meta">#${s.id} ${proj} ${web} ${lineage}</div>
+      </div>
+    </div>`;
+  html += (s.steps || []).map(stepBlock).join('');
+
+  if (runningLabel) {
+    html += `
+      <div class="running">
+        <span class="txt">⏳ บอร์ดกำลังถก: ${esc(runningLabel)}…</span>
+        <button class="btn sm danger" onclick="stopBoard()">⏹ STOP</button>
+      </div>`;
+  } else if (s.status === 'stopped') {
+    html += `
+      <div class="stopped-bar">
+        <span style="color:var(--red)">⏹ คุณสั่งหยุดการประชุมนี้ไว้</span>
+        ${s.next_step ? `<button class="btn sm" onclick="advance()">▶ ถกต่อ — ${esc(s.next_label)}</button>` : ''}
+      </div>` + decideBlock();
+  } else if (s.next_step) {
+    html += gateBlock();
+  } else {
+    html += decideBlock();
+  }
+  document.getElementById('board-out').innerHTML = html;
 }
 
 async function askBoard() {
   const ta = document.getElementById('ask-text');
-  const btn = document.getElementById('ask-btn');
   const q = ta.value.trim();
-  if (!q) return;
-  btn.disabled = true; btn.textContent = 'BOARD IS DEBATING…';
-  document.getElementById('board-out').innerHTML =
-    '<div class="round"><div class="round-h">บอร์ดกำลังถก 3 รอบ (ความเห็น → วิพากษ์ → คำตัดสิน)…</div></div>';
-  try {
-    const r = await fetch('/api/consult', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({question: q})
-    });
-    if (!r.ok) throw new Error(await r.text());
-    renderConsult(await r.json());
-    ta.value = '';
-    loadState();
-  } catch (e) {
-    document.getElementById('board-out').innerHTML = `<div class="empty">⚠️ ${esc(String(e))}</div>`;
+  if (!q || RUNNING) return;
+  const project = document.getElementById('ask-project').value;
+  const web_research = document.getElementById('ask-web').checked;
+  const r = await fetch('/api/consult', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question: q, project, web_research})
+  });
+  if (!r.ok) {
+    document.getElementById('board-out').innerHTML = `<div class="empty">⚠️ ${esc(await r.text())}</div>`;
+    return;
   }
-  btn.disabled = false; btn.textContent = 'CONSULT';
+  ta.value = '';
+  renderSession(await r.json());
+  advance();   // fire Round 1 immediately; the session id already exists so STOP works
 }
 document.getElementById('ask-text').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askBoard(); }
 });
 
+async function advance(step) {
+  if (!SESSION || RUNNING) return;
+  const el = document.getElementById('directive');
+  const directive = el ? el.value.trim() : '';
+  const target = step || SESSION.next_step;
+  const label = (SESSION.step_labels || {})[target] || target;
+  RUNNING = true;
+  document.getElementById('ask-btn').disabled = true;
+  renderSession(SESSION, label);
+  ABORT = new AbortController();
+  try {
+    const r = await fetch(`/api/consult/${SESSION.id}/advance`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({step: step || null, directive}), signal: ABORT.signal
+    });
+    if (!r.ok) throw new Error(await r.text());
+    renderSession(await r.json());
+  } catch (e) {
+    if (e.name === 'AbortName' || e.name === 'AbortError') {
+      await refreshSession();   // STOP already told the server; show where it landed
+    } else {
+      renderSession(SESSION);
+      document.getElementById('board-out').insertAdjacentHTML('beforeend',
+        `<div class="empty">⚠️ ${esc(String(e))}</div>`);
+    }
+  } finally {
+    RUNNING = false; ABORT = null;
+    document.getElementById('ask-btn').disabled = false;
+    loadState();
+  }
+}
+
+async function refreshSession() {
+  if (!SESSION) return;
+  const r = await fetch('/api/consults/' + SESSION.id);
+  if (r.ok) renderSession(await r.json());
+}
+
+async function stopBoard() {
+  if (!SESSION) return;
+  await fetch(`/api/consult/${SESSION.id}/stop`, {method: 'POST'});
+  if (ABORT) ABORT.abort();     // stop waiting; the round in flight is abandoned
+  else await refreshSession();
+}
+
+async function resetTo(step) {
+  if (!SESSION || RUNNING) return;
+  if (!confirm(`ย้อนกลับมาที่ "${(SESSION.step_labels || {})[step] || step}"?\n\nรอบนี้และรอบถัดไปทั้งหมดจะถูกลบทิ้ง แต่บอร์ดจะจำได้ว่าแนวเดิมถูกปัดตก และจะเสนอมุมใหม่แทน`)) return;
+  const r = await fetch(`/api/consult/${SESSION.id}/reset`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({step})
+  });
+  if (r.ok) renderSession(await r.json());
+}
+
+async function branchAt(step) {
+  if (!SESSION || RUNNING || !step) return;
+  const r = await fetch(`/api/consult/${SESSION.id}/branch`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({step})
+  });
+  if (!r.ok) { alert(await r.text()); return; }
+  renderSession(await r.json());
+  window.scrollTo(0, 0);
+  loadState();
+}
+
 async function recordDecision() {
   const inp = document.getElementById('my-decision');
   const decision = inp.value.trim();
-  if (!decision || !lastConsult) return;
+  if (!decision || !SESSION) return;
   await fetch('/api/decisions', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({consult_id: lastConsult.id, question: lastConsult.question, decision})
+    body: JSON.stringify({consult_id: SESSION.id, question: SESSION.question, decision})
   });
   inp.value = '';
   inp.placeholder = '✅ บันทึกแล้ว — ไปให้คะแนนได้ที่หน้า Decisions เมื่อรู้ผลจริง';
@@ -386,16 +678,28 @@ async function recordDecision() {
 
 function renderHistory(consults) {
   document.getElementById('consult-hist').innerHTML = (consults || []).map(c => `
-    <div class="hist-item" onclick="openConsult(${c.id})">
-      <div class="q">${esc(c.question)}</div>
-      <div class="at">#${c.id} · ${(c.at || '').substring(0, 16).replace('T', ' ')}</div>
+    <div class="hist-item">
+      <div onclick="openConsult(${c.id})" style="flex:1">
+        <div class="q">${c.parent_id ? '↳ ' : ''}${esc(c.question)}
+          ${c.project ? `<span class="tag t-faster">📁 ${esc(c.project)}</span>` : ''}
+          ${c.parent_id ? `<span class="tag t-branch">🔀 กิ่งของ #${c.parent_id}</span>` : ''}</div>
+        <div class="at">#${c.id} · ${(c.at || '').substring(0, 16).replace('T', ' ')} · ${(c.steps || []).length}/4 รอบ · ${esc(c.status || '')}</div>
+      </div>
+      <button class="step-act del" onclick="delConsult(event, ${c.id})">🗑</button>
     </div>`).join('') || '<div class="empty">ยังไม่มี</div>';
 }
 
 async function openConsult(id) {
-  const c = await (await fetch('/api/consults/' + id)).json();
-  renderConsult(c);
-  window.scrollTo(0, 0);
+  const r = await fetch('/api/consults/' + id);
+  if (r.ok) { renderSession(await r.json()); window.scrollTo(0, 0); }
+}
+
+async function delConsult(ev, id) {
+  ev.stopPropagation();
+  if (!confirm('ลบการปรึกษา #' + id + '?')) return;
+  await fetch('/api/consults/' + id, {method: 'DELETE'});
+  if (SESSION && SESSION.id === id) { SESSION = null; document.getElementById('board-out').innerHTML = ''; }
+  loadState();
 }
 
 // ---------- decisions ----------
@@ -446,19 +750,54 @@ async function loadDocs() {
     <div class="stat"><div class="lbl">Google Drive</div><div class="num ${j.drive_connected ? 'n-ok' : 'n-err'}">${j.drive_connected ? '● เชื่อมแล้ว' : '○ ยังไม่เชื่อม'}</div></div>
     <div class="stat"><div class="lbl">LINE Bot</div><div class="num ${j.line_connected ? 'n-ok' : 'n-err'}">${j.line_connected ? '● เชื่อมแล้ว' : '○ ยังไม่เชื่อม'}</div></div>
     <div class="stat"><div class="lbl">ความรู้ป้อนบอร์ด</div><div class="num">${(j.knowledge_chars / 1000).toFixed(1)}k</div></div>`;
+  fillProjects(document.getElementById('up-project'), j.projects);
   document.getElementById('proj-tags').innerHTML = (j.projects || []).map(p =>
     `<span class="tag t-faster" style="display:inline-block;margin-bottom:6px;">📁 ${esc(p)}</span>`).join(' ')
     || '<span class="empty">ยังไม่มีโปรเจค — สร้างโปรเจคแรก เช่น YourFin</span>';
   document.getElementById('doc-conn').innerHTML = `
     <div class="hist-item" style="cursor:default"><div class="q">💬 LINE → ตั้ง webhook ไปที่ <span class="mono">POST /api/line/webhook</span> ${j.line_connected ? '<span class="tag t-saved">พร้อมใช้</span>' : '<span class="tag t-missed">ใส่ LINE_CHANNEL_SECRET + LINE_CHANNEL_ACCESS_TOKEN ใน hub/.env</span>'}</div></div>
     <div class="hist-item" style="cursor:default"><div class="q">☁️ Google Drive → service account ${j.drive_connected ? '<span class="tag t-saved">พร้อมใช้</span>' : '<span class="tag t-missed">ใส่ GDRIVE_SERVICE_ACCOUNT_JSON + GDRIVE_FOLDER_ID ใน hub/.env</span>'}</div></div>
-    <div class="hist-item" style="cursor:default"><div class="q">🧠 บอร์ดทั้ง 4 ที่ปรึกษาอ่านคลังนี้ (แยกตามโปรเจค) อัตโนมัติทุกครั้งที่คุณถามใน Boardroom</div></div>`;
+    <div class="hist-item" style="cursor:default"><div class="q">🧠 บอร์ดอ่านคลังนี้ทุกครั้งที่ถามใน Boardroom — เลือกโปรเจคตรงกล่องถามเพื่อจำกัดขอบเขต</div></div>`;
   document.getElementById('doc-list').innerHTML = j.documents.map(d => `
     <div class="dec-item">
       <div class="d">📄 ${esc(d.name)} ${d.project ? `<span class="tag t-faster">📁 ${esc(d.project)}</span>` : '<span class="tag t-neutral">ยังไม่จัดโปรเจค</span>'}</div>
       <div class="meta">#${d.id} · ${SRC_TH[d.source] || d.source} → ${d.location === 'drive' ? '☁️ Google Drive' : '💾 เครื่องนี้'} · ${(d.at || '').substring(0, 16).replace('T', ' ')}</div>
       ${d.text ? `<div class="q">${esc(d.text.substring(0, 220))}${d.text.length > 220 ? '…' : ''}</div>` : ''}
-    </div>`).join('') || '<div class="empty">ยังไม่มี — ส่งไฟล์/ข้อความเข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div>';
+    </div>`).join('') || '<div class="empty">ยังไม่มี — อัพโหลด หรือส่งไฟล์เข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div>';
+}
+
+// upload: click or drag-and-drop
+const drop = document.getElementById('drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('over');
+}));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', e => uploadFiles(e.dataTransfer.files));
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  const project = document.getElementById('up-project').value;
+  const el = document.getElementById('up-status');
+  let done = 0;
+  for (const f of files) {
+    el.textContent = `⏳ กำลังอัพโหลด ${f.name} (${done + 1}/${files.length})…`;
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('project', project);
+    const r = await fetch('/api/docs/upload', {method: 'POST', body: fd});
+    if (r.ok) {
+      const j = await r.json();
+      done++;
+      el.textContent = `✅ ${j.name} → ${j.project ? '📁 ' + j.project : 'ยังไม่จัดโปรเจค'} (${j.location === 'drive' ? 'Google Drive' : 'เครื่องนี้'})`;
+    } else {
+      el.textContent = `⚠️ ${f.name}: ${await r.text()}`;
+    }
+  }
+  document.getElementById('up-file').value = '';
+  loadDocs();
+  loadState();
 }
 
 async function addProject() {
@@ -474,6 +813,7 @@ async function addProject() {
   el.textContent = r.ok ? `✅ สร้างโปรเจค ${name} แล้ว` : '⚠️ สร้างไม่สำเร็จ';
   inp.value = '';
   loadDocs();
+  loadState();
 }
 
 async function reclassify() {
@@ -501,6 +841,8 @@ function renderAgents() {
         <div class="nm">${d.name}</div>
         <div class="rl">${esc(d.role)}</div>
       </div>
+      <span class="ready-tag ${d.online ? 'b-on' : 'b-off'}" title="${esc(d.url || '')}">
+        <span class="dot ${d.online ? 'on' : 'off'}"></span> service ${d.online ? 'online' : 'offline'}</span>
       <span class="ready-tag ${d.provider_ready ? 'b-on' : 'b-off'}">${d.provider_ready ? 'key ready' : 'no key'}</span>
       <select onchange="setProvider('${d.key}', this.value)">
         ${STATE.providers.map(p => `
