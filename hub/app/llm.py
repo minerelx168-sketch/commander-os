@@ -79,11 +79,12 @@ def _manus(system: str, user: str) -> str:
 
 
 def _zai(system: str, user: str) -> str:
-    """Z.AI (GLM) — OpenAI-compatible chat completions."""
+    """Z.AI (GLM) — OpenAI-compatible chat completions (thinking disabled for latency)."""
     r = httpx.post(
         config.ZAI_API_URL,
         headers={"Authorization": f"Bearer {config.ZAI_API_KEY}"},
         json={"model": config.PROVIDERS["zai"]["model"],
+              "thinking": {"type": "disabled"},
               "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": user}]},
         timeout=TIMEOUT,
