@@ -535,6 +535,21 @@ def test_decision_log_and_scoring(client):
     assert client.post("/api/decisions/99/score", json={"outcome": "", "verdict": "saved"}).status_code == 404
 
 
+def test_every_provider_accepts_the_cancel_probe(client):
+    """chat() hands `cancel` to whichever caller runs — a provider added without
+    that parameter would blow up mid-consult instead of at import time."""
+    import inspect
+
+    from app import llm
+    for name, caller in llm._CALLERS.items():
+        params = inspect.signature(caller).parameters
+        assert list(params) == ["system", "user", "cancel"], f"{name} signature drifted"
+        assert params["cancel"].default is None, f"{name} must default cancel to None"
+    # a provider missing from any of the three tables is a half-wired provider
+    from app import config
+    assert set(llm._CALLERS) == set(llm._HAS_KEY) == set(config.PROVIDERS)
+
+
 def test_provider_switch(client):
     r = client.put("/api/dept/cfo/provider", json={"provider": "anthropic"})
     assert r.json()["providers"]["cfo"] == "anthropic"

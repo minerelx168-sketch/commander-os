@@ -27,9 +27,10 @@ DEPTS = {
 
 # AI providers selectable per C-level on the Agents page
 PROVIDERS = {
-    "anthropic": {"label": "Claude (Anthropic)", "model": os.getenv("ANTHROPIC_MODEL", "claude-fable-5")},
+    "anthropic": {"label": "Claude (Anthropic)", "model": os.getenv("ANTHROPIC_MODEL", "claude-opus-5")},
     "gemini": {"label": "Gemini (Google)", "model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash")},
     "manus": {"label": "Manus", "model": os.getenv("MANUS_MODEL", "manus-1.6-agent")},
+    "zai": {"label": "Z.AI (GLM)", "model": os.getenv("ZAI_MODEL", "glm-4.6")},
     "mock": {"label": "Mock (offline)", "model": "mock"},
 }
 
@@ -37,6 +38,8 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 MANUS_API_URL = os.getenv("MANUS_API_URL", "https://api.manus.im/v1").rstrip("/").removesuffix("/chat/completions")
+ZAI_API_KEY = os.getenv("ZAI_API_KEY", "")
+ZAI_API_URL = os.getenv("ZAI_API_URL", "https://api.z.ai/api/paas/v4/chat/completions")
 
 # --- Web research: first key wins; falls back to keyless DuckDuckGo ---
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
