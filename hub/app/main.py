@@ -11,11 +11,11 @@ Pages (single-page UI in static/index.html):
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import config, depts, docs, llm, research, store
+from . import config, depts, docs, llm, report, research, store
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="Commander Hub — C-Suite Advisory")
@@ -171,6 +171,57 @@ def branch(session_id: int, body: StepIn) -> dict:
     if child is None:
         raise HTTPException(400, f"รอบ {body.step} ยังไม่ได้รัน — แตกกิ่งไม่ได้")
     return _view(child)
+
+
+# ── PDF reports: the audit trail behind each round + the executive summary ──
+
+def _pdf(body: bytes, filename: str) -> Response:
+    return Response(content=body, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
+@app.get("/api/consult/{session_id}/report/{step}.pdf")
+def step_report(session_id: int, step: str, refresh: bool = False) -> Response:
+    """Per-round report: frameworks used, numbers cited, chart, sources."""
+    session = store.get_consult(session_id)
+    if session is None:
+        raise HTTPException(404, "consult not found")
+    if step not in depts.STEPS:
+        raise HTTPException(400, f"unknown step: {step}")
+    if refresh:
+        report.methodology(session, step, refresh=True)
+        session = store.get_consult(session_id)
+    try:
+        body = report.build_step_pdf(session, step)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return _pdf(body, f"consult-{session_id}-{step}.pdf")
+
+
+@app.get("/api/consult/{session_id}/executive-summary.pdf")
+def executive_summary(session_id: int, refresh: bool = False) -> Response:
+    """Board-level summary with the decision options put to the CEO."""
+    session = store.get_consult(session_id)
+    if session is None:
+        raise HTTPException(404, "consult not found")
+    if refresh:
+        report.decision_options(session, refresh=True)
+        session = store.get_consult(session_id)
+    try:
+        body = report.build_executive_summary_pdf(session)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return _pdf(body, f"consult-{session_id}-executive-summary.pdf")
+
+
+@app.get("/api/consult/{session_id}/options")
+def options(session_id: int) -> dict:
+    """The same decision options the summary prints — so the UI can offer them
+    as one-click choices that land in the decision log."""
+    session = store.get_consult(session_id)
+    if session is None:
+        raise HTTPException(404, "consult not found")
+    return report.decision_options(session)
 
 
 @app.get("/api/consults")

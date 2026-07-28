@@ -124,6 +124,29 @@
   }
   .step-act:hover { color: var(--accent); border-color: var(--accent); }
   .step-act.branch:hover { color: var(--purple); border-color: var(--purple); }
+  .step-act.pdf { color: var(--green); border-color: rgba(52,211,153,.35); }
+  .step-act.pdf:hover { color: var(--green); border-color: var(--green); }
+  .exec-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+
+  /* decision options */
+  .opts { margin-top: 20px; background: linear-gradient(180deg, rgba(167,139,250,.07), var(--panel2));
+          border: 1px solid var(--purple); border-radius: 14px; padding: 16px 18px; }
+  .opts-h { color: var(--purple); font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase;
+            font-family: "SF Mono", monospace; margin-bottom: 12px; }
+  .opt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .opt { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+         padding: 13px 15px; cursor: pointer; transition: all .15s; font-size: 12px; line-height: 1.6; }
+  .opt:hover { border-color: var(--purple); box-shadow: 0 0 16px rgba(167,139,250,.3); }
+  .opt.rec { border-color: var(--green); background: linear-gradient(180deg, rgba(52,211,153,.08), var(--panel)); }
+  .opt-h { font-weight: 700; font-size: 13.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .opt-s { color: var(--text); margin-bottom: 9px; }
+  .opt-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+  .opt-lbl { color: var(--dim); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase;
+             font-family: "SF Mono", monospace; margin-bottom: 3px; }
+  .opt-meta { color: var(--dim); font-size: 11px; margin-top: 3px; }
+  .opt-must { margin-top: 12px; padding: 10px 13px; border-radius: 9px;
+              background: rgba(251,191,36,.09); border: 1px solid rgba(251,191,36,.35); color: var(--amber); }
+
   .directive-note {
     background: rgba(167,139,250,.08); border-left: 2px solid var(--purple); color: var(--text);
     padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-size: 12px;
@@ -496,7 +519,11 @@ function stepBlock(s, idx) {
   if (s.key === 'research') {
     body = researchCard(s.results.analyst || { text: '(ไม่มีผลสืบค้น)', provider: '-', ok: false });
   } else if (s.key === 'synthesis') {
-    body = chairCard(s.results.chair || { text: '(ไม่มีบทสรุป)', provider: '-', ok: false });
+    body = chairCard(s.results.chair || { text: '(ไม่มีบทสรุป)', provider: '-', ok: false }) + `
+      <div class="exec-bar">
+        <button class="btn sm" onclick="openPdf('exec', this)">📑 บทสรุปสำหรับผู้บริหาร (.PDF)</button>
+        <span class="empty">รวมข้อสรุปรายความเชี่ยวชาญของ C-level ทุกคน + ทางเลือกพร้อมทางที่บอร์ดแนะนำ</span>
+      </div>`;
   } else {
     body = `<div class="round-grid">${DEPT_KEYS.map(k => s.results[k]
         ? opCard(k, s.results[k], s.key === 'verdicts' ? 'verdict' : '') : '').join('')}</div>`;
@@ -506,6 +533,7 @@ function stepBlock(s, idx) {
       <div class="round-h">
         <span>${esc(label)}</span>
         <span class="line"></span>
+        <button class="step-act pdf" onclick="openPdf('${s.key}', this)" title="รายงาน PDF: ใช้หลักการอะไรคิด อ้างตัวเลขไหน ตาราง กราฟ และแหล่งอ้างอิง">📄 PDF</button>
         <button class="step-act" onclick="resetTo('${s.key}')" title="ลบรอบนี้และรอบถัดไปทิ้ง แล้วถกใหม่ — บอร์ดจะรู้ว่าแนวเดิมถูกปัดตก">↩ ย้อนกลับมาแก้จุดนี้</button>
         <button class="step-act branch" onclick="branchAt('${s.key}')" title="เปิดไทม์ไลน์ใหม่จากจุดนี้ โดยเก็บของเดิมไว้ครบ">🔀 แตกกิ่งจากจุดนี้</button>
       </div>
@@ -539,6 +567,93 @@ function decideBlock() {
     </div>`;
 }
 
+// ---------- decision options (the choices the board puts to the CEO) ----------
+function optionsBlock() {
+  const o = SESSION.options;
+  if (!o || !(o.options || []).length) {
+    return `
+      <div class="opts">
+        <div class="opts-h">🧭 ทางเลือกในการตัดสินใจ</div>
+        <div class="empty" style="margin-bottom:10px;">ให้บอร์ดกลั่นบทถกเถียงทั้งหมดเป็นทางเลือกที่กดเลือกได้ พร้อมชี้ทางที่แนะนำ</div>
+        <button class="btn sm" onclick="loadOptions(this)">🧭 กลั่นทางเลือกให้ CEO เลือก</button>
+      </div>`;
+  }
+  const cards = (o.options || []).map(x => {
+    const rec = x.name === o.recommended;
+    return `
+      <div class="opt ${rec ? 'rec' : ''}" onclick="pickOption(${JSON.stringify(x.name).replace(/"/g, '&quot;')})">
+        <div class="opt-h">${rec ? '★ ' : ''}${esc(x.name)}${rec ? '<span class="tag t-saved">บอร์ดแนะนำ</span>' : ''}</div>
+        <div class="opt-s">${esc(x.summary || '')}</div>
+        <div class="opt-cols">
+          <div><div class="opt-lbl">ข้อดี</div>${(x.pros || []).map(p => `<div>• ${esc(p)}</div>`).join('') || '<div class="empty">—</div>'}</div>
+          <div><div class="opt-lbl">ข้อเสีย/ความเสี่ยง</div>${(x.cons || []).map(p => `<div>• ${esc(p)}</div>`).join('') || '<div class="empty">—</div>'}</div>
+        </div>
+        <div class="opt-meta">
+          หนุน: ${(x.supporters || []).map(d => deptName(d)).join(', ') || '—'} ·
+          ค้าน: ${(x.opponents || []).map(d => deptName(d)).join(', ') || '—'}
+        </div>
+        ${x.choose_when ? `<div class="opt-meta">เลือกเมื่อ: ${esc(x.choose_when)}</div>` : ''}
+        ${x.first_move ? `<div class="opt-meta">ก้าวแรกใน 7 วัน: ${esc(x.first_move)}</div>` : ''}
+      </div>`;
+  }).join('');
+  return `
+    <div class="opts">
+      <div class="opts-h">🧭 ทางเลือกในการตัดสินใจ — คลิกเพื่อเลือกทางนี้</div>
+      <div class="opt-grid">${cards}</div>
+      ${o.recommended_why ? `<div class="directive-note">★ ทางที่บอร์ดแนะนำ: <b>${esc(o.recommended || '')}</b> — ${esc(o.recommended_why)}</div>` : ''}
+      ${o.ceo_must_decide ? `<div class="opt-must">⚖️ ประเด็นที่ CEO ต้องชี้ขาดเอง: ${esc(o.ceo_must_decide)}</div>` : ''}
+    </div>`;
+}
+
+function deptName(key) {
+  const d = STATE.depts.find(x => x.key === key);
+  return esc(d ? d.name : key);
+}
+
+async function loadOptions(btn) {
+  if (!SESSION) return;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '⏳ บอร์ดกำลังกลั่นทางเลือก…';
+  try {
+    const r = await fetch(`/api/consult/${SESSION.id}/options`);
+    if (!r.ok) throw new Error(await r.text());
+    SESSION.options = await r.json();
+    renderSession(SESSION);
+  } catch (e) {
+    btn.disabled = false; btn.textContent = old;
+    alert('กลั่นทางเลือกไม่สำเร็จ: ' + e);
+  }
+}
+
+function pickOption(name) {
+  const inp = document.getElementById('my-decision');
+  if (!inp) return;
+  const o = (SESSION.options || {}).options || [];
+  const chosen = o.find(x => x.name === name);
+  inp.value = chosen ? `เลือก: ${chosen.name} — ${chosen.first_move || chosen.summary || ''}` : name;
+  inp.focus();
+  inp.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
+async function openPdf(step, btn) {
+  if (!SESSION) return;
+  const url = step === 'exec'
+    ? `/api/consult/${SESSION.id}/executive-summary.pdf`
+    : `/api/consult/${SESSION.id}/report/${step}.pdf`;
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ กำลังสร้าง PDF…';
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(await r.text());
+    const href = URL.createObjectURL(await r.blob());
+    window.open(href, '_blank');
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
+  } catch (e) {
+    alert('สร้าง PDF ไม่สำเร็จ: ' + e);
+  }
+  btn.disabled = false; btn.innerHTML = old;
+}
+
 function renderSession(s, runningLabel) {
   SESSION = s;
   const lineage = s.parent_id
@@ -570,7 +685,7 @@ function renderSession(s, runningLabel) {
   } else if (s.next_step) {
     html += gateBlock();
   } else {
-    html += decideBlock();
+    html += optionsBlock() + decideBlock();
   }
   document.getElementById('board-out').innerHTML = html;
 }

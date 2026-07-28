@@ -1,4 +1,5 @@
-"""Hub tests — stepwise board flow, decision gates, branch/reset, web research."""
+"""Hub tests — stepwise board flow, decision gates, branch/reset, web research, PDF reports."""
+import json
 from unittest.mock import patch
 
 import pytest
@@ -295,6 +296,191 @@ def test_duckduckgo_falls_through_to_the_second_endpoint(client):
     with patch("httpx.post", side_effect=[RuntimeError("lite down"), _Resp()]) as p:
         hits = research._duckduckgo("อะไรก็ได้", 5)
     assert p.call_count == 2 and hits[0]["url"] == "https://example.com/b"
+
+
+# ── PDF reports ──
+
+METHOD_JSON = json.dumps({
+    "principles": ["Unit economics ต่อจุด", "Cash runway analysis"],
+    "advisors": [{"dept": "cfo", "frameworks": ["Payback period"],
+                  "logic": "เทียบ payback กับเงินสดคงเหลือ",
+                  "assumptions": ["ต้นทุนต่อตู้คงที่"], "limitations": ["ไม่รวมค่าซ่อม"],
+                  "citations": ["เว็บ:[1]"]}],
+    "data_table": {"columns": ["ตัวชี้วัด", "ค่า", "หน่วย", "ที่มา"],
+                   "rows": [["payback", "14", "เดือน", "cfo"],
+                            ["runway", "8", "เดือน", "cfo"]]},
+    "chart": {"title": "ระยะเวลา", "labels": ["payback", "runway"],
+              "values": [14, 8], "unit": "เดือน"},
+}, ensure_ascii=False)
+
+OPTIONS_JSON = json.dumps({
+    "advisor_takeaways": [{"dept": "cfo", "headline": "runway ไม่พอ", "key_risk": "เงินสดขาดมือ"}],
+    "options": [
+        {"name": "นำร่อง 4 จุด", "summary": "ลงทุน 4 จุดก่อน", "pros": ["เสี่ยงจำกัด"],
+         "cons": ["เสียทำเลบางจุด"], "supporters": ["cfo", "coo"], "opponents": [],
+         "choose_when": "ถ้าต้องรักษา runway", "first_move": "ล็อกสัญญา 4 จุด"},
+        {"name": "ยังไม่ขยาย", "summary": "โฟกัสจุดเดิม", "pros": ["ไม่กระทบเงินสด"],
+         "cons": ["เสียโอกาส"], "supporters": ["cfo"], "opponents": ["datalyst"],
+         "choose_when": "ถ้ายอดต่อจุดยังต่ำ", "first_move": "ทำโปรโมชัน"},
+    ],
+    "recommended": "นำร่อง 4 จุด",
+    "recommended_why": "ทางเดียวที่ CFO และ COO รับได้",
+    "ceo_must_decide": "จะยอมเสียทำเลเพื่อรักษา runway หรือไม่",
+}, ensure_ascii=False)
+
+
+def _finished_consult(client, web=False):
+    s = _start(client, question="ควรขยายสาขาไหม", web=web)
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        for _ in range(4 if not web else 5):
+            if s["next_step"] is None:
+                break
+            s = _advance(client, s["id"])
+    return s
+
+
+def _pdf_text(body: bytes) -> str:
+    """Extract the text layer, recomposing SARA AM back to its composed form
+    (the PDF stores it decomposed so glyphs map 1:1 to codepoints)."""
+    import fitz
+    with fitz.open(stream=body, filetype="pdf") as doc:
+        raw = "\n".join(page.get_text() for page in doc)
+    return raw.replace("ํา", "ำ")
+
+
+def test_step_pdf_carries_the_methodology_appendix(client):
+    s = _finished_consult(client)
+    method = {"text": METHOD_JSON, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=method), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content[:4] == b"%PDF"
+
+    text = _pdf_text(r.content)
+    assert "หลักการและตรรกะที่ใช้ในรอบนี้" in text
+    assert "Unit economics" in text and "Payback period" in text
+    assert "ข้อมูลตัวเลขที่ถูกอ้างถึง" in text and "14" in text
+    assert "กราฟเปรียบเทียบ" in text
+    assert "ควรขยายสาขาไหม" in text          # the CEO's question
+    assert "คำตอบเต็มของรอบนี้" in text       # the round itself, verbatim
+
+
+def test_thai_text_layer_is_clean(client):
+    """ที่ = ท + ◌ี + ◌่ — without harfbuzz shaping the tone mark collides with
+    the vowel and is lost; ำ needs pre-decomposing or it copies out corrupted."""
+    s = _finished_consult(client)
+    method = {"text": METHOD_JSON, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=method), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+    text = _pdf_text(r.content)
+    for word in ("ที่ปรึกษา", "เชี่ยวชาญ", "ที่มา", "คำตอบเต็มของรอบนี้"):
+        assert word in text, f"lost in the text layer: {word}"
+    # no substitution/control bytes leaking from unmapped glyphs
+    assert not [c for c in text if ord(c) < 32 and c not in "\n\r\t"]
+
+
+def test_methodology_is_cached_so_a_second_pdf_is_free(client):
+    s = _finished_consult(client)
+    method = {"text": METHOD_JSON, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=method) as m, \
+         patch("app.llm.provider_ready", return_value=True):
+        client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        assert m.call_count == 1
+        client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        assert m.call_count == 1                       # served from the cache
+        client.get(f"/api/consult/{s['id']}/report/opinions.pdf?refresh=true")
+        assert m.call_count == 2                       # explicit re-audit
+
+
+def test_pdf_still_renders_when_the_audit_pass_fails(client):
+    """No key, or non-JSON back: print the round, never invent an analysis."""
+    s = _finished_consult(client)
+    junk = {"text": "ขอโทษครับ ผมไม่เข้าใจ", "provider": "mock", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=junk):
+        r = client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    text = _pdf_text(r.content)
+    assert "ถอดวิธีคิดอัตโนมัติไม่สำเร็จ" in text
+    assert "คำตอบเต็มของรอบนี้" in text
+
+
+def test_executive_summary_offers_choices_and_a_recommendation(client):
+    s = _finished_consult(client)
+    opts = {"text": OPTIONS_JSON, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=opts), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/executive-summary.pdf")
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+    text = _pdf_text(r.content)
+    assert "บทสรุปสำหรับผู้บริหาร" in text
+    # per-C-level takeaways, framed by the lane each is expert in
+    assert "ข้อสรุปจากความเชี่ยวชาญของที่ปรึกษาแต่ละคน" in text
+    assert "runway ไม่พอ" in text
+    # the choices themselves + the board's pick + what only the CEO can settle
+    assert "ทางเลือกในการตัดสินใจ" in text
+    assert "นำร่อง 4 จุด" in text and "ยังไม่ขยาย" in text
+    assert "ทางที่บอร์ดแนะนำ" in text
+    assert "ประเด็นที่ CEO ต้องชี้ขาดเอง" in text
+    assert "ช่องบันทึกการตัดสินใจของ CEO" in text
+
+
+def test_options_endpoint_feeds_the_one_click_choices(client):
+    s = _finished_consult(client)
+    opts = {"text": OPTIONS_JSON, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=opts), \
+         patch("app.llm.provider_ready", return_value=True):
+        j = client.get(f"/api/consult/{s['id']}/options").json()
+    assert j["recommended"] == "นำร่อง 4 จุด"
+    assert [o["name"] for o in j["options"]] == ["นำร่อง 4 จุด", "ยังไม่ขยาย"]
+    # cached onto the session so the UI can render them without another call
+    assert client.get(f"/api/consults/{s['id']}").json()["options"]["recommended"] == "นำร่อง 4 จุด"
+
+
+def test_executive_summary_before_round_4_is_rejected(client):
+    s = _start(client)
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        _advance(client, s["id"])
+    r = client.get(f"/api/consult/{s['id']}/executive-summary.pdf")
+    assert r.status_code == 400 and "Round 4" in r.text
+
+
+def test_report_bad_inputs(client):
+    s = _finished_consult(client)
+    assert client.get(f"/api/consult/{s['id']}/report/nope.pdf").status_code == 400
+    assert client.get(f"/api/consult/{s['id']}/report/research.pdf").status_code == 400  # never ran
+    assert client.get("/api/consult/999/report/opinions.pdf").status_code == 404
+    assert client.get("/api/consult/999/executive-summary.pdf").status_code == 404
+    assert client.get("/api/consult/999/options").status_code == 404
+
+
+def test_chart_is_skipped_when_numbers_are_not_comparable(client):
+    from app import report
+    pdf = report._Doc("t")
+    pdf.add_page()
+    assert report._bar_chart(pdf, {"labels": ["a"], "values": [1]}) is False       # one bar
+    assert report._bar_chart(pdf, {"labels": ["a", "b"], "values": [1]}) is False  # mismatched
+    assert report._bar_chart(pdf, {"labels": ["a", "b"], "values": ["x", 2]}) is False
+    assert report._bar_chart(pdf, {"labels": ["a", "b"], "values": [1, 2]}) is True
+
+
+@pytest.mark.parametrize("raw", [
+    '{"a": 1}',
+    '```json\n{"a": 1}\n```',
+    'นี่คือผลลัพธ์ครับ\n{"a": 1}\nหวังว่าจะช่วยได้',
+])
+def test_json_extraction_survives_chatty_models(client, raw):
+    from app import report
+    assert report._parse_json(raw) == {"a": 1}
+
+
+@pytest.mark.parametrize("raw", ["", "ไม่มี JSON เลย", "{ยังไม่ปิดวงเล็บ", "[1,2,3]"])
+def test_json_extraction_fails_closed(client, raw):
+    from app import report
+    assert report._parse_json(raw) is None
 
 
 # ── guardrails / prompt integrity ──

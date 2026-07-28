@@ -103,6 +103,32 @@ def append_step(session_id: int, key: str, results: dict,
         return c
 
 
+def attach_methodology(session_id: int, step_key: str, data: dict) -> None:
+    """Cache the audit of how a round was reasoned, so re-downloading the PDF
+    does not re-run (and re-pay for) the extraction."""
+    with _LOCK:
+        store = _load()
+        c = _find(store, session_id)
+        if c is None:
+            return
+        for s in c["steps"]:
+            if s["key"] == step_key:
+                s["methodology"] = data
+                _save(store)
+                return
+
+
+def attach_options(session_id: int, data: dict) -> None:
+    """Cache the decision options put in front of the CEO."""
+    with _LOCK:
+        store = _load()
+        c = _find(store, session_id)
+        if c is None:
+            return
+        c["options"] = data
+        _save(store)
+
+
 def set_status(session_id: int, status: str) -> dict | None:
     with _LOCK:
         data = _load()
