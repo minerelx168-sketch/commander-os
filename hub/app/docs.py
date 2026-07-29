@@ -181,8 +181,12 @@ def _file_into_project(entry_name: str, drive_id: str | None, project: str) -> N
 # ── ingest ──
 
 def save_document(name: str, content: bytes, mime: str, source: str,
-                  text: str | None = None) -> dict:
-    """Librarian pipeline: store -> scan -> classify -> file into project."""
+                  text: str | None = None, project: str | None = None) -> dict:
+    """Librarian pipeline: store -> scan -> classify -> file into project.
+
+    An explicit `project` (the CEO picked one while uploading) wins over the
+    librarian's guess.
+    """
     (LOCAL_DIR / name).write_bytes(content)
     drive_id = None
     location = "local"
@@ -203,7 +207,8 @@ def save_document(name: str, content: bytes, mime: str, source: str,
         text = describe_image(content, mime)
 
     # classify + file into the right project folder (e.g. ตารางผ่อนมือถือ -> YourFin)
-    project = classify_project(name, text)
+    if not project:
+        project = classify_project(name, text)
     if project:
         _file_into_project(name, drive_id, project)
     return _record(name, source, location, mime, drive_id, text, project)
@@ -255,11 +260,18 @@ def reclassify_all() -> dict:
     return {"filed": filed, "unfiled": sum(1 for m in meta if not m.get("project"))}
 
 
-def knowledge_context(max_chars: int = 3500) -> str:
-    """Digest of the CEO's documents (grouped by project) for advisor prompts."""
+def knowledge_context(max_chars: int = 3500, project: str | None = None) -> str:
+    """Digest of the CEO's documents for advisor prompts.
+
+    `project` scopes the board to one business project so a consult about
+    YourFin is not muddied by FlowerVending paperwork; None feeds everything.
+    """
     by_project: dict[str, list] = {}
     for m in reversed(_load_meta()):
-        by_project.setdefault(m.get("project") or "ทั่วไป", []).append(m)
+        name = m.get("project") or "ทั่วไป"
+        if project and name != project:
+            continue
+        by_project.setdefault(name, []).append(m)
     parts = []
     for project, ms in sorted(by_project.items()):
         parts.append(f"### โปรเจค: {project}")

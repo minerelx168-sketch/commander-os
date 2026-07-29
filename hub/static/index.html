@@ -809,6 +809,269 @@ body {
 .empty-state-text { font-size: 13px; }
 
 /* ============================================================
+   SCOPE ROW — project picker + web-research toggle
+   ============================================================ */
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.select {
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 9px 13px;
+  border-radius: var(--radius);
+  outline: none;
+  cursor: pointer;
+  min-width: 210px;
+  transition: border-color .15s;
+}
+.select:focus { border-color: var(--accent); }
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  padding: 8px 13px;
+  transition: border-color .15s;
+}
+.toggle:hover { border-color: var(--accent); }
+.toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+
+.scope-note { font-size: 12px; color: var(--text-3); }
+
+/* ============================================================
+   ROUND ACTIONS — pdf / reset / branch on every round
+   ============================================================ */
+.round-header.actions::after { display: none; }
+.round-line { flex: 1; height: 1px; background: var(--border); }
+
+.step-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.step-act:hover  { color: var(--text); border-color: var(--border-2); }
+.step-act.pdf    { color: var(--green); border-color: rgba(34,197,94,.25); }
+.step-act.pdf:hover { border-color: var(--green); }
+.step-act.branch:hover { color: var(--purple); border-color: var(--purple); }
+.step-act:disabled { opacity: .6; cursor: wait; }
+
+.directive-note {
+  background: rgba(139,92,246,.08);
+  border-left: 2px solid var(--purple);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 9px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+/* ============================================================
+   DECISION GATE — the board waits for the CEO between rounds
+   ============================================================ */
+.gate {
+  margin-top: 20px;
+  background: var(--bg-2);
+  border: 1px solid rgba(245,158,11,.35);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+.gate-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--amber);
+  margin-bottom: 5px;
+}
+.gate-sub { font-size: 13px; color: var(--text-2); margin-bottom: 14px; }
+.gate input {
+  width: 100%;
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  outline: none;
+  margin-bottom: 14px;
+}
+.gate input:focus { border-color: var(--amber); }
+.gate-acts { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.btn-warn {
+  background: transparent;
+  color: var(--amber);
+  border: 1px solid rgba(245,158,11,.4);
+}
+.btn-warn:hover { background: var(--amber-dim); border-color: var(--amber); }
+
+.btn-danger {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid rgba(239,68,68,.4);
+}
+.btn-danger:hover { background: var(--red-dim); border-color: var(--red); }
+
+.btn-alt {
+  background: transparent;
+  color: var(--purple);
+  border: 1px solid rgba(139,92,246,.4);
+}
+.btn-alt:hover { background: rgba(139,92,246,.12); border-color: var(--purple); }
+
+.running, .stopped-bar {
+  margin-top: 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: var(--bg-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+}
+.running-text {
+  font-size: 13px;
+  color: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: .45; } }
+.stopped-bar { border-color: rgba(239,68,68,.35); }
+.stopped-text { font-size: 13px; color: var(--red); }
+
+/* ============================================================
+   RESEARCH + CHAIRMAN CARDS
+   ============================================================ */
+.research-card, .chair-card {
+  background: var(--bg-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+.research-card { border-color: rgba(34,197,94,.3); }
+.chair-card    { border-color: rgba(59,130,246,.35); }
+.research-card.err { border-color: rgba(239,68,68,.3); }
+
+.wide-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.wide-icon {
+  width: 34px; height: 34px; border-radius: 9px;
+  display: grid; place-items: center; font-size: 16px; flex-shrink: 0;
+  background: var(--bg-2); border: 1px solid var(--border-2);
+}
+.research-card .wide-icon { border-color: rgba(34,197,94,.4); }
+.chair-card .wide-icon    { background: var(--accent); box-shadow: 0 2px 8px rgba(59,130,246,.3); }
+.wide-name { font-size: 14px; font-weight: 600; }
+.wide-sub  { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .8px; margin-top: 1px; }
+.wide-body { font-size: 13px; line-height: 1.75; white-space: pre-wrap; color: var(--text); }
+
+.qchips { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 12px; }
+.qchip {
+  font-size: 11px; padding: 4px 10px; border-radius: 20px;
+  background: rgba(34,197,94,.1); color: var(--green);
+  border: 1px solid rgba(34,197,94,.25);
+}
+.srcs { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 13px; }
+.srcs-h {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-3); margin-bottom: 9px;
+}
+.src { display: flex; gap: 8px; padding: 4px 0; font-size: 12px; align-items: baseline; }
+.src-n { color: var(--green); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.src a { color: var(--accent); text-decoration: none; word-break: break-all; }
+.src a:hover { text-decoration: underline; }
+
+.exec-bar { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+
+/* ============================================================
+   DECISION OPTIONS — the choices the board puts to the CEO
+   ============================================================ */
+.opts {
+  margin-top: 20px;
+  background: var(--bg-2);
+  border: 1px solid rgba(139,92,246,.35);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+}
+.opts-h {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--purple); margin-bottom: 14px;
+}
+.opt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.opt {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  font-size: 12.5px;
+  line-height: 1.65;
+  transition: all .15s;
+}
+.opt:hover { border-color: var(--purple); box-shadow: 0 4px 14px rgba(139,92,246,.18); }
+.opt.rec   { border-color: rgba(34,197,94,.45); background: linear-gradient(180deg, rgba(34,197,94,.07), var(--bg-3)); }
+.opt-name  { font-size: 13.5px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.opt-sum   { color: var(--text-2); margin-bottom: 10px; }
+.opt-cols  { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 9px; }
+.opt-lbl {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--text-3); margin-bottom: 3px;
+}
+.opt-meta { font-size: 11.5px; color: var(--text-3); margin-top: 3px; }
+.opt-must {
+  margin-top: 14px; padding: 11px 14px; border-radius: var(--radius);
+  background: rgba(245,158,11,.09); border: 1px solid rgba(245,158,11,.3);
+  color: var(--amber); font-size: 13px;
+}
+
+/* ============================================================
+   UPLOAD DROP ZONE
+   ============================================================ */
+.drop {
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 26px 20px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.drop:hover, .drop.over { border-color: var(--accent); color: var(--accent); background: rgba(59,130,246,.05); }
+
+/* service-health dot */
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.dot.on  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.dot.off { background: var(--text-3); }
+.advisor-name { display: flex; align-items: center; gap: 6px; }
+
+/* ============================================================
    RESPONSIVE
    ============================================================ */
 @media (max-width: 1200px) {
@@ -818,6 +1081,13 @@ body {
 
 @media (max-width: 900px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 720px) {
+  body { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: static; }
+  .round-grid { grid-template-columns: 1fr; }
+  .opt-cols { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -882,9 +1152,18 @@ body {
     <!-- Ask box -->
     <div class="ask-wrapper">
       <div class="ask-label">ถามบอร์ด</div>
+      <div class="scope-row">
+        <select class="select" id="ask-project">
+          <option value="">— ทุกโปรเจค (ใช้เอกสารทั้งคลัง) —</option>
+        </select>
+        <label class="toggle" title="บอร์ดจะสืบข้อมูลจริงจากอินเทอร์เน็ต คัดกรอง แล้วใช้ประกอบการถก">
+          <input type="checkbox" id="ask-web" checked> 🌐 สืบข้อมูลจากอินเทอร์เน็ตก่อนถก
+        </label>
+        <span class="scope-note" id="scope-note"></span>
+      </div>
       <div class="ask-row">
         <textarea class="ask-textarea" id="ask-text" rows="2"
-          placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะให้ความเห็น → วิพากษ์กันเอง → ให้คำตัดสินสุดท้าย"></textarea>
+          placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะสืบข้อมูล → ให้ความเห็น → วิพากษ์กันเอง → คำตัดสิน → บทสรุปประธาน"></textarea>
         <button class="btn btn-primary" id="ask-btn" onclick="askBoard()">
           ⚡ CONSULT
         </button>
@@ -939,6 +1218,26 @@ body {
   <div class="view" id="view-docs">
 
     <div class="stats-grid" id="doc-stats" style="grid-template-columns:repeat(4,1fr);"></div>
+
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">⬆️ อัพโหลดเอกสารจากเครื่องนี้</span>
+        <span style="font-size:12px;color:var(--text-3)">PDF · รูป · CSV · ข้อความ</span>
+      </div>
+      <div class="card-body">
+        <div class="scope-row">
+          <select class="select" id="up-project">
+            <option value="">— ให้บรรณารักษ์ AI จัดให้อัตโนมัติ —</option>
+          </select>
+          <span class="scope-note" id="up-status"></span>
+        </div>
+        <div class="drop" id="drop" onclick="document.getElementById('up-file').click()">
+          📎 คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางตรงนี้
+        </div>
+        <input type="file" id="up-file" multiple style="display:none" onchange="uploadFiles(this.files)">
+      </div>
+    </div>
 
     <!-- Projects -->
     <div class="card">
@@ -1010,9 +1309,12 @@ body {
      ============================================================ -->
 <script>
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
-let STATE = { depts:[], providers:[], consults:[], decision_stats:{} };
+let STATE = { depts:[], providers:[], projects:[], consults:[], decision_stats:{} };
 const DEPT_KEYS = ['cmo','cfo','coo','datalyst'];
-let lastConsult = null;
+let SESSION = null;        // current consult session (carries next_step / status)
+let RUNNING = false;
+let ABORT = null;          // AbortController for the round in flight
+let WEB_TOGGLE_SET = false;
 
 /* ---------- page meta ---------- */
 const PAGE_META = {
@@ -1045,14 +1347,25 @@ async function loadState() {
     document.getElementById('conn').textContent = 'Hub Online';
 
     document.getElementById('advisor-list').innerHTML = STATE.depts.map(d => `
-      <div class="advisor-card">
+      <div class="advisor-card" title="${d.online ? 'service ออนไลน์' : 'service ออฟไลน์ — บอร์ดยังตอบได้จาก LLM + คลังเอกสาร'}">
         <div class="advisor-avatar">${d.icon}</div>
         <div class="advisor-info">
-          <div class="advisor-name">${esc(d.name)}</div>
+          <div class="advisor-name"><span class="dot ${d.online?'on':'off'}"></span>${esc(d.name)}</div>
           <div class="advisor-role">${esc(d.role)}</div>
         </div>
         <span class="advisor-badge">${esc(d.provider)}</span>
       </div>`).join('');
+
+    fillProjects(document.getElementById('ask-project'), STATE.projects);
+    fillProjects(document.getElementById('up-project'), STATE.projects);
+    const rs = STATE.research || {};
+    document.getElementById('scope-note').textContent =
+      `ค้นเว็บผ่าน ${rs.label || '-'}` +
+      (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+    if (!WEB_TOGGLE_SET) {          // seed once; never fight the CEO's choice
+      document.getElementById('ask-web').checked = rs.default_on !== false;
+      WEB_TOGGLE_SET = true;
+    }
 
     renderHistory(STATE.consults);
     renderAgents();
@@ -1062,8 +1375,18 @@ async function loadState() {
     document.getElementById('conn').textContent = 'Hub Offline';
   }
 }
+
+function fillProjects(sel, projects, keepValue) {
+  if (!sel) return;
+  const cur = keepValue ?? sel.value;
+  const first = sel.options[0] ? sel.options[0].outerHTML : '';
+  sel.innerHTML = first + (projects || []).map(p =>
+    `<option value="${esc(p)}">📁 ${esc(p)}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
 loadState();
-setInterval(loadState, 20000);
+setInterval(() => { if (!RUNNING) loadState(); }, 20000);
 
 /* ---------- boardroom ---------- */
 function opCard(dept, a, cls) {
@@ -1079,78 +1402,314 @@ function opCard(dept, a, cls) {
     </div>`;
 }
 
-function renderConsult(c) {
-  lastConsult = c;
-  const grid = (round, cls) => DEPT_KEYS.map(k => round[k] ? opCard(k, round[k], cls) : '').join('');
-  document.getElementById('board-out').innerHTML = `
+function wideCard(kind, icon, name, sub, a, extra) {
+  return `
+    <div class="${kind} ${a.ok?'':'err'}">
+      <div class="wide-head">
+        <div class="wide-icon">${icon}</div>
+        <div>
+          <div class="wide-name">${name}</div>
+          <div class="wide-sub">${sub} · ${esc(a.provider)}</div>
+        </div>
+      </div>
+      ${extra || ''}
+      <div class="wide-body">${esc(a.text)}</div>
+    </div>`;
+}
+
+function researchCard(a) {
+  const chips = (a.queries||[]).length
+    ? `<div class="qchips">${a.queries.map(q => `<span class="qchip">🔍 ${esc(q)}</span>`).join('')}</div>` : '';
+  const srcs = (a.sources||[]).map((s,i) => `
+    <div class="src"><span class="src-n">[${i+1}]</span>
+      <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a></div>`).join('');
+  return wideCard('research-card', '🌐', 'ฝ่ายวิจัยข้อมูล — ข้อมูลจากอินเทอร์เน็ตที่ผ่านการคัดกรอง',
+                  'RESEARCH ANALYST', a, chips)
+    + (srcs ? `<div class="research-card" style="margin-top:-1px;border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);padding-top:0;">
+         <div class="srcs"><div class="srcs-h">แหล่งข้อมูลที่ดึงมาคัดกรอง (${(a.sources||[]).length})</div>${srcs}</div></div>` : '');
+}
+
+function chairCard(a) {
+  return wideCard('chair-card', '⚖️', 'ประธานบอร์ด — บทสรุปเพื่อการตัดสินใจ', 'CHAIRMAN SYNTHESIS', a)
+    + `<div class="exec-bar">
+         <button class="btn btn-primary btn-sm" onclick="openPdf('exec', this)">📑 บทสรุปสำหรับผู้บริหาร (.PDF)</button>
+         <span class="scope-note">รวมข้อสรุปรายความเชี่ยวชาญของ C-level ทุกคน + ทางเลือกพร้อมทางที่บอร์ดแนะนำ</span>
+       </div>`;
+}
+
+function stepBlock(s) {
+  const label = (SESSION.step_labels || {})[s.key] || s.key;
+  let body;
+  if (s.key === 'research') {
+    body = researchCard(s.results.analyst || { text:'(ไม่มีผลสืบค้น)', provider:'-', ok:false });
+  } else if (s.key === 'synthesis') {
+    body = chairCard(s.results.chair || { text:'(ไม่มีบทสรุป)', provider:'-', ok:false });
+  } else {
+    body = `<div class="round-grid">${DEPT_KEYS.map(k => s.results[k]
+      ? opCard(k, s.results[k], s.key === 'verdicts' ? 'verdict' : '') : '').join('')}</div>`;
+  }
+  return `
+    <div class="round">
+      <div class="round-header actions">
+        <span>${esc(label)}</span>
+        <span class="round-line"></span>
+        <button class="step-act pdf" onclick="openPdf('${s.key}', this)" title="รายงาน PDF: ใช้หลักการอะไรคิด อ้างตัวเลขไหน ตาราง กราฟ และแหล่งอ้างอิง">📄 PDF</button>
+        <button class="step-act" onclick="resetTo('${s.key}')" title="ลบรอบนี้และรอบถัดไปทิ้ง แล้วถกใหม่ — บอร์ดจะรู้ว่าแนวเดิมถูกปัดตก">↩ ย้อนกลับมาแก้จุดนี้</button>
+        <button class="step-act branch" onclick="branchAt('${s.key}')" title="เปิดไทม์ไลน์ใหม่จากจุดนี้ โดยเก็บของเดิมไว้ครบ">🔀 แตกกิ่งจากจุดนี้</button>
+      </div>
+      ${s.directive ? `<div class="directive-note">👑 คำสั่ง CEO ก่อนรอบนี้: ${esc(s.directive)}</div>` : ''}
+      ${body}
+    </div>`;
+}
+
+function gateBlock() {
+  const label = SESSION.next_label || SESSION.next_step;
+  const isLast = SESSION.next_step === 'synthesis';
+  return `
+    <div class="gate">
+      <div class="gate-title">🛑 จุดตัดสินใจของ CEO</div>
+      <div class="gate-sub">บอร์ดหยุดรอคำสั่งคุณก่อนเข้า <b>${esc(label)}</b> — จะสั่งเพิ่มก่อนก็ได้ หรือข้ามไปสรุปเลย</div>
+      <input id="directive" placeholder="สั่งบอร์ดเพิ่มเติมก่อนเข้ารอบนี้ เช่น 'เน้นความเสี่ยงด้านกระแสเงินสดเป็นหลัก' (เว้นว่างได้)">
+      <div class="gate-acts">
+        <button class="btn btn-primary btn-sm" onclick="advance()">▶ ดำเนินการต่อ — ${esc(label)}</button>
+        ${isLast ? '' : '<button class="btn btn-warn btn-sm" onclick="advance(\'synthesis\')">⏭ ข้ามไปบทสรุปประธานเลย</button>'}
+        <button class="btn btn-danger btn-sm" onclick="stopBoard()">⏹ จบการประชุมที่นี่</button>
+      </div>
+    </div>`;
+}
+
+function decideBlock() {
+  return `
+    <div class="decision-row">
+      <input id="my-decision" placeholder="คุณตัดสินใจอย่างไร? บันทึกไว้เพื่อวัดผลที่ปรึกษาภายหลัง…">
+      <button class="btn btn-ghost btn-sm" onclick="recordDecision()">💾 บันทึกการตัดสินใจ</button>
+      <button class="btn btn-alt btn-sm" onclick="branchAt(SESSION.steps[0] && SESSION.steps[0].key)">🔀 ลองอีกทางจากต้น</button>
+    </div>`;
+}
+
+/* ---------- decision options (the choices the board puts to the CEO) ---------- */
+function deptName(key) {
+  const d = STATE.depts.find(x => x.key === key);
+  return esc(d ? d.name : key);
+}
+
+function optionsBlock() {
+  const o = SESSION.options;
+  if (!o || !(o.options || []).length) {
+    return `
+      <div class="opts">
+        <div class="opts-h">🧭 ทางเลือกในการตัดสินใจ</div>
+        <div class="scope-note" style="margin-bottom:12px;display:block;">ให้บอร์ดกลั่นบทถกเถียงทั้งหมดเป็นทางเลือกที่กดเลือกได้ พร้อมชี้ทางที่แนะนำ</div>
+        <button class="btn btn-alt btn-sm" onclick="loadOptions(this)">🧭 กลั่นทางเลือกให้ CEO เลือก</button>
+      </div>`;
+  }
+  const cards = (o.options || []).map(x => {
+    const rec = x.name === o.recommended;
+    return `
+      <div class="opt ${rec?'rec':''}" onclick="pickOption(${JSON.stringify(x.name).replace(/"/g,'&quot;')})">
+        <div class="opt-name">${rec?'★ ':''}${esc(x.name)}${rec?'<span class="badge badge-green">บอร์ดแนะนำ</span>':''}</div>
+        <div class="opt-sum">${esc(x.summary || '')}</div>
+        <div class="opt-cols">
+          <div><div class="opt-lbl">ข้อดี</div>${(x.pros||[]).map(p=>`<div>• ${esc(p)}</div>`).join('') || '<div class="scope-note">—</div>'}</div>
+          <div><div class="opt-lbl">ข้อเสีย/ความเสี่ยง</div>${(x.cons||[]).map(p=>`<div>• ${esc(p)}</div>`).join('') || '<div class="scope-note">—</div>'}</div>
+        </div>
+        <div class="opt-meta">หนุน: ${(x.supporters||[]).map(deptName).join(', ') || '—'} · ค้าน: ${(x.opponents||[]).map(deptName).join(', ') || '—'}</div>
+        ${x.choose_when ? `<div class="opt-meta">เลือกเมื่อ: ${esc(x.choose_when)}</div>` : ''}
+        ${x.first_move ? `<div class="opt-meta">ก้าวแรกใน 7 วัน: ${esc(x.first_move)}</div>` : ''}
+      </div>`;
+  }).join('');
+  return `
+    <div class="opts">
+      <div class="opts-h">🧭 ทางเลือกในการตัดสินใจ — คลิกเพื่อเลือกทางนี้</div>
+      <div class="opt-grid">${cards}</div>
+      ${o.recommended_why ? `<div class="directive-note" style="margin-top:14px;margin-bottom:0;">★ ทางที่บอร์ดแนะนำ: <b>${esc(o.recommended||'')}</b> — ${esc(o.recommended_why)}</div>` : ''}
+      ${o.ceo_must_decide ? `<div class="opt-must">⚖️ ประเด็นที่ CEO ต้องชี้ขาดเอง: ${esc(o.ceo_must_decide)}</div>` : ''}
+    </div>`;
+}
+
+function renderSession(s, runningLabel) {
+  SESSION = s;
+  const badges = [
+    s.project ? `<span class="badge badge-blue">📁 ${esc(s.project)}</span>` : '',
+    s.web_research ? '<span class="badge badge-green">🌐 สืบเว็บ</span>' : '',
+    s.parent_id ? `<span class="badge badge-muted">🔀 แตกกิ่งจาก #${s.parent_id} ที่ ${esc(s.branched_from||'')}</span>` : '',
+  ].join(' ');
+  let html = `
     <div class="round">
       <div class="q-banner">
         <div class="q-banner-icon">👑</div>
         <div>
-          <div class="q-banner-label">CEO — คุณ</div>
-          <div class="q-banner-text">${esc(c.question)}</div>
+          <div class="q-banner-label">CEO — คุณ · #${s.id}</div>
+          <div class="q-banner-text">${esc(s.question)}</div>
+          <div style="margin-top:7px;">${badges}</div>
         </div>
       </div>
-    </div>
-    <div class="round">
-      <div class="round-header">Round 1 — ความเห็นในกรอบความเชี่ยวชาญ</div>
-      <div class="round-grid">${grid(c.opinions)}</div>
-    </div>
-    <div class="round">
-      <div class="round-header">Round 2 — Cross-Examination วิพากษ์กันเอง</div>
-      <div class="round-grid">${grid(c.cross_exam)}</div>
-    </div>
-    <div class="round">
-      <div class="round-header">Round 3 — คำตัดสินสุดท้ายต่อ CEO</div>
-      <div class="round-grid">${grid(c.verdicts,'verdict')}</div>
-    </div>
-    <div class="decision-row">
-      <input id="my-decision" placeholder="คุณตัดสินใจอย่างไร? บันทึกไว้เพื่อวัดผลที่ปรึกษาภายหลัง…">
-      <button class="btn btn-ghost btn-sm" onclick="recordDecision()">💾 บันทึกการตัดสินใจ</button>
     </div>`;
+  html += (s.steps || []).map(stepBlock).join('');
+
+  if (runningLabel) {
+    html += `
+      <div class="running">
+        <span class="running-text">⏳ บอร์ดกำลังถก: ${esc(runningLabel)}…</span>
+        <button class="btn btn-danger btn-sm" onclick="stopBoard()">⏹ STOP</button>
+      </div>`;
+  } else if (s.status === 'stopped') {
+    html += `
+      <div class="stopped-bar">
+        <span class="stopped-text">⏹ คุณสั่งหยุดการประชุมนี้ไว้</span>
+        ${s.next_step ? `<button class="btn btn-primary btn-sm" onclick="advance()">▶ ถกต่อ — ${esc(s.next_label)}</button>` : ''}
+      </div>` + decideBlock();
+  } else if (s.next_step) {
+    html += gateBlock();
+  } else {
+    html += optionsBlock() + decideBlock();
+  }
+  document.getElementById('board-out').innerHTML = html;
 }
 
 async function askBoard() {
-  const ta  = document.getElementById('ask-text');
-  const btn = document.getElementById('ask-btn');
-  const q   = ta.value.trim();
-  if (!q) return;
-  btn.disabled = true;
-  btn.textContent = '⏳ บอร์ดกำลังถก…';
-  document.getElementById('board-out').innerHTML = `
-    <div class="card" style="margin-bottom:0;">
-      <div class="card-body" style="text-align:center;padding:32px;">
-        <div style="font-size:13px;color:var(--text-3);">บอร์ดกำลังถก 3 รอบ (ความเห็น → วิพากษ์ → คำตัดสิน)…</div>
-      </div>
-    </div>`;
-  try {
-    const r = await fetch('/api/consult', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({question:q})
-    });
-    if (!r.ok) throw new Error(await r.text());
-    renderConsult(await r.json());
-    ta.value = '';
-    loadState();
-  } catch(e) {
+  const ta = document.getElementById('ask-text');
+  const q  = ta.value.trim();
+  if (!q || RUNNING) return;
+  const project = document.getElementById('ask-project').value;
+  const web_research = document.getElementById('ask-web').checked;
+  const r = await fetch('/api/consult', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({question:q, project, web_research})
+  });
+  if (!r.ok) {
     document.getElementById('board-out').innerHTML =
-      `<div class="card"><div class="card-body" style="color:var(--red);">⚠️ ${esc(String(e))}</div></div>`;
+      `<div class="card"><div class="card-body" style="color:var(--red);">⚠️ ${esc(await r.text())}</div></div>`;
+    return;
   }
-  btn.disabled = false;
-  btn.innerHTML = '⚡ CONSULT';
+  ta.value = '';
+  renderSession(await r.json());
+  advance();   // fire Round 0/1 now; the id already exists so STOP works
 }
 
 document.getElementById('ask-text').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askBoard(); }
 });
 
+async function advance(step) {
+  if (!SESSION || RUNNING) return;
+  const el = document.getElementById('directive');
+  const directive = el ? el.value.trim() : '';
+  const target = step || SESSION.next_step;
+  const label = (SESSION.step_labels || {})[target] || target;
+  const btn = document.getElementById('ask-btn');
+  RUNNING = true;
+  btn.disabled = true;
+  renderSession(SESSION, label);
+  ABORT = new AbortController();
+  try {
+    const r = await fetch(`/api/consult/${SESSION.id}/advance`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({step: step || null, directive}), signal: ABORT.signal
+    });
+    if (!r.ok) throw new Error(await r.text());
+    renderSession(await r.json());
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      await refreshSession();   // STOP already reached the server
+    } else {
+      renderSession(SESSION);
+      document.getElementById('board-out').insertAdjacentHTML('beforeend',
+        `<div class="card"><div class="card-body" style="color:var(--red);">⚠️ ${esc(String(e))}</div></div>`);
+    }
+  } finally {
+    RUNNING = false; ABORT = null;
+    btn.disabled = false;
+    btn.innerHTML = '⚡ CONSULT';
+    loadState();
+  }
+}
+
+async function refreshSession() {
+  if (!SESSION) return;
+  const r = await fetch('/api/consults/' + SESSION.id);
+  if (r.ok) renderSession(await r.json());
+}
+
+async function stopBoard() {
+  if (!SESSION) return;
+  await fetch(`/api/consult/${SESSION.id}/stop`, {method:'POST'});
+  if (ABORT) ABORT.abort();     // stop waiting; the round in flight is abandoned
+  else await refreshSession();
+}
+
+async function resetTo(step) {
+  if (!SESSION || RUNNING) return;
+  if (!confirm(`ย้อนกลับมาที่ "${(SESSION.step_labels||{})[step] || step}"?\n\nรอบนี้และรอบถัดไปทั้งหมดจะถูกลบทิ้ง แต่บอร์ดจะจำได้ว่าแนวเดิมถูกปัดตก และจะเสนอมุมใหม่แทน`)) return;
+  const r = await fetch(`/api/consult/${SESSION.id}/reset`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({step})
+  });
+  if (r.ok) renderSession(await r.json());
+}
+
+async function branchAt(step) {
+  if (!SESSION || RUNNING || !step) return;
+  const r = await fetch(`/api/consult/${SESSION.id}/branch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({step})
+  });
+  if (!r.ok) { alert(await r.text()); return; }
+  renderSession(await r.json());
+  document.querySelector('.main').scrollTo(0, 0);
+  loadState();
+}
+
+async function loadOptions(btn) {
+  if (!SESSION) return;
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ บอร์ดกำลังกลั่นทางเลือก…';
+  try {
+    const r = await fetch(`/api/consult/${SESSION.id}/options`);
+    if (!r.ok) throw new Error(await r.text());
+    SESSION.options = await r.json();
+    renderSession(SESSION);
+  } catch(e) {
+    btn.disabled = false; btn.innerHTML = old;
+    alert('กลั่นทางเลือกไม่สำเร็จ: ' + e);
+  }
+}
+
+function pickOption(name) {
+  const inp = document.getElementById('my-decision');
+  if (!inp) return;
+  const chosen = ((SESSION.options||{}).options || []).find(x => x.name === name);
+  inp.value = chosen ? `เลือก: ${chosen.name} — ${chosen.first_move || chosen.summary || ''}` : name;
+  inp.focus();
+  inp.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+async function openPdf(step, btn) {
+  if (!SESSION) return;
+  const url = step === 'exec'
+    ? `/api/consult/${SESSION.id}/executive-summary.pdf`
+    : `/api/consult/${SESSION.id}/report/${step}.pdf`;
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ กำลังสร้าง PDF…';
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(await r.text());
+    const href = URL.createObjectURL(await r.blob());
+    window.open(href, '_blank');
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
+  } catch(e) {
+    alert('สร้าง PDF ไม่สำเร็จ: ' + e);
+  }
+  btn.disabled = false; btn.innerHTML = old;
+}
+
 async function recordDecision() {
   const inp = document.getElementById('my-decision');
   const decision = inp.value.trim();
-  if (!decision || !lastConsult) return;
+  if (!decision || !SESSION) return;
   await fetch('/api/decisions', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({consult_id:lastConsult.id, question:lastConsult.question, decision})
+    body: JSON.stringify({consult_id:SESSION.id, question:SESSION.question, decision})
   });
   inp.value = '';
   inp.placeholder = '✅ บันทึกแล้ว — ไปให้คะแนนได้ที่หน้า Decisions เมื่อรู้ผลจริง';
@@ -1163,19 +1722,34 @@ function renderHistory(consults) {
     return;
   }
   el.innerHTML = consults.map(c => `
-    <div class="hist-item" onclick="openConsult(${c.id})">
+    <div class="hist-item">
       <span class="hist-num">#${c.id}</span>
-      <div>
-        <div class="hist-q">${esc(c.question)}</div>
-        <div class="hist-at">${(c.at||'').substring(0,16).replace('T',' ')}</div>
+      <div style="flex:1;cursor:pointer;" onclick="openConsult(${c.id})">
+        <div class="hist-q">${c.parent_id ? '↳ ' : ''}${esc(c.question)}
+          ${c.project ? `<span class="badge badge-blue">📁 ${esc(c.project)}</span>` : ''}
+          ${c.parent_id ? `<span class="badge badge-muted">🔀 กิ่งของ #${c.parent_id}</span>` : ''}</div>
+        <div class="hist-at">${(c.at||'').substring(0,16).replace('T',' ')} · ${(c.steps||[]).length}/5 รอบ · ${esc(c.status||'')}</div>
       </div>
+      <button class="step-act" onclick="delConsult(event, ${c.id})" title="ลบการปรึกษานี้">🗑</button>
     </div>`).join('');
 }
 
 async function openConsult(id) {
-  const c = await (await fetch('/api/consults/' + id)).json();
-  renderConsult(c);
+  const r = await fetch('/api/consults/' + id);
+  if (!r.ok) return;
+  renderSession(await r.json());
   document.querySelector('.main').scrollTo(0, 0);
+}
+
+async function delConsult(ev, id) {
+  ev.stopPropagation();
+  if (!confirm('ลบการปรึกษา #' + id + '?')) return;
+  await fetch('/api/consults/' + id, {method:'DELETE'});
+  if (SESSION && SESSION.id === id) {
+    SESSION = null;
+    document.getElementById('board-out').innerHTML = '';
+  }
+  loadState();
 }
 
 /* ---------- decisions ---------- */
@@ -1228,6 +1802,7 @@ async function loadDocs() {
     <div class="stat-card"><div class="stat-label">LINE Bot</div><div class="stat-value ${j.line_connected?'c-green':'c-red'}" style="font-size:16px;">${j.line_connected?'เชื่อมแล้ว':'ยังไม่เชื่อม'}</div></div>
     <div class="stat-card"><div class="stat-label">ความรู้ป้อนบอร์ด</div><div class="stat-value">${(j.knowledge_chars/1000).toFixed(1)}k</div><div class="stat-sub">ตัวอักษร</div></div>`;
 
+  fillProjects(document.getElementById('up-project'), j.projects);
   document.getElementById('proj-tags').innerHTML = (j.projects||[]).map(p =>
     `<span class="proj-tag">📁 ${esc(p)}</span>`).join('')
     || '<span style="font-size:12px;color:var(--text-3);">ยังไม่มีโปรเจค — สร้างโปรเจคแรก เช่น YourFin</span>';
@@ -1242,7 +1817,7 @@ async function loadDocs() {
       ${j.drive_connected ? '<span class="badge badge-green">พร้อมใช้</span>' : '<span class="badge badge-red">ต้องตั้งค่า .env</span>'}
     </div>
     <div class="conn-item">
-      <span class="conn-label">🧠 บอร์ดทั้ง 4 ที่ปรึกษาอ่านคลังนี้ (แยกตามโปรเจค) อัตโนมัติทุกครั้งที่คุณถามใน Boardroom</span>
+      <span class="conn-label">🧠 บอร์ดอ่านคลังนี้ทุกครั้งที่ถามใน Boardroom — เลือกโปรเจคตรงกล่องถามเพื่อจำกัดขอบเขต</span>
     </div>`;
 
   document.getElementById('doc-list').innerHTML = j.documents.map(d => `
@@ -1253,7 +1828,41 @@ async function loadDocs() {
         <div class="doc-meta">#${d.id} · ${SRC_TH[d.source]||d.source} · ${(d.at||'').substring(0,16).replace('T',' ')}</div>
         ${d.text ? `<div class="doc-preview">${esc(d.text.substring(0,200))}${d.text.length>200?'…':''}</div>` : ''}
       </div>
-    </div>`).join('') || `<div class="empty-state"><div class="empty-state-icon">📄</div><div class="empty-state-text">ยังไม่มี — ส่งไฟล์/ข้อความเข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div></div>`;
+    </div>`).join('') || `<div class="empty-state"><div class="empty-state-icon">📄</div><div class="empty-state-text">ยังไม่มี — อัพโหลด หรือส่งไฟล์เข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div></div>`;
+}
+
+/* upload: click or drag-and-drop */
+const drop = document.getElementById('drop');
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add('over');
+}));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', e => uploadFiles(e.dataTransfer.files));
+
+async function uploadFiles(files) {
+  if (!files || !files.length) return;
+  const project = document.getElementById('up-project').value;
+  const el = document.getElementById('up-status');
+  let done = 0;
+  for (const f of files) {
+    el.textContent = `⏳ กำลังอัพโหลด ${f.name} (${done+1}/${files.length})…`;
+    const fd = new FormData();
+    fd.append('file', f);
+    fd.append('project', project);
+    const r = await fetch('/api/docs/upload', {method:'POST', body: fd});
+    if (r.ok) {
+      const j = await r.json();
+      done++;
+      el.textContent = `✅ ${j.name} → ${j.project ? '📁 ' + j.project : 'ยังไม่จัดโปรเจค'} (${j.location === 'drive' ? 'Google Drive' : 'เครื่องนี้'})`;
+    } else {
+      el.textContent = `⚠️ ${f.name}: ${await r.text()}`;
+    }
+  }
+  document.getElementById('up-file').value = '';
+  loadDocs();
+  loadState();
 }
 
 async function addProject() {
@@ -1296,7 +1905,10 @@ function renderAgents() {
         <div class="agent-name">${esc(d.name)}</div>
         <div class="agent-role">${esc(d.role)}</div>
       </div>
-      <span class="badge ${d.provider_ready ? 'badge-green' : 'badge-muted'}" style="margin-left:12px;">
+      <span class="badge ${d.online ? 'badge-green' : 'badge-muted'}" style="margin-left:12px;" title="${esc(d.url||'')}">
+        <span class="dot ${d.online?'on':'off'}"></span> service ${d.online ? 'online' : 'offline'}
+      </span>
+      <span class="badge ${d.provider_ready ? 'badge-green' : 'badge-muted'}">
         ${d.provider_ready ? '● Key Ready' : '○ No Key'}
       </span>
       <select class="agent-select" onchange="setProvider('${d.key}', this.value)">

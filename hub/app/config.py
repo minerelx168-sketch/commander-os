@@ -41,6 +41,12 @@ MANUS_API_URL = os.getenv("MANUS_API_URL", "https://api.manus.im/v1").rstrip("/"
 ZAI_API_KEY = os.getenv("ZAI_API_KEY", "")
 ZAI_API_URL = os.getenv("ZAI_API_URL", "https://api.z.ai/api/paas/v4/chat/completions")
 
+# --- Web research: first key wins; falls back to keyless DuckDuckGo ---
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+WEB_RESEARCH_DEFAULT = os.getenv("WEB_RESEARCH_DEFAULT", "1") not in ("0", "false", "False")
+
 # --- Documents: Google Drive + LINE ---
 GDRIVE_SA_JSON = os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON", "")   # path to service-account .json
 GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "")            # target Drive folder
