@@ -1433,7 +1433,8 @@ function chairCard(a) {
   return wideCard('chair-card', '⚖️', 'ประธานบอร์ด — บทสรุปเพื่อการตัดสินใจ', 'CHAIRMAN SYNTHESIS', a)
     + `<div class="exec-bar">
          <button class="btn btn-primary btn-sm" onclick="openPdf('exec', this)">📑 บทสรุปสำหรับผู้บริหาร (.PDF)</button>
-         <span class="scope-note">รวมข้อสรุปรายความเชี่ยวชาญของ C-level ทุกคน + ทางเลือกพร้อมทางที่บอร์ดแนะนำ</span>
+         <button class="btn btn-alt btn-sm" onclick="openXlsx(this)">📊 แบบจำลองการเงิน 3 Scenario (.XLSX)</button>
+         <span class="scope-note">PDF = ข้อสรุปรายความเชี่ยวชาญ + ทางเลือกที่บอร์ดแนะนำ · Excel = Forecast 24 เดือน แก้สมมติฐานแล้วคำนวณใหม่ทั้งไฟล์</span>
        </div>`;
 }
 
@@ -1699,6 +1700,31 @@ async function openPdf(step, btn) {
     setTimeout(() => URL.revokeObjectURL(href), 60000);
   } catch(e) {
     alert('สร้าง PDF ไม่สำเร็จ: ' + e);
+  }
+  btn.disabled = false; btn.innerHTML = old;
+}
+
+async function openXlsx(btn) {
+  // Excel must download rather than open in a tab, so trigger a real click on
+  // an anchor with the server's filename instead of window.open().
+  if (!SESSION) return;
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ CFO กำลังสร้างแบบจำลอง…';
+  try {
+    const r = await fetch(`/api/consult/${SESSION.id}/financial-model.xlsx`);
+    if (!r.ok) {
+      let msg = await r.text();
+      try { msg = JSON.parse(msg).detail || msg; } catch(_) {}
+      throw new Error(msg);
+    }
+    const href = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = `commander-hub-financial-model-${SESSION.id}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
+  } catch(e) {
+    alert('สร้างแบบจำลองการเงินไม่สำเร็จ: ' + (e.message || e));
   }
   btn.disabled = false; btn.innerHTML = old;
 }

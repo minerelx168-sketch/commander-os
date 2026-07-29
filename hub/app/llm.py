@@ -13,6 +13,18 @@ from . import config
 log = logging.getLogger("hub.llm")
 TIMEOUT = 120.0
 
+# A larger max_tokens means a proportionally longer generation, so the read
+# timeout has to scale with it — otherwise raising the token ceiling silently
+# converts a slow-but-fine reply into a timeout (which is exactly what the
+# 8192-token Thai financial model hit against the flat 120s budget).
+_SECONDS_PER_1K_TOKENS = 30.0
+
+
+def _timeout_for(max_tokens: int | None) -> float:
+    if not max_tokens or max_tokens <= 2048:
+        return TIMEOUT
+    return max(TIMEOUT, max_tokens / 1000 * _SECONDS_PER_1K_TOKENS)
+
 
 def _extract_anthropic_text(content) -> str:
     """Claude Fable/Sonnet 5 return a list of blocks (thinking first) — join text blocks only."""
@@ -29,7 +41,7 @@ def _anthropic(system: str, user: str, cancel=None, max_tokens: int | None = Non
         json={"model": config.PROVIDERS["anthropic"]["model"],
               "max_tokens": max_tokens or 2048,
               "system": system, "messages": [{"role": "user", "content": user}]},
-        timeout=TIMEOUT,
+        timeout=_timeout_for(max_tokens),
     )
     r.raise_for_status()
     return _extract_anthropic_text(r.json()["content"])

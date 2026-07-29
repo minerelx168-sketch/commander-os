@@ -4,9 +4,16 @@ python-multipart>=0.0.9
 httpx>=0.27
 python-dotenv>=1.0
 pydantic>=2.0
-pytest>=8.0
 google-api-python-client>=2.100
 google-auth>=2.30
 fpdf2>=2.8
 uharfbuzz>=0.39
+openpyxl>=3.1
+
+# --- test-only ---
+# pymupdf reads back the generated PDFs; formulas evaluates the generated
+# workbook so the Excel model is checked for correct arithmetic, not just for
+# containing formulas. Both are skipped gracefully if absent.
+pytest>=8.0
 pymupdf>=1.24
+formulas>=1.2

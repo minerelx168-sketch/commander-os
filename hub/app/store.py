@@ -129,6 +129,17 @@ def attach_options(session_id: int, data: dict) -> None:
         _save(store)
 
 
+def attach_finmodel(session_id: int, data: dict) -> None:
+    """Cache the CFO's financial-model assumptions for the Excel export."""
+    with _LOCK:
+        store = _load()
+        c = _find(store, session_id)
+        if c is None:
+            return
+        c["finmodel"] = data
+        _save(store)
+
+
 def set_status(session_id: int, status: str) -> dict | None:
     with _LOCK:
         data = _load()

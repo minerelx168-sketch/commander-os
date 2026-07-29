@@ -1,5 +1,9 @@
-"""Hub tests — stepwise board flow, decision gates, branch/reset, web research, PDF reports."""
+"""Hub tests — stepwise board flow, decision gates, branch/reset, web research, PDF reports,
+CFO Excel scenario model."""
+import io
 import json
+import os
+import tempfile
 from unittest.mock import patch
 
 import pytest
@@ -690,6 +694,251 @@ def test_librarian_reclassify_unfiled(client):
          patch("app.llm.provider_ready", return_value=True):
         j = client.post("/api/docs/reclassify").json()
     assert j["filed"] == 1 and j["unfiled"] == 0
+
+
+# ── CFO financial model (Excel scenario forecast) ──
+
+FINMODEL_JSON = json.dumps({
+    "business_model": "ขายช่อดอกไม้ผ่านตู้กดอัตโนมัติ",
+    "currency_note": "บาท (THB), 24 เดือน",
+    "revenue": {
+        "units_month_1": {"value": 300, "source": "CMO: ขายได้ 300 ช่อเดือนแรก"},
+        "price_per_unit": {"value": 150, "source": "บทถกเถียง: ช่อละ 150 บาท"},
+        "growth_rate_monthly": {"value": 0.04, "source": "ประมาณการของ CFO"},
+        "churn_or_seasonality": {"value": 0.01, "source": "ประมาณการของ CFO"},
+    },
+    "costs": {
+        "cogs_pct_of_revenue": {"value": 0.40, "source": "CFO: ต้นทุนดอก 40%"},
+        "fixed_cost_month": {"value": 25000, "source": "COO: ค่าเช่า+คนดูแล"},
+        "marketing_pct_of_revenue": {"value": 0.08, "source": "ประมาณการของ CFO"},
+        "other_variable_pct": {"value": 0.05, "source": "ประมาณการของ CFO"},
+    },
+    "capital": {
+        "upfront_investment": {"value": 400000, "source": "COO: ค่าตู้ 4 แสน"},
+        "starting_cash": {"value": 600000, "source": "CFO: เงินสดในมือ"},
+        "payment_collection_lag_months": {"value": 0, "source": "ขายเงินสด"},
+    },
+    "scenarios": {
+        "base": {"revenue_mult": 1.0, "cost_mult": 1.0, "rationale": "กรณีฐาน"},
+        "best": {"revenue_mult": 1.3, "cost_mult": 0.95, "rationale": "ทำเลดีกว่าคาด"},
+        "worst": {"revenue_mult": 0.65, "cost_mult": 1.2, "rationale": "ดอกเน่าเสียสูง"},
+    },
+    "risks": [{"risk": "ดอกไม้เน่าเสียเกิน 15%", "driver": "cogs_pct_of_revenue",
+               "trigger": "ของเสียเกิน 15% สองเดือนติด", "mitigation": "ลดสต็อกต่อรอบเติม"}],
+    "kpis_to_watch": ["ยอดขายต่อตู้ต่อวัน", "อัตราของเสีย", "เงินสดคงเหลือ"],
+    "sensitivity": {"driver_a": "revenue.growth_rate_monthly",
+                    "driver_b": "costs.cogs_pct_of_revenue",
+                    "why": "สองตัวนี้ชี้ว่าคุ้มทุนเมื่อไหร่"},
+}, ensure_ascii=False)
+
+
+def _finmodel_wb(client, payload=FINMODEL_JSON):
+    """Run a consult to completion, then fetch the workbook openpyxl-loaded."""
+    from openpyxl import load_workbook
+    s = _finished_consult(client)
+    fake = {"text": payload, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=fake), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/financial-model.xlsx")
+    assert r.status_code == 200, r.text
+    assert r.content[:2] == b"PK", "xlsx must be a zip container"
+    return s, r, load_workbook(io.BytesIO(r.content))
+
+
+def test_financial_model_has_every_scenario_sheet(client):
+    _s, r, wb = _finmodel_wb(client)
+    assert "spreadsheetml.sheet" in r.headers["content-type"]
+    assert "attachment" in r.headers["content-disposition"]
+    for name in ("วิธีอ่าน", "สมมติฐาน", "Base", "Best", "Worst",
+                 "เปรียบเทียบ Scenario", "ความเสี่ยง"):
+        assert name in wb.sheetnames, f"missing sheet {name}"
+
+
+def test_assumptions_are_the_only_typed_numbers(client):
+    """The CEO must be able to change one input and trust everything follows —
+    so no scenario cell may hold a hardcoded *number*. Text headers are fine;
+    a literal value is not, because it would silently ignore the assumptions.
+    """
+    _s, _r, wb = _finmodel_wb(client)
+    for label in ("Base", "Best", "Worst"):
+        ws = wb[label]
+        for row in ws.iter_rows(min_row=6, min_col=2):
+            for cell in row:
+                assert not isinstance(cell.value, (int, float)), (
+                    f"{label}!{cell.coordinate} holds the literal {cell.value!r} — "
+                    "it must be a formula referencing 'สมมติฐาน'"
+                )
+
+
+def test_scenario_formulas_reference_the_assumptions_sheet(client):
+    _s, _r, wb = _finmodel_wb(client)
+    ws = wb["Base"]
+    joined = " ".join(str(c.value) for row in ws.iter_rows(min_row=6, min_col=2)
+                      for c in row if c.value)
+    assert "สมมติฐาน" in joined, "scenario sheet must point back at the assumptions"
+
+
+def test_estimates_are_labelled_apart_from_debate_numbers(client):
+    """A number the CFO invented must never look like one the board argued."""
+    _s, _r, wb = _finmodel_wb(client)
+    ws = wb["สมมติฐาน"]
+    kinds = {}
+    for row in ws.iter_rows(min_row=7, max_col=5):
+        label, kind = row[0].value, row[4].value
+        if label and kind:
+            kinds[label] = kind
+    assert kinds["อัตราเติบโตต่อเดือน"] == "ประมาณการ"
+    assert kinds["ต้นทุนขาย (% ของรายได้)"] == "จากบทถกเถียง"
+
+
+def _evaluate(xlsx_bytes: bytes):
+    """Compute the workbook with a real formula engine and return a cell reader.
+
+    `formulas` keys cells as "'[filename]SHEETNAME'!REF" — the sheet name is
+    upper-cased but the filename keeps its original case, so build the key the
+    same way rather than guessing.
+    """
+    formulas = pytest.importorskip("formulas")
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "model.xlsx")
+        with open(path, "wb") as fh:
+            fh.write(xlsx_bytes)
+        sol = formulas.ExcelModel().loads(path).finish().calculate()
+    prefix = f"'[{os.path.basename(path)}]"
+
+    def cell(sheet: str, ref: str):
+        return sol[f"{prefix}{sheet.upper()}'!{ref}"].value[0, 0]
+    return cell
+
+
+def _row_of(ws, label: str) -> int:
+    """Find a P&L line by its Thai label instead of hardcoding a row number —
+    inserting a line into the model must not silently retarget the assertion."""
+    for row in ws.iter_rows(min_col=1, max_col=1):
+        if row[0].value == label:
+            return row[0].row
+    raise AssertionError(f"row {label!r} not found in {ws.title}")
+
+
+def test_workbook_math_is_correct_when_evaluated(client):
+    """Formulas are only useful if they compute the right thing — evaluate the
+    real workbook and check the P&L against an independent Python model."""
+    _s, r, wb = _finmodel_wb(client)
+    cell = _evaluate(r.content)
+    ws = wb["Base"]
+    rev_r = _row_of(ws, "รายได้")
+    ni_r = _row_of(ws, "กำไรสุทธิ (Net Profit)")
+    out_r = _row_of(ws, "เงินสดจ่าย")
+    cum_r = _row_of(ws, "เงินสดคงเหลือสะสม")
+
+    # independent recomputation of month 1 and month 2 of the Base case
+    units1, price, growth, churn = 300, 150, 0.04, 0.01
+    cogs_pct, fixed, mkt, oth = 0.40, 25000, 0.08, 0.05
+    var_pct = cogs_pct + mkt + oth
+    rev1 = units1 * price
+    ni1 = rev1 * (1 - var_pct) - fixed
+    units2 = units1 * (1 + growth - churn)
+    ni2 = units2 * price * (1 - var_pct) - fixed
+
+    assert cell("Base", f"B{rev_r}") == pytest.approx(rev1, rel=1e-6)
+    assert cell("Base", f"B{ni_r}") == pytest.approx(ni1, rel=1e-6)
+    assert cell("Base", f"C{ni_r}") == pytest.approx(ni2, rel=1e-6)
+    # cash paid out is every variable cost plus fixed cost, carried as negative
+    assert cell("Base", f"B{out_r}") == pytest.approx(-(rev1 * var_pct + fixed), rel=1e-6)
+    # cash on hand must absorb the upfront investment, so it trails profit
+    assert cell("Base", f"B{cum_r}") == pytest.approx(600000 + ni1 - 400000, rel=1e-6)
+    # month 2 has no capex, so cash grows by that month's net cash flow
+    assert cell("Base", f"C{cum_r}") == pytest.approx(
+        600000 + ni1 - 400000 + ni2, rel=1e-6)
+
+
+def test_scenario_multipliers_actually_move_the_numbers(client):
+    """Best/Worst must diverge from Base, otherwise the scenarios are theatre."""
+    _s, r, wb = _finmodel_wb(client)
+    cell = _evaluate(r.content)
+    rev_r = _row_of(wb["Base"], "รายได้")
+    base, best, worst = (cell(s, f"B{rev_r}") for s in ("Base", "Best", "Worst"))
+    assert best > base > worst, f"revenue must rank best>base>worst (got {best}/{base}/{worst})"
+    assert best == pytest.approx(base * 1.3, rel=1e-6)
+    assert worst == pytest.approx(base * 0.65, rel=1e-6)
+
+
+def test_financial_model_refuses_before_the_board_has_spoken(client):
+    """No debate means no assumptions — better a clear 400 than invented numbers."""
+    s = _start(client)
+    with patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/financial-model.xlsx")
+    assert r.status_code == 400
+    assert "สมมติฐาน" in r.json()["detail"]
+
+
+def test_financial_model_survives_an_unusable_cfo_reply(client):
+    """A truncated or non-JSON reply must 400, never a half-built workbook."""
+    s = _finished_consult(client)
+    junk = {"text": '{"revenue": {"units_month_1"', "provider": "anthropic",
+            "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=junk), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/financial-model.xlsx")
+    assert r.status_code == 400
+
+
+def test_read_timeout_scales_with_max_tokens(client):
+    """Raising max_tokens without raising the read timeout turns a slow-but-fine
+    reply into a failure — this is the bug that broke the 8192-token Thai
+    financial model against the flat 120s budget."""
+    from app import llm
+
+    assert llm._timeout_for(None) == llm.TIMEOUT
+    assert llm._timeout_for(2048) == llm.TIMEOUT      # default budget unchanged
+    assert llm._timeout_for(8192) > llm.TIMEOUT       # the model's real ask
+    # monotonic: more tokens must never mean less time
+    budgets = [llm._timeout_for(n) for n in (2048, 4096, 8192, 16384)]
+    assert budgets == sorted(budgets)
+
+    seen = {}
+
+    class _Resp:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"content": [{"type": "text", "text": "ok"}]}
+
+    def _capture(url, **kw):
+        seen["timeout"] = kw.get("timeout")
+        return _Resp()
+
+    with patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.httpx.post", side_effect=_capture):
+        llm._anthropic("s", "u", None, max_tokens=8192)
+        big = seen["timeout"]
+        llm._anthropic("s", "u")
+        small = seen["timeout"]
+    assert big > small, "the 8192-token call must get a longer read timeout"
+
+
+def test_financial_assumptions_endpoint_exposes_provenance(client):
+    s = _finished_consult(client)
+    fake = {"text": FINMODEL_JSON, "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=fake), \
+         patch("app.llm.provider_ready", return_value=True):
+        j = client.get(f"/api/consult/{s['id']}/financial-assumptions").json()
+    assert j["revenue"]["price_per_unit"]["value"] == 150
+    assert "ประมาณการ" in j["revenue"]["growth_rate_monthly"]["source"]
+    assert client.get("/api/consult/999/financial-assumptions").status_code == 404
+
+
+def test_dirty_assumption_values_do_not_break_the_model(client):
+    """Providers return '1,250 บาท' and '3%' — coerce instead of crashing."""
+    messy = json.loads(FINMODEL_JSON)
+    messy["revenue"]["price_per_unit"] = {"value": "1,250 บาท", "source": "x"}
+    messy["revenue"]["growth_rate_monthly"] = {"value": "3%", "source": "x"}
+    messy["costs"]["fixed_cost_month"] = {"value": None, "source": "x"}
+    _s, _r, wb = _finmodel_wb(client, json.dumps(messy, ensure_ascii=False))
+    ws = wb["สมมติฐาน"]
+    vals = {row[0].value: row[1].value for row in ws.iter_rows(min_row=7, max_col=2)}
+    assert vals["ราคาขายต่อหน่วย (บาท)"] == 1250
+    assert vals["อัตราเติบโตต่อเดือน"] == pytest.approx(0.03)
+    assert vals["ค่าใช้จ่ายคงที่ต่อเดือน (บาท)"] == 0
 
 
 # ── history / bad inputs ──

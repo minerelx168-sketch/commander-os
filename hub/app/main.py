@@ -15,7 +15,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import config, depts, docs, llm, report, research, store
+from . import config, depts, docs, finmodel, llm, report, research, store
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="Commander Hub — C-Suite Advisory")
@@ -212,6 +212,43 @@ def executive_summary(session_id: int, refresh: bool = False) -> Response:
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     return _pdf(body, f"consult-{session_id}-executive-summary.pdf")
+
+
+@app.get("/api/consult/{session_id}/financial-model.xlsx")
+def financial_model(session_id: int, refresh: bool = False) -> Response:
+    """CFO scenario forecast as a live Excel model.
+
+    Every derived cell is a formula pointing at the Assumptions sheet, so the
+    CEO can change an input and re-measure without asking the board again.
+    """
+    session = store.get_consult(session_id)
+    if session is None:
+        raise HTTPException(404, "consult not found")
+    if refresh:
+        finmodel.assumptions(session, refresh=True)
+        session = store.get_consult(session_id)
+        if session is None:  # deleted while the CFO was thinking
+            raise HTTPException(404, "consult not found")
+    try:
+        body = finmodel.build_workbook(session)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return Response(
+        content=body,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="consult-{session_id}-financial-model.xlsx"'},
+    )
+
+
+@app.get("/api/consult/{session_id}/financial-assumptions")
+def financial_assumptions(session_id: int) -> dict:
+    """The raw assumptions behind the workbook — lets the UI show which numbers
+    came from the debate and which the CFO had to estimate."""
+    session = store.get_consult(session_id)
+    if session is None:
+        raise HTTPException(404, "consult not found")
+    return finmodel.assumptions(session)
 
 
 @app.get("/api/consult/{session_id}/options")
