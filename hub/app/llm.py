@@ -21,12 +21,13 @@ def _extract_anthropic_text(content) -> str:
     return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text").strip()
 
 
-def _anthropic(system: str, user: str, cancel=None) -> str:
+def _anthropic(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
     r = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": config.ANTHROPIC_API_KEY,
                  "anthropic-version": "2023-06-01"},
-        json={"model": config.PROVIDERS["anthropic"]["model"], "max_tokens": 2048,
+        json={"model": config.PROVIDERS["anthropic"]["model"],
+              "max_tokens": max_tokens or 2048,
               "system": system, "messages": [{"role": "user", "content": user}]},
         timeout=TIMEOUT,
     )
@@ -106,6 +107,9 @@ def _mock(system: str, user: str, cancel=None) -> str:
 _CALLERS = {"anthropic": _anthropic, "gemini": _gemini, "manus": _manus,
             "zai": _zai, "mock": _mock}
 
+# Only these accept a max_tokens hint; the rest use their own server-side default.
+_ACCEPTS_MAX_TOKENS = {"anthropic"}
+
 _HAS_KEY = {
     "anthropic": lambda: bool(config.ANTHROPIC_API_KEY),
     "gemini": lambda: bool(config.GOOGLE_API_KEY),
@@ -119,17 +123,25 @@ def provider_ready(provider: str) -> bool:
     return _HAS_KEY.get(provider, lambda: False)()
 
 
-def chat(provider: str, system: str, user: str, cancel=None) -> dict:
+def chat(provider: str, system: str, user: str, cancel=None,
+         max_tokens: int | None = None) -> dict:
     """Returns {text, provider, model, ok}. Falls back to mock on any failure.
 
     `cancel` is an optional callable polled by long-running providers so the
     CEO's STOP takes effect without waiting out the provider deadline.
+
+    `max_tokens` raises the output ceiling for callers that need a long,
+    complete reply. Thai burns ~3x the tokens of English and reasoning models
+    spend part of the budget thinking, so the 2048 default truncates structured
+    JSON mid-object (stop_reason=max_tokens) and silently fails to parse.
+    Providers that ignore the hint simply use their own default.
     """
     caller = _CALLERS.get(provider)
     if caller is None or not provider_ready(provider):
         return {"text": _mock(system, user), "provider": "mock", "model": "mock", "ok": False}
     try:
-        return {"text": caller(system, user, cancel), "provider": provider,
+        kwargs = {"max_tokens": max_tokens} if max_tokens and provider in _ACCEPTS_MAX_TOKENS else {}
+        return {"text": caller(system, user, cancel, **kwargs), "provider": provider,
                 "model": config.PROVIDERS[provider]["model"], "ok": True}
     except Exception as e:  # noqa: BLE001 — a consult must never 500 the whole board
         log.warning("provider %s failed: %s", provider, e)

@@ -21,11 +21,17 @@ spawn() { # name  dir  cmd...
 
 port_busy() { lsof -ti tcp:"$1" >/dev/null 2>&1; }
 
+# The hub runs on the Hermes venv (HUB_PY overridable); dept services keep
+# their own interpreters. Hermes' PYTHONPATH is deliberately NOT unset for the
+# hub — that venv IS the target environment.
+HUB_PY="${HUB_PY:-$HOME/.hermes/hermes-agent/venv/bin/python}"
+[ -x "$HUB_PY" ] || HUB_PY="$R/hub/.venv/bin/python"
+
 port_busy 8201 || spawn cmo      "$R/services/cmo"      "$R/services/cmo/.venv/bin/uvicorn" src.dashboard:app --host 0.0.0.0 --port 8201
 port_busy 8202 || spawn coo      "$R/services/coo"      env PORT=8202 node src/server.js
 port_busy 8203 || spawn cfo      "$R/services/cfo"      env PORT=8203 node server.js
 port_busy 8204 || spawn datalyst "$R/services/datalyst" "$R/hub/.venv/bin/uvicorn" server:app --host 0.0.0.0 --port 8204
-port_busy 8100 || spawn hub      "$R/hub"               "$R/hub/.venv/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8100
+port_busy 8100 || spawn hub      "$R/hub"               "$HUB_PY" -m uvicorn app.main:app --host 0.0.0.0 --port 8100
 
 echo "waiting for services..."
 for i in $(seq 1 20); do

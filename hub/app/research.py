@@ -136,15 +136,19 @@ def _duckduckgo(query: str, k: int) -> list[dict]:
     return []
 
 
-_BACKENDS = {"tavily": _tavily, "brave": _brave, "serper": _serper,
-             "duckduckgo": _duckduckgo}
+# Backends are resolved by NAME at call time, not bound at import time: binding
+# the function objects here would freeze them into this dict, so patching
+# app.research._duckduckgo (tests, hot-swaps) would silently keep hitting the
+# real network instead of the replacement.
+_BACKENDS = {"tavily": "_tavily", "brave": "_brave", "serper": "_serper",
+             "duckduckgo": "_duckduckgo"}
 
 
 def search(query: str, k: int = 5) -> list[dict]:
     """One search against the active backend. Never raises — a dead backend
     must not take the whole consult down with it."""
     try:
-        return _BACKENDS[backend()](query, k)
+        return globals()[_BACKENDS[backend()]](query, k)
     except Exception as e:  # noqa: BLE001
         log.warning("search backend %s failed for %r: %s", backend(), query, e)
         return []

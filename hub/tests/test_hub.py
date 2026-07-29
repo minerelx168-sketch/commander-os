@@ -537,17 +537,30 @@ def test_decision_log_and_scoring(client):
 
 def test_every_provider_accepts_the_cancel_probe(client):
     """chat() hands `cancel` to whichever caller runs — a provider added without
-    that parameter would blow up mid-consult instead of at import time."""
+    that parameter would blow up mid-consult instead of at import time.
+
+    The first three params are the contract every caller must honour; optional
+    extras after them (e.g. max_tokens) are allowed but must be keyword-safe
+    with a default, since chat() only passes them to opted-in providers.
+    """
     import inspect
 
     from app import llm
     for name, caller in llm._CALLERS.items():
         params = inspect.signature(caller).parameters
-        assert list(params) == ["system", "user", "cancel"], f"{name} signature drifted"
+        assert list(params)[:3] == ["system", "user", "cancel"], f"{name} signature drifted"
         assert params["cancel"].default is None, f"{name} must default cancel to None"
+        for extra in list(params)[3:]:
+            assert params[extra].default is not inspect.Parameter.empty, \
+                f"{name}.{extra} must be optional — chat() does not always pass it"
+    # every provider promising max_tokens support must actually accept it
+    for name in llm._ACCEPTS_MAX_TOKENS:
+        assert "max_tokens" in inspect.signature(llm._CALLERS[name]).parameters, \
+            f"{name} is listed in _ACCEPTS_MAX_TOKENS but takes no max_tokens"
     # a provider missing from any of the three tables is a half-wired provider
     from app import config
     assert set(llm._CALLERS) == set(llm._HAS_KEY) == set(config.PROVIDERS)
+    assert llm._ACCEPTS_MAX_TOKENS <= set(llm._CALLERS)
 
 
 def test_provider_switch(client):

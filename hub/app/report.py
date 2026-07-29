@@ -393,11 +393,17 @@ def decision_options(session: dict, refresh: bool = False) -> dict:
     if not transcript:
         return {}
 
+    # 8192: the Thai JSON schema below does not fit in the 2048 default —
+    # it truncates mid-object and _parse_json then returns None, which used to
+    # surface as a silently empty options section.
     out = llm.chat(depts._chair_provider(), OPTIONS_SYSTEM,
-                   f"คำถามของ CEO: {session['question']}\n\n" + "\n\n".join(transcript))
+                   f"คำถามของ CEO: {session['question']}\n\n" + "\n\n".join(transcript),
+                   max_tokens=8192)
     data = _parse_json(out["text"]) if out["ok"] else None
     if data is None:
-        log.warning("decision options failed for consult %s", session.get("id"))
+        log.warning("decision options failed for consult %s (ok=%s, reply chars=%s) — "
+                    "reply likely truncated or not JSON", session.get("id"),
+                    out.get("ok"), len(out.get("text") or ""))
         return {}
     store.attach_options(session["id"], data)
     return data
