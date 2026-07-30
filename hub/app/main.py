@@ -15,7 +15,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import config, depts, docs, finmodel, llm, report, research, store
+from . import (config, deliverable, depts, docs, finmodel, llm, report,
+               research, store)
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="Commander Hub — C-Suite Advisory")
@@ -249,6 +250,29 @@ def financial_assumptions(session_id: int) -> dict:
     if session is None:
         raise HTTPException(404, "consult not found")
     return finmodel.assumptions(session)
+
+
+@app.get("/api/consult/{session_id}/deliverable/{dept}.pdf")
+def deliverable_pdf(session_id: int, dept: str, refresh: bool = False) -> Response:
+    """A department's own working document, with the board's critique attached."""
+    session = store.get_consult(session_id)
+    if session is None:
+        raise HTTPException(404, "consult not found")
+    if dept not in deliverable.SPECS:
+        raise HTTPException(404, f"ไม่มีเอกสารส่งมอบสำหรับแผนก {dept}")
+    if refresh:
+        try:
+            deliverable.build(session, dept, refresh=True)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        session = store.get_consult(session_id)
+        if session is None:  # deleted mid-build
+            raise HTTPException(404, "consult not found")
+    try:
+        body = deliverable.build_pdf(session, dept)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return _pdf(body, f"consult-{session_id}-{dept}-deliverable.pdf")
 
 
 @app.get("/api/consult/{session_id}/options")

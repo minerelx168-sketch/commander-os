@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config
+from app import config, deliverable
 
 
 @pytest.fixture()
@@ -945,7 +945,12 @@ def test_dirty_assumption_values_do_not_break_the_model(client):
     assert vals["ค่าใช้จ่ายคงที่ต่อเดือน (บาท)"] == 0
 
 
-# ── departmental deliverables (CMO / COO documents + peer review) ──
+# ── departmental deliverables (documents + peer review) ──
+
+# Derived from SPECS, so a department added there is covered by every
+# parametrized deliverable test without touching this file.
+_DOC_DEPTS = set(deliverable.SPECS)
+
 
 def _deliverable_json(dept: str) -> str:
     """A plausible reply for whichever spec is asked for, built from the spec
@@ -983,7 +988,34 @@ def _deliverable(client, dept, payload=None):
     return s, r
 
 
-@pytest.mark.parametrize("dept", ["cmo", "coo"])
+def test_every_seat_hands_over_an_artefact(client):
+    """A seat with no deliverable is a seat that debates and produces nothing.
+    CFO's artefact is the Excel model, so it is exempt from the PDF specs."""
+    from app import deliverable as D
+
+    covered = set(D.SPECS) | {"cfo"}          # cfo -> finmodel.py
+    assert covered >= set(config.DEPTS), f"seats with no artefact: {set(config.DEPTS) - covered}"
+    assert "cfo" not in D.SPECS, "the finance artefact is the workbook, not a PDF"
+    for dept, spec in D.SPECS.items():
+        assert spec["dept"] == dept, f"{dept} spec is mislabelled as {spec['dept']}"
+        keys = [k for k, *_ in spec["sections"]]
+        assert len(keys) == len(set(keys)), f"{dept} has duplicate section keys"
+        assert keys[-1] == "actions", f"{dept} must end with what to do next"
+        assert all(kind in D._KIND_SHAPE for _k, _l, kind, _g in spec["sections"])
+
+
+def test_frontend_offers_a_button_for_every_artefact(client):
+    """SPECS and the UI's DELIVERABLES map must not drift apart, or a document
+    exists on the server that the CEO has no way to open."""
+    from app import deliverable as D
+
+    html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text("utf-8")
+    block = html.split("const DELIVERABLES = {", 1)[1].split("};", 1)[0]
+    for dept in set(D.SPECS) | {"cfo"}:
+        assert f"{dept}:" in block, f"no download button wired for {dept}"
+
+
+@pytest.mark.parametrize("dept", sorted(_DOC_DEPTS))
 def test_deliverable_covers_every_section_the_ceo_asked_for(client, dept):
     """Each section title in the spec must actually reach the paper — a spec
     entry that never renders is a promise the CEO can't see."""
@@ -1012,7 +1044,7 @@ def test_coo_deliverable_carries_the_operations_disciplines(client):
         assert heading in text
 
 
-@pytest.mark.parametrize("dept", ["cmo", "coo"])
+@pytest.mark.parametrize("dept", sorted(_DOC_DEPTS))
 def test_deliverable_is_peer_reviewed_before_it_reaches_the_ceo(client, dept):
     """The collaboration requirement: the other three advisors critique the
     document and the author answers, all on the same page as the work."""
@@ -1026,7 +1058,7 @@ def test_deliverable_is_peer_reviewed_before_it_reaches_the_ceo(client, dept):
     assert "คำชี้แจงของ" in text, "the author never answered the critique"
 
 
-@pytest.mark.parametrize("dept", ["cmo", "coo"])
+@pytest.mark.parametrize("dept", sorted(_DOC_DEPTS))
 def test_deliverable_reviewers_exclude_the_author(client, dept):
     """An advisor grading its own homework would defeat the review."""
     from app import deliverable as D
@@ -1085,8 +1117,9 @@ def test_deliverable_refuses_unusable_replies_and_unknown_depts(client):
     with patch("app.llm.chat", return_value=junk), \
          patch("app.llm.provider_ready", return_value=True):
         assert client.get(f"/api/consult/{s['id']}/deliverable/cmo.pdf").status_code == 400
-    # datalyst has no spec yet, and a bare 404 beats a half-built document
-    assert client.get(f"/api/consult/{s['id']}/deliverable/datalyst.pdf").status_code == 404
+    # CFO's artefact is the workbook, not a PDF, so this route must not invent one
+    assert client.get(f"/api/consult/{s['id']}/deliverable/cfo.pdf").status_code == 404
+    assert client.get(f"/api/consult/{s['id']}/deliverable/nope.pdf").status_code == 404
     assert client.get("/api/consult/999/deliverable/cmo.pdf").status_code == 404
 
 
