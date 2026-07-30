@@ -3,6 +3,11 @@
 # Services are detached with nohup+setsid so they SURVIVE the parent shell exiting.
 R="$HOME/commander-os"
 unset PYTHONPATH
+# hub/.env is the source of truth for model pins. A stale export in the calling
+# shell (e.g. ZAI_MODEL from a debugging session) would otherwise win over the
+# file, because load_dotenv() never overrides an existing environment variable.
+unset ZAI_MODEL GEMINI_MODEL ANTHROPIC_MODEL ANTHROPIC_FABLE_MODEL \
+      DEEPSEEK_MODEL MANUS_MODEL
 mkdir -p "$R/logs"
 
 # setsid isn't on macOS by default — emulate detachment with nohup in a subshell
@@ -19,7 +24,10 @@ spawn() { # name  dir  cmd...
   echo "started $name (pid $(cat "$R/logs/$name.pid" 2>/dev/null))"
 }
 
-port_busy() { lsof -ti tcp:"$1" >/dev/null 2>&1; }
+# -sTCP:LISTEN matters: a browser tab holding a CLOSE_WAIT socket on the port
+# is not a server, but an unfiltered lsof counts it and start_all then skips
+# the spawn, leaving the stack silently down.
+port_busy() { lsof -ti tcp:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
 # The hub runs on the Hermes venv (HUB_PY overridable); dept services keep
 # their own interpreters. Hermes' PYTHONPATH is deliberately NOT unset for the

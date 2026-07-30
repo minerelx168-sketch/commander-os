@@ -20,18 +20,37 @@ DEPTS = {
     "coo": {"name": "COO", "icon": "🛰", "role": "Operations",
             "url": os.getenv("COO_URL", "http://localhost:8202"),
             "expertise": "ปฏิบัติการหลังบ้าน, เอกสาร/สัญญา, pipeline, กระบวนการทำงาน"},
-    "datalyst": {"name": "Datalyst", "icon": "📊", "role": "Signal Layer",
+    "researcher": {"name": "Researcher", "icon": "🔬", "role": "Evidence Desk",
+                   "url": os.getenv("RESEARCHER_URL", "http://localhost:8205"),
+                   "expertise": "ค้นคว้าหลักฐานภายนอก, ตรวจความน่าเชื่อถือของแหล่งข้อมูล, "
+                                "market/competitor intelligence, การอ้างอิงที่ตรวจสอบย้อนได้"},
+    "datalyst": {"name": "Data Analyst", "icon": "📊", "role": "Signal Layer",
                  "url": os.getenv("DATALYST_URL", "http://localhost:8204"),
                  "expertise": "วิเคราะห์ข้อมูล, สถิติ, แนวโน้ม, ความเสี่ยงเชิงตัวเลข"},
 }
 
 # AI providers selectable per C-level on the Agents page
 PROVIDERS = {
-    "anthropic": {"label": "Claude (Anthropic)", "model": os.getenv("ANTHROPIC_MODEL", "claude-opus-5")},
-    "gemini": {"label": "Gemini (Google)", "model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash")},
+    "anthropic": {"label": "Claude Opus (Anthropic)",
+                  "model": os.getenv("ANTHROPIC_MODEL", "claude-opus-5")},
+    "anthropic_fable": {"label": "Claude Fable (Anthropic)",
+                        "model": os.getenv("ANTHROPIC_FABLE_MODEL", "claude-fable-5")},
+    "gemini": {"label": "Gemini Pro (Google)",
+               "model": os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")},
     "manus": {"label": "Manus", "model": os.getenv("MANUS_MODEL", "manus-1.6-agent")},
-    "zai": {"label": "Z.AI (GLM)", "model": os.getenv("ZAI_MODEL", "glm-4.6")},
+    "zai": {"label": "Z.AI (GLM)", "model": os.getenv("ZAI_MODEL", "glm-5.2")},
+    "deepseek": {"label": "DeepSeek", "model": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")},
     "mock": {"label": "Mock (offline)", "model": "mock"},
+}
+
+# Which agent each seat runs on by default (the CEO can still switch any seat
+# on the Agents page; this is only the first-run assignment).
+DEFAULT_PROVIDERS = {
+    "coo": "zai",                 # GLM-5.2
+    "cmo": "gemini",              # Gemini 3.1 Pro
+    "cfo": "anthropic_fable",     # Claude Fable 5
+    "researcher": "anthropic",    # Claude Opus 5
+    "datalyst": "deepseek",       # DeepSeek V4 Pro
 }
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -40,6 +59,8 @@ MANUS_API_KEY = os.getenv("MANUS_API_KEY", "")
 MANUS_API_URL = os.getenv("MANUS_API_URL", "https://api.manus.im/v1").rstrip("/").removesuffix("/chat/completions")
 ZAI_API_KEY = os.getenv("ZAI_API_KEY", "")
 ZAI_API_URL = os.getenv("ZAI_API_URL", "https://api.z.ai/api/paas/v4/chat/completions")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
 
 # --- Web research: first key wins; falls back to keyless DuckDuckGo ---
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")

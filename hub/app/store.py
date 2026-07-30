@@ -18,7 +18,8 @@ _FILE = config.MEMORY_DIR / "hub_store.json"
 _STOP: set[int] = set()
 
 _DEFAULT = {
-    "providers": {d: "mock" for d in config.DEPTS},  # dept -> provider key
+    # Each seat starts on its assigned agent; unassigned seats fall back to mock.
+    "providers": {d: config.DEFAULT_PROVIDERS.get(d, "mock") for d in config.DEPTS},
     "consults": [],                                   # step-by-step board sessions
     "decisions": [],                                  # Proven-by-Decision log
 }
@@ -44,6 +45,10 @@ def _load() -> dict:
         data = json.loads(_FILE.read_text(encoding="utf-8"))
         for k, v in _DEFAULT.items():
             data.setdefault(k, v)
+        # A seat added after this store was written (e.g. the Researcher) would
+        # otherwise stay missing forever — setdefault only guards top-level keys.
+        for dept in config.DEPTS:
+            data["providers"].setdefault(dept, config.DEFAULT_PROVIDERS.get(dept, "mock"))
         data["consults"] = [_migrate(c) for c in data["consults"]]
         return data
     return json.loads(json.dumps(_DEFAULT))
@@ -137,6 +142,17 @@ def attach_finmodel(session_id: int, data: dict) -> None:
         if c is None:
             return
         c["finmodel"] = data
+        _save(store)
+
+
+def attach_deliverable(session_id: int, dept: str, data: dict) -> None:
+    """Cache a department's working document + the board's review of it."""
+    with _LOCK:
+        store = _load()
+        c = _find(store, session_id)
+        if c is None:
+            return
+        c.setdefault("deliverables", {})[dept] = data
         _save(store)
 
 

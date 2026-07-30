@@ -33,18 +33,42 @@ def _extract_anthropic_text(content) -> str:
     return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text").strip()
 
 
-def _anthropic(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
+def _claude(provider: str, system: str, user: str, max_tokens: int | None) -> str:
+    """Shared Anthropic transport — Opus and Fable differ only by model id."""
     r = httpx.post(
         "https://api.anthropic.com/v1/messages",
         headers={"x-api-key": config.ANTHROPIC_API_KEY,
                  "anthropic-version": "2023-06-01"},
-        json={"model": config.PROVIDERS["anthropic"]["model"],
+        json={"model": config.PROVIDERS[provider]["model"],
               "max_tokens": max_tokens or 2048,
               "system": system, "messages": [{"role": "user", "content": user}]},
         timeout=_timeout_for(max_tokens),
     )
     r.raise_for_status()
     return _extract_anthropic_text(r.json()["content"])
+
+
+def _anthropic(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
+    return _claude("anthropic", system, user, max_tokens)
+
+
+def _anthropic_fable(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
+    return _claude("anthropic_fable", system, user, max_tokens)
+
+
+def _deepseek(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
+    """DeepSeek — OpenAI-compatible chat completions."""
+    r = httpx.post(
+        config.DEEPSEEK_API_URL,
+        headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"},
+        json={"model": config.PROVIDERS["deepseek"]["model"],
+              "max_tokens": max_tokens or 2048,
+              "messages": [{"role": "system", "content": system},
+                           {"role": "user", "content": user}]},
+        timeout=_timeout_for(max_tokens),
+    )
+    r.raise_for_status()
+    return (r.json()["choices"][0]["message"].get("content") or "").strip()
 
 
 def _gemini(system: str, user: str, cancel=None) -> str:
@@ -116,14 +140,17 @@ def _mock(system: str, user: str, cancel=None) -> str:
             f"(คำถามที่ได้รับ: {user[:120]})")
 
 
-_CALLERS = {"anthropic": _anthropic, "gemini": _gemini, "manus": _manus,
-            "zai": _zai, "mock": _mock}
+_CALLERS = {"anthropic": _anthropic, "anthropic_fable": _anthropic_fable,
+            "gemini": _gemini, "manus": _manus, "zai": _zai,
+            "deepseek": _deepseek, "mock": _mock}
 
 # Only these accept a max_tokens hint; the rest use their own server-side default.
-_ACCEPTS_MAX_TOKENS = {"anthropic"}
+_ACCEPTS_MAX_TOKENS = {"anthropic", "anthropic_fable", "deepseek"}
 
 _HAS_KEY = {
     "anthropic": lambda: bool(config.ANTHROPIC_API_KEY),
+    "anthropic_fable": lambda: bool(config.ANTHROPIC_API_KEY),
+    "deepseek": lambda: bool(config.DEEPSEEK_API_KEY),
     "gemini": lambda: bool(config.GOOGLE_API_KEY),
     "manus": lambda: bool(config.MANUS_API_KEY),
     "zai": lambda: bool(config.ZAI_API_KEY),

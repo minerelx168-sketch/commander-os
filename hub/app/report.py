@@ -270,6 +270,11 @@ def _stamp() -> str:
 
 # ── methodology extraction ──
 
+# Derived, never hand-listed: adding a seat to config.DEPTS must reach every
+# prompt that enumerates advisors, or the new voice is silently dropped.
+_DEPT_ENUM = "|".join(config.DEPTS)
+_DEPT_LIST = ", ".join(config.DEPTS)
+
 METHOD_SYSTEM = (
     "คุณคือผู้ตรวจสอบเชิงวิธีวิทยา (methodology auditor) หน้าที่คือถอดว่าที่ปรึกษาแต่ละคน "
     "'คิดด้วยหลักการอะไร' และ 'อ้างข้อมูลอะไร' จากคำตอบที่เกิดขึ้นจริง\n"
@@ -279,7 +284,7 @@ METHOD_SYSTEM = (
     "ตอบเป็น JSON ล้วนเท่านั้น ห้ามมีข้อความอื่นนอก JSON ตามรูปแบบนี้:\n"
     "{\n"
     '  "principles": ["หลักการ/ทฤษฎี/เฟรมเวิร์กที่ถูกใช้ในรอบนี้โดยรวม"],\n'
-    '  "advisors": [{"dept": "cmo|cfo|coo|datalyst",\n'
+    '  "advisors": [{"dept": "' + _DEPT_ENUM + '",\n'
     '                "frameworks": ["เฟรมเวิร์กที่คนนี้ใช้ เช่น CAC/LTV, unit economics"],\n'
     '                "logic": "ลำดับการให้เหตุผลของคนนี้ 1-2 ประโยค",\n'
     '                "assumptions": ["สมมติฐานที่ตั้งไว้"],\n'
@@ -298,11 +303,11 @@ OPTIONS_SYSTEM = (
     "หน้าที่คือกลั่นทางเลือกที่บอร์ดพูดถึงจริง 2-4 ทาง ให้ต่างกันชัดเจน (ไม่ใช่ทางเดียวเขียนใหม่ 3 แบบ) "
     "และต้องมีทางที่อนุรักษ์นิยม/ไม่ทำ เป็นหนึ่งในตัวเลือกเสมอถ้าบอร์ดมีใครค้าน\n"
     "กฎเหล็ก: ห้ามเสนอทางเลือกที่ไม่มีใครในบอร์ดพูดถึง และห้ามแต่งตัวเลขที่ไม่ปรากฏในบทถกเถียง\n"
-    "สนาม supporters/opponents ให้ใส่เฉพาะ key เหล่านี้: cmo, cfo, coo, datalyst — "
+    "สนาม supporters/opponents ให้ใส่เฉพาะ key เหล่านี้: " + _DEPT_LIST + " — "
     "อ้างตามที่แต่ละคนแสดงจุดยืนจริงในบทถกเถียง\n"
     "ตอบเป็น JSON ล้วนเท่านั้น ห้ามมีข้อความอื่นนอก JSON:\n"
     "{\n"
-    '  "advisor_takeaways": [{"dept": "cmo|cfo|coo|datalyst",\n'
+    '  "advisor_takeaways": [{"dept": "' + _DEPT_ENUM + '",\n'
     '                          "headline": "ข้อสรุปของคนนี้ในประโยคเดียว จากมุมความเชี่ยวชาญของเขา",\n'
     '                          "key_risk": "ความเสี่ยงข้อเดียวที่คนนี้ห่วงที่สุด"}],\n'
     '  "options": [{"name": "ชื่อทางเลือกสั้นๆ",\n'

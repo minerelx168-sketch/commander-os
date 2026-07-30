@@ -472,7 +472,9 @@ body {
 
 .round-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* auto-fit, not a fixed count: the board grew from 4 seats to 5 and must
+     keep reflowing as seats are added without another CSS edit */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
 }
 
@@ -1008,6 +1010,9 @@ body {
 .src a:hover { text-decoration: underline; }
 
 .exec-bar { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+/* per-advisor deliverable button, sits at the foot of a verdict card */
+.dl-bar { margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--border); }
+.dl-bar .btn { width: 100%; justify-content: center; }
 
 /* ============================================================
    DECISION OPTIONS — the choices the board puts to the CEO
@@ -1310,7 +1315,9 @@ body {
 <script>
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 let STATE = { depts:[], providers:[], projects:[], consults:[], decision_stats:{} };
-const DEPT_KEYS = ['cmo','cfo','coo','datalyst'];
+// Derived from /api/state, never hand-listed — a seat added on the server
+// (e.g. the Researcher) must appear in the board without touching this file.
+const deptKeys = () => STATE.depts.map(d => d.key);
 let SESSION = null;        // current consult session (carries next_step / status)
 let RUNNING = false;
 let ABORT = null;          // AbortController for the round in flight
@@ -1389,8 +1396,19 @@ loadState();
 setInterval(() => { if (!RUNNING) loadState(); }, 20000);
 
 /* ---------- boardroom ---------- */
+// Departments that hand over a working document of their own, beyond opinions.
+const DELIVERABLES = {
+  cmo: { icon:'📈', label:'เอกสารการตลาด (.PDF)',
+         hint:'สำรวจตลาด · คู่แข่ง · จุดยืนแบรนด์ · โอกาส · ตัวชี้วัด · ประมาณการยอดขาย' },
+  coo: { icon:'⚙️', label:'เอกสารปฏิบัติการ (.PDF)',
+         hint:'วินิจฉัยกระบวนการ · Core Flow · ระบบ/Automation · Lean · คุณภาพ+ความเสี่ยง · วัดผล' },
+  cfo: { icon:'📊', label:'แบบจำลองการเงิน (.XLSX)',
+         hint:'Forecast 24 เดือน 3 scenario · แก้สมมติฐานแล้วคำนวณใหม่ทั้งไฟล์' },
+};
+
 function opCard(dept, a, cls) {
   const d = STATE.depts.find(x => x.key === dept) || { icon:'🤖', name:dept };
+  const dl = (cls === 'verdict' && a.ok) ? DELIVERABLES[dept] : null;
   return `
     <div class="op-card ${cls||''} ${a.ok?'':'err'}">
       <div class="op-card-head">
@@ -1399,6 +1417,10 @@ function opCard(dept, a, cls) {
         <span class="op-card-provider">${esc(a.provider)}</span>
       </div>
       <div class="op-card-body">${esc(a.text)}</div>
+      ${dl ? `<div class="dl-bar">
+        <button class="btn btn-alt btn-sm" onclick="getDeliverable('${dept}', this)"
+                title="${esc(dl.hint)}">${dl.icon} ${esc(dl.label)}</button>
+      </div>` : ''}
     </div>`;
 }
 
@@ -1446,7 +1468,7 @@ function stepBlock(s) {
   } else if (s.key === 'synthesis') {
     body = chairCard(s.results.chair || { text:'(ไม่มีบทสรุป)', provider:'-', ok:false });
   } else {
-    body = `<div class="round-grid">${DEPT_KEYS.map(k => s.results[k]
+    body = `<div class="round-grid">${deptKeys().map(k => s.results[k]
       ? opCard(k, s.results[k], s.key === 'verdicts' ? 'verdict' : '') : '').join('')}</div>`;
   }
   return `
@@ -1705,26 +1727,39 @@ async function openPdf(step, btn) {
 }
 
 async function openXlsx(btn) {
-  // Excel must download rather than open in a tab, so trigger a real click on
-  // an anchor with the server's filename instead of window.open().
+  return getDeliverable('cfo', btn);
+}
+
+// One fetch for every departmental artefact. PDFs open in a tab; Excel has to
+// download, so both go through an anchor click rather than window.open().
+async function getDeliverable(dept, btn) {
   if (!SESSION) return;
+  const xlsx = dept === 'cfo';
+  const url = xlsx
+    ? `/api/consult/${SESSION.id}/financial-model.xlsx`
+    : `/api/consult/${SESSION.id}/deliverable/${dept}.pdf`;
   const old = btn.innerHTML;
-  btn.disabled = true; btn.innerHTML = '⏳ CFO กำลังสร้างแบบจำลอง…';
+  btn.disabled = true;
+  btn.innerHTML = `⏳ ${esc((STATE.depts.find(d => d.key === dept) || {}).name || dept)} กำลังจัดทำ…`;
   try {
-    const r = await fetch(`/api/consult/${SESSION.id}/financial-model.xlsx`);
+    const r = await fetch(url);
     if (!r.ok) {
       let msg = await r.text();
       try { msg = JSON.parse(msg).detail || msg; } catch(_) {}
       throw new Error(msg);
     }
     const href = URL.createObjectURL(await r.blob());
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = `commander-hub-financial-model-${SESSION.id}.xlsx`;
-    document.body.appendChild(a); a.click(); a.remove();
+    if (xlsx) {
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `commander-hub-${dept}-${SESSION.id}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+    } else {
+      window.open(href, '_blank');
+    }
     setTimeout(() => URL.revokeObjectURL(href), 60000);
   } catch(e) {
-    alert('สร้างแบบจำลองการเงินไม่สำเร็จ: ' + (e.message || e));
+    alert('จัดทำเอกสารไม่สำเร็จ: ' + (e.message || e));
   }
   btn.disabled = false; btn.innerHTML = old;
 }

@@ -4,10 +4,13 @@ import io
 import json
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+
+from app import config
 
 
 @pytest.fixture()
@@ -58,7 +61,7 @@ def _advance(client, sid, step=None, directive=None):
 
 def test_state_shape(client):
     s = client.get("/api/state").json()
-    assert {d["key"] for d in s["depts"]} == {"cmo", "cfo", "coo", "datalyst"}
+    assert {d["key"] for d in s["depts"]} == set(config.DEPTS)
     assert {p["key"] for p in s["providers"]} >= {"anthropic", "gemini", "manus", "mock"}
     assert set(s["decision_stats"]) == {"total", "scored", "saved", "faster", "neutral", "missed"}
     # department service health is surfaced so the UI can show the online dot
@@ -78,7 +81,8 @@ def test_consult_stops_at_a_gate_before_every_round(client):
         s = _advance(client, s["id"])
     assert [x["key"] for x in s["steps"]] == ["opinions"]
     assert s["status"] == "awaiting" and s["next_step"] == "cross_exam"
-    assert m.call_count == 4  # one round only — the board waits for the CEO
+    # one round only — the board waits for the CEO, one call per seat
+    assert m.call_count == len(config.DEPTS)
 
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])
@@ -182,7 +186,7 @@ def test_stop_marks_the_session_and_abandons_pending_advisors(client):
     assert probes and all(callable(p) for p in probes)
     # partial results are kept so nothing the board already said is lost
     assert s["steps"][0]["key"] == "opinions"
-    assert len(s["steps"][0]["results"]) == 4
+    assert len(s["steps"][0]["results"]) == len(config.DEPTS)
 
     # and the CEO can resume from where it stopped
     with patch("app.llm.chat", side_effect=_fake_chat):
@@ -494,7 +498,7 @@ def test_guardrails_in_prompts(client):
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         _advance(client, s["id"])
     opinion_systems = [c.args[1] for c in m.call_args_list if "กฎเหล็ก" in c.args[1]]
-    assert len(opinion_systems) == 4
+    assert len(opinion_systems) == len(config.DEPTS)
     joined = "\n".join(opinion_systems)
     assert "ห้ามออกความเห็นเรื่องสภาพคล่อง" in joined      # CMO guardrail
     assert "ห้ามออกความเห็นเรื่องกลยุทธ์การตลาด" in joined  # CFO guardrail
@@ -939,6 +943,322 @@ def test_dirty_assumption_values_do_not_break_the_model(client):
     assert vals["ราคาขายต่อหน่วย (บาท)"] == 1250
     assert vals["อัตราเติบโตต่อเดือน"] == pytest.approx(0.03)
     assert vals["ค่าใช้จ่ายคงที่ต่อเดือน (บาท)"] == 0
+
+
+# ── departmental deliverables (CMO / COO documents + peer review) ──
+
+def _deliverable_json(dept: str) -> str:
+    """A plausible reply for whichever spec is asked for, built from the spec
+    itself so a section added to SPECS can't silently go untested."""
+    from app import deliverable as D
+    sections = {}
+    for key, label, kind, _guide in D.SPECS[dept]["sections"]:
+        if kind == "prose":
+            sections[key] = {"body": f"เนื้อหา {label} อ้างอิง [1]"}
+        elif kind == "bullets":
+            sections[key] = {"items": [f"งาน {label} ข้อ 1", "งาน ข้อ 2 (ประมาณการ)"]}
+        else:
+            sections[key] = {"columns": ["ประเด็น", "ค่า", "แหล่ง [n]"],
+                             "rows": [[f"{label} แถว 1", "1,200", "[1]"],
+                                      [f"{label} แถว 2", "800", "(ประมาณการ)"]]}
+            if kind == "matrix":
+                sections[key]["chart"] = {"title": label, "labels": ["ก", "ข"],
+                                          "values": [1200, 800], "unit": "บาท"}
+    return json.dumps({
+        "headline": f"ข้อสรุปเอกสาร {dept}",
+        "sections": sections,
+        "confidence": "กลาง — ข้อมูลคู่แข่งยังบาง",
+        "data_gaps": ["ยอดขายจริงรายสาขา", "ราคาคู่แข่งในทำเลเดียวกัน"],
+    }, ensure_ascii=False)
+
+
+def _deliverable(client, dept, payload=None):
+    """Finish a consult, then fetch a department's document."""
+    s = _finished_consult(client)
+    fake = {"text": payload or _deliverable_json(dept), "provider": "anthropic",
+            "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=fake), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/deliverable/{dept}.pdf")
+    return s, r
+
+
+@pytest.mark.parametrize("dept", ["cmo", "coo"])
+def test_deliverable_covers_every_section_the_ceo_asked_for(client, dept):
+    """Each section title in the spec must actually reach the paper — a spec
+    entry that never renders is a promise the CEO can't see."""
+    from app import deliverable as D
+    _s, r = _deliverable(client, dept)
+    assert r.status_code == 200, r.text
+    assert r.content[:4] == b"%PDF"
+    text = _pdf_text(r.content)
+    for _key, label, _kind, _guide in D.SPECS[dept]["sections"]:
+        assert label in text, f"{dept} deliverable is missing section {label!r}"
+
+
+def test_cmo_deliverable_carries_the_marketing_disciplines(client):
+    _s, r = _deliverable(client, "cmo")
+    text = _pdf_text(r.content)
+    for heading in ("สำรวจตลาด", "วิเคราะห์คู่แข่ง", "จุดยืนแบรนด์",
+                    "โอกาสทางตลาด", "ตัวชี้วัดหลัก", "ประมาณการยอดขาย"):
+        assert heading in text
+
+
+def test_coo_deliverable_carries_the_operations_disciplines(client):
+    _s, r = _deliverable(client, "coo")
+    text = _pdf_text(r.content)
+    for heading in ("วินิจฉัยกระบวนการ", "Core Flow", "Systemization",
+                    "Lean", "Quality & Risk", "Performance Measurement"):
+        assert heading in text
+
+
+@pytest.mark.parametrize("dept", ["cmo", "coo"])
+def test_deliverable_is_peer_reviewed_before_it_reaches_the_ceo(client, dept):
+    """The collaboration requirement: the other three advisors critique the
+    document and the author answers, all on the same page as the work."""
+    _s, r = _deliverable(client, dept)
+    text = _pdf_text(r.content)
+    assert "บอร์ดวิพากษ์เอกสารนี้" in text
+    others = [d for d in config.DEPTS if d != dept]
+    for o in others:
+        name = config.DEPTS[o]["name"]
+        assert name in text, f"{name} did not review the {dept} document"
+    assert "คำชี้แจงของ" in text, "the author never answered the critique"
+
+
+@pytest.mark.parametrize("dept", ["cmo", "coo"])
+def test_deliverable_reviewers_exclude_the_author(client, dept):
+    """An advisor grading its own homework would defeat the review."""
+    from app import deliverable as D
+    s = _finished_consult(client)
+    fake = {"text": _deliverable_json(dept), "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=fake), \
+         patch("app.llm.provider_ready", return_value=True):
+        data = D.build(s, dept)
+    assert dept not in data["review"]["critiques"]
+    assert set(data["review"]["critiques"]) == set(config.DEPTS) - {dept}
+
+
+def test_deliverable_cites_the_web_sources_it_was_given(client):
+    """Claims must trace to a real URL, so the source table has to be printed."""
+    s = _start(client, question="ควรขยายสาขาไหม", web=True)
+    with patch("app.llm.chat", side_effect=_fake_chat), \
+         patch("app.research.search", return_value=FAKE_SOURCES), \
+         patch("app.research.fetch_text", return_value="เนื้อหาเต็มของหน้า"):
+        for _ in range(5):
+            if s["next_step"] is None:
+                break
+            s = _advance(client, s["id"])
+    fake = {"text": _deliverable_json("cmo"), "provider": "anthropic", "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=fake), \
+         patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/deliverable/cmo.pdf")
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    assert "แหล่งอ้างอิงที่บอร์ดมีให้ใช้" in text
+    assert "example.com/market" in text, "the cited URL must be printed for the CEO"
+
+
+def test_deliverable_prompt_forbids_faking_citations_without_research(client):
+    """With no web round, the author must be told not to invent [n] markers."""
+    from app import deliverable as D
+    s = _finished_consult(client)          # web_research off
+    ground = D._grounding(s)
+    assert "ห้ามใส่ [n]" in ground
+    assert "(ประมาณการ)" in ground
+
+
+def test_deliverable_author_prompt_demands_provenance(client):
+    from app import deliverable as D
+    sys_prompt = D._author_system(D.SPECS["cmo"])
+    assert "ห้ามใส่ [n] ปลอม" in sys_prompt
+    assert "ห้ามแต่งชื่อคู่แข่ง" in sys_prompt
+    # every section of the spec must be described to the model
+    for key, _label, _kind, _guide in D.SPECS["cmo"]["sections"]:
+        assert f'"{key}"' in sys_prompt
+
+
+def test_deliverable_refuses_unusable_replies_and_unknown_depts(client):
+    s = _finished_consult(client)
+    junk = {"text": "ขอโทษครับ ผมทำเอกสารนี้ไม่ได้", "provider": "anthropic",
+            "model": "m", "ok": True}
+    with patch("app.llm.chat", return_value=junk), \
+         patch("app.llm.provider_ready", return_value=True):
+        assert client.get(f"/api/consult/{s['id']}/deliverable/cmo.pdf").status_code == 400
+    # datalyst has no spec yet, and a bare 404 beats a half-built document
+    assert client.get(f"/api/consult/{s['id']}/deliverable/datalyst.pdf").status_code == 404
+    assert client.get("/api/consult/999/deliverable/cmo.pdf").status_code == 404
+
+
+def test_deliverable_needs_a_debate_first(client):
+    s = _start(client)
+    with patch("app.llm.provider_ready", return_value=True):
+        r = client.get(f"/api/consult/{s['id']}/deliverable/cmo.pdf")
+    assert r.status_code == 400
+    assert "บทถกเถียง" in r.json()["detail"]
+
+
+def test_deliverable_survives_ragged_tables(client):
+    """Providers return short rows and stray columns — pad, don't crash."""
+    payload = json.dumps({
+        "headline": "ทดสอบตารางไม่สมบูรณ์",
+        "sections": {
+            "market_survey": {"columns": ["a", "b", "c"], "rows": [["1"], ["1", "2", "3", "4"]]},
+            "competitors": {"columns": [], "rows": []},
+            "brand_position": {"body": ""},
+            "opportunity": {"columns": ["x"], "rows": [["y"]],
+                            "chart": {"labels": ["only-one"], "values": [1]}},
+            "core_metrics": "ไม่ใช่ dict เลย",
+            "sales_forecast": {"columns": ["q"], "rows": "ไม่ใช่ list"},
+            "actions": {"items": []},
+        },
+    }, ensure_ascii=False)
+    _s, r = _deliverable(client, "cmo", payload)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    text = _pdf_text(r.content)
+    assert "ไม่พบข้อมูลสำหรับหัวข้อนี้" in text
+
+
+def test_deliverable_is_cached_then_rebuilt_on_refresh(client):
+    """Re-downloading must not re-bill the CEO for the same document."""
+    from app import deliverable as D
+    from app import store
+    s = _finished_consult(client)
+    fake = {"text": _deliverable_json("coo"), "provider": "anthropic", "model": "m", "ok": True}
+    def reload():
+        got = store.get_consult(s["id"])
+        assert got is not None
+        return got
+
+    with patch("app.llm.chat", return_value=fake) as chat, \
+         patch("app.llm.provider_ready", return_value=True):
+        D.build(s, "coo")
+        first = chat.call_count
+        D.build(reload(), "coo")                            # cached
+        assert chat.call_count == first
+        D.build(reload(), "coo", refresh=True)
+        assert chat.call_count > first
+
+
+# ── board seats & agent assignment ──
+
+def test_every_seat_has_a_lane_a_default_agent_and_a_working_caller(client):
+    """A seat added to config.DEPTS must be wired everywhere at once — a seat
+    with no lane speaks unguarded, and one with no provider silently mocks."""
+    from app import depts, llm
+
+    for dept in config.DEPTS:
+        assert dept in depts.LANES, f"{dept} has no guardrail lane"
+        lane, guard = depts.LANES[dept]
+        assert lane and guard, f"{dept}'s lane is empty"
+        provider = config.DEFAULT_PROVIDERS.get(dept)
+        assert provider, f"{dept} has no default agent"
+        assert provider in config.PROVIDERS, f"{dept} points at unknown agent {provider}"
+        assert provider in llm._CALLERS, f"{provider} has no caller"
+        assert provider in llm._HAS_KEY, f"{provider} has no key probe"
+
+
+def test_the_researcher_seat_exists_and_is_evidence_only(client):
+    """The Researcher reports what the evidence says; it must not hand out
+    marketing/finance/ops strategy — that is what the other seats are for."""
+    from app import depts
+
+    assert "researcher" in config.DEPTS
+    s = client.get("/api/state").json()
+    seat = next(d for d in s["depts"] if d["key"] == "researcher")
+    assert seat["name"] == "Researcher"
+    lane, guard = depts.LANES["researcher"]
+    assert "หลักฐาน" in lane
+    assert "ห้าม" in guard and "(ไม่มีหลักฐาน)" in guard
+
+
+def test_prompts_enumerate_seats_from_config_not_a_frozen_list(client):
+    """The methodology/options prompts used to hand-list four departments, so a
+    new seat was dropped from every report without any test failing."""
+    from app import report
+
+    for prompt in (report.METHOD_SYSTEM, report.OPTIONS_SYSTEM):
+        for dept in config.DEPTS:
+            assert dept in prompt, f"{dept} missing from a board prompt"
+    assert "researcher" in report.OPTIONS_SYSTEM
+
+
+def test_frontend_derives_seats_from_the_api(client):
+    """The board grid read a hardcoded DEPT_KEYS array, which would hide any
+    seat the server added."""
+    html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text("utf-8")
+    assert "DEPT_KEYS" not in html, "frontend still hardcodes the seat list"
+    assert "deptKeys()" in html
+    assert "repeat(4, 1fr)" not in html, "round grid still assumes exactly 4 seats"
+
+
+def test_a_new_seat_is_added_to_an_existing_store(client, tmp_path):
+    """A store written before the Researeer existed must gain the seat on load,
+    while the CEO's own overrides stay untouched."""
+    import json
+
+    from app import store
+
+    legacy = {"providers": {"cmo": "manus"}, "consults": [], "decisions": []}
+    store._FILE.write_text(json.dumps(legacy), encoding="utf-8")
+    got = store.get_providers()
+    assert got["cmo"] == "manus", "an explicit CEO choice must never be overwritten"
+    assert got["researcher"] == config.DEFAULT_PROVIDERS["researcher"]
+    assert set(got) >= set(config.DEPTS)
+
+
+def test_each_seat_runs_the_agent_the_ceo_assigned(client):
+    """The exact line-up the CEO specified, asserted as model ids so a silent
+    provider rename or a stale .env pin cannot pass."""
+    expected = {
+        "coo": "glm-5.2",
+        "cmo": "gemini-3.1-pro-preview",
+        "cfo": "claude-fable-5",
+        "researcher": "claude-opus-5",
+        "datalyst": "deepseek-v4-pro",
+    }
+    for dept, model in expected.items():
+        provider = config.DEFAULT_PROVIDERS[dept]
+        actual = config.PROVIDERS[provider]["model"]
+        assert actual == model, f"{dept} should run {model}, got {actual}"
+
+
+def test_fable_and_opus_are_separate_seats_on_one_key(client):
+    """Fable and Opus share the Anthropic key but must stay distinct choices."""
+    from app import llm
+
+    assert config.PROVIDERS["anthropic"]["model"] != config.PROVIDERS["anthropic_fable"]["model"]
+    sent = {}
+
+    class _R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"content": [{"type": "text", "text": "ok"}]}
+
+    with patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.httpx.post", side_effect=lambda url, **kw: (sent.update(kw["json"]), _R())[1]):
+        llm._anthropic_fable("s", "u")
+        assert sent["model"] == config.PROVIDERS["anthropic_fable"]["model"]
+        llm._anthropic("s", "u")
+        assert sent["model"] == config.PROVIDERS["anthropic"]["model"]
+
+
+def test_deepseek_speaks_openai_shape(client):
+    from app import llm
+
+    sent = {}
+
+    class _R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"choices": [{"message": {"content": " ok "}}]}
+
+    with patch("app.config.DEEPSEEK_API_KEY", "k"), \
+         patch("app.llm.httpx.post", side_effect=lambda url, **kw: (sent.update(kw["json"]), _R())[1]):
+        assert llm._deepseek("sys", "usr", None, max_tokens=4096) == "ok"
+    assert sent["model"] == config.PROVIDERS["deepseek"]["model"]
+    assert [m["role"] for m in sent["messages"]] == ["system", "user"]
+    assert sent["max_tokens"] == 4096
 
 
 # ── history / bad inputs ──
