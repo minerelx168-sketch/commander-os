@@ -196,7 +196,11 @@ def _author_system(spec: dict) -> str:
     lines += ["  },",
               '  "confidence": "สูง|กลาง|ต่ำ — และเพราะอะไร",',
               '  "data_gaps": ["ข้อมูลที่ยังขาดและ CEO ควรไปหาเพิ่ม"]',
-              "}"]
+              "}",
+              "",
+              "ข้อจำกัดความยาว: ต้องเขียนให้ครบทุกหัวข้อภายในคำตอบเดียว "
+              "ตารางละไม่เกิน 6 แถว และข้อความในแต่ละช่องสั้นกระชับ "
+              "— เอกสารที่ครบทุกหัวข้อแต่สั้น ดีกว่าเอกสารที่ละเอียดแล้วขาดหัวข้อท้าย"]
     return "\n".join(lines)
 
 
@@ -303,13 +307,25 @@ def build(session: dict, dept: str, refresh: bool = False) -> dict:
         raise ValueError("ยังไม่มีบทถกเถียง — รันบอร์ดให้ถึงรอบความเห็น (Round 1) ก่อน")
 
     provider = store.get_providers().get(dept, "mock")
+    # 16k: seven Thai sections with tables routinely exceed 8k once a reasoning
+    # model spends part of the budget thinking, and a truncated reply used to
+    # discard the whole document.
     out = llm.chat(provider, _author_system(spec), _grounding(session),
-                   cancel=lambda: store.is_stopped(session["id"]), max_tokens=8192)
+                   cancel=lambda: store.is_stopped(session["id"]), max_tokens=16384)
     document = report._parse_json(out["text"]) if out["ok"] else None
     if not isinstance(document, dict) or not document.get("sections"):
         log.warning("deliverable %s unusable for consult %s (ok=%s chars=%s)",
                     dept, session.get("id"), out.get("ok"), len(out.get("text") or ""))
         raise ValueError(f"{config.DEPTS[dept]['name']} สร้างเอกสารไม่สำเร็จ — ลองกดสร้างใหม่อีกครั้ง")
+
+    # A salvaged reply loses its tail sections; say so rather than let the CEO
+    # assume a short document means there was nothing more to report.
+    written = set(document.get("sections") or {})
+    missing = [label for key, label, _k, _g in spec["sections"] if key not in written]
+    if missing:
+        log.warning("deliverable %s truncated for consult %s — missing %s",
+                    dept, session.get("id"), missing)
+        document["_truncated"] = missing
 
     data = {"document": document, "provider": out["provider"],
             "review": _peer_review(session, dept, document)}
@@ -377,6 +393,14 @@ def build_pdf(session: dict, dept: str) -> bytes:
         report._need(pdf, 30)
         report._h2(pdf, label)
         _render_section(pdf, kind, (document.get("sections") or {}).get(key))
+
+    cut = document.get("_truncated")
+    if cut:
+        report._need(pdf, 26)
+        report._h2(pdf, "⚠️ เอกสารนี้ไม่สมบูรณ์")
+        report._body(pdf, "คำตอบของ AI ยาวเกินโควตาจึงถูกตัดกลางคัน หัวข้อต่อไปนี้ยังไม่ได้เขียน "
+                          "— กดสร้างใหม่เพื่อให้ครบ อย่าถือว่าหัวข้อที่ขาดคือ 'ไม่มีอะไรจะรายงาน':")
+        report._bullets(pdf, cut)
 
     gaps = document.get("data_gaps")
     if gaps:

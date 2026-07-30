@@ -323,19 +323,82 @@ OPTIONS_SYSTEM = (
 )
 
 
+def _salvage_json(fragment: str) -> dict | None:
+    """Close a JSON object that was cut off mid-generation.
+
+    A long Thai document can exhaust the output budget (stop_reason=max_tokens),
+    which used to throw away every complete section the advisor had already
+    written. Walk the fragment, drop the half-written tail, and shut the
+    remaining containers so the finished sections survive. Returns None when
+    nothing coherent is left — a partial document is useful, a fabricated one
+    is not.
+    """
+    depth, in_str, esc, last_good = 0, False, False, None
+    for i, ch in enumerate(fragment):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        elif ch == "," and depth <= 2:
+            last_good = i          # a safe place to truncate: end of an entry
+    if last_good is None:
+        return None
+
+    head = fragment[:last_good]
+    # re-count what is still open after truncating, then close it in order
+    stack, in_str, esc = [], False, False
+    for ch in head:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]" and stack:
+            stack.pop()
+    repaired = head + "".join("}" if c == "{" else "]" for c in reversed(stack))
+    try:
+        parsed = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _parse_json(text: str) -> dict | None:
-    """LLMs like to wrap JSON in prose or fences — dig it out."""
+    """LLMs like to wrap JSON in prose or fences — dig it out. Falls back to
+    salvaging a truncated reply so a budget overrun costs sections, not the
+    whole document."""
     if not text:
         return None
     cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start < 0 or end <= start:
+    start = cleaned.find("{")
+    if start < 0:
         return None
-    try:
-        parsed = json.loads(cleaned[start:end + 1])
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        return None
+    end = cleaned.rfind("}")
+    if end > start:
+        try:
+            parsed = json.loads(cleaned[start:end + 1])
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return _salvage_json(cleaned[start:])
 
 
 def _web_sources(session: dict) -> list:

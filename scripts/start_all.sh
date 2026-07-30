@@ -39,17 +39,24 @@ port_busy 8201 || spawn cmo      "$R/services/cmo"      "$R/services/cmo/.venv/b
 port_busy 8202 || spawn coo      "$R/services/coo"      env PORT=8202 node src/server.js
 port_busy 8203 || spawn cfo      "$R/services/cfo"      env PORT=8203 node server.js
 port_busy 8204 || spawn datalyst "$R/services/datalyst" "$R/hub/.venv/bin/uvicorn" server:app --host 0.0.0.0 --port 8204
+# the evidence desk imports the hub's research stack, so it runs on the hub's
+# interpreter rather than a venv of its own
+port_busy 8205 || spawn researcher "$R/services/researcher" "$HUB_PY" -m uvicorn server:app --host 0.0.0.0 --port 8205
 port_busy 8100 || spawn hub      "$R/hub"               "$HUB_PY" -m uvicorn app.main:app --host 0.0.0.0 --port 8100
 
 echo "waiting for services..."
+# one list, used for both the readiness wait and the final report — the two
+# drifted apart when the evidence desk was added
+PORTS="8100 8201 8202 8203 8204 8205"
+TOTAL=$(echo $PORTS | wc -w | tr -d ' ')
 for i in $(seq 1 20); do
   ok=0
-  for p in 8100 8201 8202 8203 8204; do port_busy "$p" && ok=$((ok+1)); done
-  [ "$ok" -eq 5 ] && break
+  for p in $PORTS; do port_busy "$p" && ok=$((ok+1)); done
+  [ "$ok" -eq "$TOTAL" ] && break
   sleep 1
 done
 
-for p in 8100 8201 8202 8203 8204; do
+for p in $PORTS; do
   printf "port %s: " "$p"
   curl -s -m 4 -o /dev/null -w '%{http_code}\n' "http://localhost:$p/" || echo down
 done

@@ -246,7 +246,7 @@ def _grounding(session: dict) -> str:
 
 
 def _round(session_id: int, template: str, build_user) -> dict:
-    """Run one board round across all four advisors in parallel."""
+    """Run one board round across every advisor in parallel."""
     def one(dept: str) -> tuple[str, dict]:
         if store.is_stopped(session_id):
             return dept, {"text": "⏹ CEO สั่งหยุดก่อนรอบนี้จบ", "provider": "-", "ok": False}

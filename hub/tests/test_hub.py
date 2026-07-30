@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -1292,6 +1293,142 @@ def test_deepseek_speaks_openai_shape(client):
     assert sent["model"] == config.PROVIDERS["deepseek"]["model"]
     assert [m["role"] for m in sent["messages"]] == ["system", "user"]
     assert sent["max_tokens"] == 4096
+
+
+def test_every_seat_with_a_url_has_a_service_directory(client):
+    """A seat whose URL points at nothing shows a permanent offline dot — that
+    was the Researcher's state until its evidence desk existed."""
+    services = Path(__file__).resolve().parent.parent.parent / "services"
+    for dept in config.DEPTS:
+        d = services / dept
+        assert d.is_dir(), f"{dept} has no service directory ({d})"
+        assert any(d.glob("*.py")) or any(d.glob("*.js")) or (d / "src").is_dir(), \
+            f"{dept}'s service directory has no server"
+
+
+def test_the_launcher_starts_every_department_service(client):
+    """start_all.sh listed five ports while the board had six services, so the
+    readiness check passed with the evidence desk still down."""
+    sh = (Path(__file__).resolve().parent.parent.parent / "scripts" / "start_all.sh").read_text("utf-8")
+    for port in ("8100", "8201", "8202", "8203", "8204", "8205"):
+        assert port in sh, f"port {port} is never started"
+    assert "researcher" in sh, "the evidence desk is never spawned"
+    # the wait loop and the report must read one shared list, not two literals
+    assert sh.count("for p in $PORTS") == 2
+    assert "-sTCP:LISTEN" in sh, "port_busy would count a CLOSE_WAIT socket as a server"
+
+
+def test_truncated_json_is_salvaged_not_discarded():
+    """A Thai document can blow the output budget mid-write. Losing the tail is
+    acceptable; losing every finished section is not."""
+    from app import report
+
+    full = {"headline": "ข้อสรุป",
+            "sections": {"a": {"body": "เนื้อหา ก"}, "b": {"body": "เนื้อหา ข"}}}
+    intact = json.dumps(full, ensure_ascii=False)
+    assert report._parse_json(intact) == full          # untruncated path unchanged
+
+    cut = intact[:intact.index('"b"') + 24]            # chopped inside section b
+    got = report._parse_json(cut)
+    assert got is not None, "salvage returned nothing"
+    assert got["headline"] == "ข้อสรุป"
+    assert "a" in got["sections"] and got["sections"]["a"] == {"body": "เนื้อหา ก"}
+    assert "b" not in got["sections"], "a half-written section must be dropped, not guessed"
+
+
+def test_salvage_refuses_garbage_rather_than_inventing_structure():
+    from app import report
+
+    assert report._parse_json("") is None
+    assert report._parse_json("ขอโทษครับ ทำไม่ได้") is None
+    assert report._parse_json("{") is None
+    assert report._parse_json('{"a"') is None
+    # a truncated string containing braces must not fool the brace counter
+    assert report._parse_json('{"a": "ข้อความมี { และ } อยู่ข้างใน') is None
+
+
+def test_salvaged_documents_admit_what_is_missing(client):
+    """A short document must not read as 'nothing more to report'."""
+    from app import deliverable as D
+
+    dept = "cmo"
+    spec = D.SPECS[dept]
+    first_key, first_label = spec["sections"][0][0], spec["sections"][0][1]
+    partial = json.dumps({"headline": "บางส่วน",
+                          "sections": {first_key: {"columns": ["a"], "rows": [["1"]]}}},
+                         ensure_ascii=False)
+    _s, r = _deliverable(client, dept, payload=partial)
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    assert "เอกสารนี้ไม่สมบูรณ์" in text
+    assert first_label not in text.split("เอกสารนี้ไม่สมบูรณ์")[1], \
+        "a section that WAS written must not be listed as missing"
+    last_label = spec["sections"][-1][1]
+    assert last_label in text, "the unwritten section must be named"
+
+
+def test_transient_provider_failures_are_retried(client):
+    """Anthropic answering 529 'overloaded' once must not cost a deliverable
+    that took a minute of board debate to earn."""
+    from app import llm
+
+    calls = {"n": 0}
+
+    def flaky(system, user, cancel=None, max_tokens=None):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx.HTTPStatusError(
+                "overloaded", request=httpx.Request("POST", "https://x"),
+                response=httpx.Response(529, request=httpx.Request("POST", "https://x")))
+        return "recovered"
+
+    with patch.dict(llm._CALLERS, {"anthropic": flaky}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.time.sleep"):                     # no real backoff in tests
+        out = llm.chat("anthropic", "s", "u")
+    assert out["ok"] and out["text"] == "recovered"
+    assert calls["n"] == 3
+
+
+def test_permanent_failures_are_not_retried(client):
+    """A 401 will fail identically every time — burning three attempts on it
+    just makes the CEO wait longer for the same error."""
+    from app import llm
+
+    calls = {"n": 0}
+
+    def unauthorized(system, user, cancel=None, max_tokens=None):
+        calls["n"] += 1
+        raise httpx.HTTPStatusError(
+            "bad key", request=httpx.Request("POST", "https://x"),
+            response=httpx.Response(401, request=httpx.Request("POST", "https://x")))
+
+    with patch.dict(llm._CALLERS, {"anthropic": unauthorized}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.time.sleep"):
+        out = llm.chat("anthropic", "s", "u")
+    assert not out["ok"]
+    assert calls["n"] == 1, "a 401 must fail fast"
+
+
+def test_a_stop_beats_a_retry(client):
+    """The CEO pressing STOP must not be made to sit through the backoff."""
+    from app import llm
+
+    calls = {"n": 0}
+
+    def always_529(system, user, cancel=None, max_tokens=None):
+        calls["n"] += 1
+        raise httpx.HTTPStatusError(
+            "overloaded", request=httpx.Request("POST", "https://x"),
+            response=httpx.Response(529, request=httpx.Request("POST", "https://x")))
+
+    with patch.dict(llm._CALLERS, {"anthropic": always_529}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.time.sleep"):
+        out = llm.chat("anthropic", "s", "u", cancel=lambda: calls["n"] >= 1)
+    assert not out["ok"]
+    assert calls["n"] == 1, "cancel must be honoured between attempts"
 
 
 # ── history / bad inputs ──

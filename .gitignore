@@ -9,3 +9,4 @@ logs/
 hub/memory/hub_store.json
 services/*/output/
 services/*/memory/*.json
+services/researcher/ledger.jsonl

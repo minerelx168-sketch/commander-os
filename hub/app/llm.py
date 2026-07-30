@@ -1,10 +1,12 @@
-"""Multi-provider LLM adapter — each C-level can run on a different AI agent.
+"""Multi-provider LLM adapter — each board seat can run on a different AI agent.
 
-Providers: anthropic (Claude), gemini (Google), manus (task API), zai (GLM), mock.
-All calls are synchronous httpx with a deterministic mock fallback so the hub
-never dies when a key is missing.
+Providers: anthropic (Claude Opus), anthropic_fable (Claude Fable), gemini
+(Google), manus (task API), zai (GLM), deepseek, mock. All calls are synchronous
+httpx with a deterministic mock fallback so the hub never dies when a key is
+missing, and transient upstream failures are retried before giving up.
 """
 import logging
+import time
 
 import httpx
 
@@ -99,7 +101,6 @@ def _manus(system: str, user: str, cancel=None) -> str:
     r.raise_for_status()
     task_id = r.json()["task_id"]
 
-    import time
     deadline = time.monotonic() + 280
     while time.monotonic() < deadline:
         time.sleep(6)
@@ -162,8 +163,17 @@ def provider_ready(provider: str) -> bool:
     return _HAS_KEY.get(provider, lambda: False)()
 
 
+def _is_transient(exc: Exception) -> bool:
+    """429/5xx and connection blips are the provider having a bad minute, not a
+    bad request — retrying costs seconds, failing costs the CEO a document."""
+    if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError)):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status in (408, 409, 425, 429, 500, 502, 503, 504, 529)
+
+
 def chat(provider: str, system: str, user: str, cancel=None,
-         max_tokens: int | None = None) -> dict:
+         max_tokens: int | None = None, attempts: int = 3) -> dict:
     """Returns {text, provider, model, ok}. Falls back to mock on any failure.
 
     `cancel` is an optional callable polled by long-running providers so the
@@ -174,15 +184,33 @@ def chat(provider: str, system: str, user: str, cancel=None,
     spend part of the budget thinking, so the 2048 default truncates structured
     JSON mid-object (stop_reason=max_tokens) and silently fails to parse.
     Providers that ignore the hint simply use their own default.
+
+    Transient upstream failures (429/5xx, dropped connections) are retried with
+    backoff — Anthropic answering 529 "overloaded" once should not cost a
+    deliverable that took a minute of board debate to earn.
     """
     caller = _CALLERS.get(provider)
     if caller is None or not provider_ready(provider):
         return {"text": _mock(system, user), "provider": "mock", "model": "mock", "ok": False}
-    try:
-        kwargs = {"max_tokens": max_tokens} if max_tokens and provider in _ACCEPTS_MAX_TOKENS else {}
-        return {"text": caller(system, user, cancel, **kwargs), "provider": provider,
-                "model": config.PROVIDERS[provider]["model"], "ok": True}
-    except Exception as e:  # noqa: BLE001 — a consult must never 500 the whole board
-        log.warning("provider %s failed: %s", provider, e)
-        return {"text": f"⚠️ {provider} ล้มเหลว: {str(e)[:200]}", "provider": provider,
-                "model": config.PROVIDERS[provider]["model"], "ok": False}
+
+    kwargs = {"max_tokens": max_tokens} if max_tokens and provider in _ACCEPTS_MAX_TOKENS else {}
+    last: Exception | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        if cancel is not None and cancel():
+            break
+        try:
+            return {"text": caller(system, user, cancel, **kwargs), "provider": provider,
+                    "model": config.PROVIDERS[provider]["model"], "ok": True}
+        except Exception as e:  # noqa: BLE001 — a consult must never 500 the whole board
+            last = e
+            if attempt < attempts and _is_transient(e):
+                wait = 2 ** attempt
+                log.warning("provider %s attempt %s/%s failed (%s) — retrying in %ss",
+                            provider, attempt, attempts, e, wait)
+                time.sleep(wait)
+                continue
+            break
+
+    log.warning("provider %s failed: %s", provider, last)
+    return {"text": f"⚠️ {provider} ล้มเหลว: {str(last)[:200]}", "provider": provider,
+            "model": config.PROVIDERS[provider]["model"], "ok": False}
