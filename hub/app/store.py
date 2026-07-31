@@ -75,12 +75,15 @@ def set_provider(dept: str, provider: str) -> dict:
 # ── consult sessions ──
 
 def create_session(question: str, project: str | None = None,
-                   web_research: bool = True,
+                   web_research: bool = True, use_docs: bool = True,
                    parent_id: int | None = None, branched_from: str | None = None,
                    steps: list | None = None, history: list | None = None,
                    seats: list | None = None) -> dict:
     entry = {"id": None, "question": question, "project": project,
              "web_research": web_research,
+             # False = a general question with no tie to the CEO's own business,
+             # so the document library is left out of the prompts entirely.
+             "use_docs": use_docs,
              # Which seats the Frame stage convened. None until Frame runs; the
              # pipeline falls back to every seat so a session is never empty.
              "seats": seats,
@@ -205,6 +208,21 @@ def forget_memory(memory_id: int) -> bool:
         return len(data["memory"]) < before
 
 
+def forget_memory_for_consult(consult_id: int) -> int:
+    """Erase what the board learned from one session.
+
+    When the CEO decides a past ruling was wrong, leaving it in memory means
+    every later session is audited against a conclusion nobody stands behind.
+    Returns how many entries were dropped.
+    """
+    with _LOCK:
+        data = _load()
+        before = len(data["memory"])
+        data["memory"] = [m for m in data["memory"] if m.get("consult_id") != consult_id]
+        _save(data)
+        return before - len(data["memory"])
+
+
 def set_status(session_id: int, status: str) -> dict | None:
     with _LOCK:
         data = _load()
@@ -253,7 +271,8 @@ def branch_from(session_id: int, step_key: str) -> dict | None:
         abandoned = [{**json.loads(json.dumps(s)), "reason": "branch", "discarded_at": _now()}
                      for s in c["steps"][idx:]]
     return create_session(c["question"], c.get("project"),
-                          web_research=c.get("web_research", True), parent_id=session_id,
+                          web_research=c.get("web_research", True),
+                          use_docs=c.get("use_docs", True), parent_id=session_id,
                           branched_from=step_key, steps=kept, history=abandoned,
                           seats=c.get("seats"))
 
@@ -315,6 +334,20 @@ def score_decision(decision_id: int, outcome: str, verdict: str) -> dict | None:
         d["scored_at"] = _now()
         _save(data)
         return d
+
+
+def get_decision(decision_id: int) -> dict | None:
+    with _LOCK:
+        return next((d for d in _load()["decisions"] if d["id"] == decision_id), None)
+
+
+def delete_decision(decision_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        before = len(data["decisions"])
+        data["decisions"] = [d for d in data["decisions"] if d["id"] != decision_id]
+        _save(data)
+        return len(data["decisions"]) < before
 
 
 def get_decisions(limit: int = 30) -> list:

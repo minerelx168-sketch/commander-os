@@ -23,6 +23,10 @@ app = FastAPI(title="Commander Hub — C-Suite Advisory")
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
+# Sentinel the project picker sends for "ask this without my documents".
+NO_PROJECT = "__none__"
+
+
 class AskIn(BaseModel):
     question: str
     project: str | None = None
@@ -46,6 +50,10 @@ class DecisionIn(BaseModel):
     consult_id: int | None = None
     question: str
     decision: str
+
+
+class RethinkIn(BaseModel):
+    direction: str | None = None   # what the CEO wants explored differently
 
 
 class ScoreIn(BaseModel):
@@ -121,8 +129,14 @@ def consult(body: AskIn) -> dict:
     if not q:
         raise HTTPException(400, "question is required")
     project = (body.project or "").strip() or None
+    # NO_PROJECT asks a question that has nothing to do with the CEO's own
+    # business — pulling the library in would only bias the answer with numbers
+    # from a different problem.
+    use_docs = project != NO_PROJECT
+    if not use_docs:
+        project = None
     web = config.WEB_RESEARCH_DEFAULT if body.web_research is None else body.web_research
-    return _view(store.create_session(q, project, web_research=web))
+    return _view(store.create_session(q, project, web_research=web, use_docs=use_docs))
 
 
 @app.post("/api/consult/{session_id}/advance")
@@ -349,6 +363,58 @@ def score_decision(decision_id: int, body: ScoreIn) -> dict:
     return d
 
 
+@app.post("/api/decisions/{decision_id}/rethink")
+def rethink(decision_id: int, body: RethinkIn) -> dict:
+    """Take the same question down a different road.
+
+    Branching from the Boardroom forks a stage of one meeting; branching from a
+    decision reopens the question itself, which is what the CEO wants when the
+    call turned out wrong and the whole framing deserves another pass.
+    """
+    d = store.get_decision(decision_id)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    source = store.get_consult(d["consult_id"]) if d.get("consult_id") else None
+    child = store.create_session(
+        d["question"],
+        project=(source or {}).get("project"),
+        web_research=(source or {}).get("web_research", config.WEB_RESEARCH_DEFAULT),
+        use_docs=(source or {}).get("use_docs", True),
+        parent_id=d.get("consult_id"),
+        branched_from="decision",
+    )
+    return {**_view(child), "direction": (body.direction or "").strip(),
+            "from_decision": decision_id}
+
+
+@app.post("/api/decisions/{decision_id}/forget")
+def forget_decision_learning(decision_id: int) -> dict:
+    """Erase what the board learned from the consult behind this decision.
+
+    Scoring a decision "missed" and leaving its conclusion in memory means every
+    later session is still audited against advice the CEO already rejected.
+    """
+    d = store.get_decision(decision_id)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    if not d.get("consult_id"):
+        return {"forgotten": 0, "reason": "การตัดสินใจนี้ไม่ได้ผูกกับการประชุมใด"}
+    return {"forgotten": store.forget_memory_for_consult(d["consult_id"]),
+            "consult_id": d["consult_id"]}
+
+
+@app.delete("/api/decisions/{decision_id}")
+def delete_decision(decision_id: int, forget: bool = False) -> dict:
+    """Remove a decision from the log; `forget=true` also drops its learning."""
+    d = store.get_decision(decision_id)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    dropped = (store.forget_memory_for_consult(d["consult_id"])
+               if forget and d.get("consult_id") else 0)
+    store.delete_decision(decision_id)
+    return {"deleted": decision_id, "forgotten": dropped}
+
+
 @app.put("/api/dept/{dept}/provider")
 def set_provider(dept: str, body: ProviderIn) -> dict:
     if dept not in config.DEPTS:
@@ -369,6 +435,15 @@ def documents(limit: int = 50) -> dict:
         "line_connected": docs.line_ready(),
         "knowledge_chars": len(docs.knowledge_context()),
     }
+
+
+@app.delete("/api/docs/{doc_id}")
+def delete_document(doc_id: int) -> dict:
+    """Remove a stale or superseded document from the board's library."""
+    out = docs.delete_document(doc_id)
+    if out is None:
+        raise HTTPException(404, "document not found")
+    return out
 
 
 @app.post("/api/docs/upload")

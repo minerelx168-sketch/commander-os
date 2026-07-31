@@ -766,6 +766,172 @@ def test_memory_is_scoped_per_project_and_can_be_forgotten(client):
     assert client.delete(f"/api/memory/{a['id']}").status_code == 404
 
 
+# ── asking a general question, with the business library left out ──
+
+def test_a_general_question_leaves_the_document_library_out(client):
+    client.post("/api/line/webhook", json={"events": [{"type": "message",
+        "message": {"type": "text", "text": "ธุรกิจของฉันคือตู้กดดอกไม้ที่เอกมัย"}}]})
+
+    r = client.post("/api/consult", json={"question": "SaaS pricing ควรคิดยังไง",
+                                          "project": "__none__", "web_research": False})
+    s = r.json()
+    assert s["use_docs"] is False and s["project"] is None
+
+    with patch("app.llm.chat", return_value=_reply(_frame_json())) as m:
+        s = _advance(client, s["id"])
+    assert all("ตู้กดดอกไม้" not in c.args[2] for c in m.call_args_list)
+
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    for c in m.call_args_list:
+        assert "คลังเอกสารธุรกิจของ CEO" not in c.args[2]
+        assert "ตู้กดดอกไม้" not in c.args[2]
+
+
+def test_the_library_is_still_used_when_no_project_is_picked(client):
+    """Empty project means "every project", which is not the same as "none"."""
+    client.post("/api/line/webhook", json={"events": [{"type": "message",
+        "message": {"type": "text", "text": "ธุรกิจของฉันคือตู้กดดอกไม้ที่เอกมัย"}}]})
+    s = _framed(client, question="ควรขยายไหม")
+    assert s["use_docs"] is True
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    assert all("ตู้กดดอกไม้" in c.args[2] for c in m.call_args_list)
+
+
+def test_a_doc_free_session_keeps_that_choice_when_branched(client):
+    r = client.post("/api/consult", json={"question": "q", "project": "__none__",
+                                          "web_research": False})
+    s = r.json()
+    with patch("app.llm.chat", return_value=_reply(_frame_json())):
+        s = _advance(client, s["id"])
+    child = client.post(f"/api/consult/{s['id']}/branch", json={"step": "frame"}).json()
+    assert child["use_docs"] is False
+
+
+# ── decisions: reopen the question, or erase what it taught the board ──
+
+def _decided(client):
+    """A finished consult, its memory filed, and a decision recorded against it."""
+    s = _framed(client, question="ควรขยายสาขาไหม")
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        for _ in range(3):
+            s = _advance(client, s["id"])
+    with patch("app.llm.chat", return_value=_reply(MEMORY_JSON)):
+        s = _advance(client, s["id"])
+    d = client.post("/api/decisions", json={"consult_id": s["id"],
+                                            "question": s["question"],
+                                            "decision": "ขยาย 3 สาขา"}).json()
+    return s, d
+
+
+def test_rethink_reopens_the_question_without_touching_the_original(client):
+    s, d = _decided(client)
+    r = client.post(f"/api/decisions/{d['id']}/rethink",
+                    json={"direction": "คราวนี้ให้มองมุมชะลอการลงทุน"})
+    assert r.status_code == 200
+    child = r.json()
+    assert child["id"] != s["id"] and child["parent_id"] == s["id"]
+    assert child["branched_from"] == "decision"
+    assert child["question"] == s["question"] and child["steps"] == []
+    assert child["next_step"] == "frame"          # a fresh framing, not a resumed stage
+    assert child["direction"] == "คราวนี้ให้มองมุมชะลอการลงทุน"
+
+    original = client.get(f"/api/consults/{s['id']}").json()
+    assert original["status"] == "done" and len(original["steps"]) == 5
+
+
+def test_rethink_inherits_the_scope_of_the_consult_it_came_from(client):
+    r = client.post("/api/consult", json={"question": "q", "project": "__none__",
+                                          "web_research": False})
+    s = r.json()
+    with patch("app.llm.chat", return_value=_reply(_frame_json())):
+        s = _advance(client, s["id"])
+    d = client.post("/api/decisions", json={"consult_id": s["id"], "question": "q",
+                                            "decision": "ลุย"}).json()
+    child = client.post(f"/api/decisions/{d['id']}/rethink", json={}).json()
+    assert child["use_docs"] is False and child["web_research"] is False
+
+
+def test_forgetting_a_decision_stops_it_steering_later_sessions(client):
+    s, d = _decided(client)
+    assert len(client.get("/api/memory").json()["memory"]) == 1
+
+    out = client.post(f"/api/decisions/{d['id']}/forget").json()
+    assert out["forgotten"] == 1 and out["consult_id"] == s["id"]
+    assert client.get("/api/memory").json()["memory"] == []
+    # the decision itself survives — only the board's learning was erased
+    assert len(client.get("/api/decisions").json()["decisions"]) == 1
+
+    # and the next session is no longer audited against it
+    with patch("app.llm.chat", return_value=_reply(_frame_json())) as m:
+        s2 = _start(client, question="ควรขยายอีกไหม")
+        _advance(client, s2["id"])
+    assert not [c for c in m.call_args_list if "decision consistency auditor" in c.args[1]]
+
+
+def test_a_decision_with_no_consult_has_nothing_to_forget(client):
+    d = client.post("/api/decisions", json={"question": "โจทย์", "decision": "ลุย"}).json()
+    out = client.post(f"/api/decisions/{d['id']}/forget").json()
+    assert out["forgotten"] == 0 and out["reason"]
+
+
+def test_deleting_a_decision_can_take_its_learning_with_it(client):
+    s, d = _decided(client)
+    out = client.delete(f"/api/decisions/{d['id']}?forget=true").json()
+    assert out["deleted"] == d["id"] and out["forgotten"] == 1
+    assert client.get("/api/decisions").json()["decisions"] == []
+    assert client.get("/api/memory").json()["memory"] == []
+
+
+def test_deleting_a_decision_can_keep_its_learning(client):
+    s, d = _decided(client)
+    assert client.delete(f"/api/decisions/{d['id']}").json()["forgotten"] == 0
+    assert len(client.get("/api/memory").json()["memory"]) == 1
+
+
+def test_decision_actions_404_on_unknown_ids(client):
+    assert client.post("/api/decisions/999/rethink", json={}).status_code == 404
+    assert client.post("/api/decisions/999/forget").status_code == 404
+    assert client.delete("/api/decisions/999").status_code == 404
+
+
+# ── documents: removing what went stale ──
+
+def test_deleting_a_document_removes_it_from_the_board_and_from_disk(client):
+    import app.docs as docs_mod
+    client.post("/api/docs/projects", json={"name": "YourFin"})
+    up = client.post("/api/docs/upload",
+                     files={"file": ("old-rent.txt", "ค่าเช่าเดิม 85,000".encode(), "text/plain")},
+                     data={"project": "YourFin"}).json()
+    path = docs_mod.LOCAL_DIR / "YourFin" / "old-rent.txt"
+    assert path.exists()
+    assert "ค่าเช่าเดิม" in docs_mod.knowledge_context()
+
+    out = client.delete(f"/api/docs/{up['id']}").json()
+    assert out["deleted"] == up["id"] and out["local"] is True and out["errors"] == []
+    assert not path.exists()
+    assert client.get("/api/docs").json()["documents"] == []
+    # and the board stops quoting it on the next consult
+    assert "ค่าเช่าเดิม" not in docs_mod.knowledge_context()
+
+
+def test_deleting_a_document_survives_a_missing_file(client):
+    """The metadata entry must go even when the file is already gone, or the
+    library keeps listing a document nobody can open."""
+    import app.docs as docs_mod
+    up = client.post("/api/docs/upload",
+                     files={"file": ("gone.txt", b"x", "text/plain")}).json()
+    (docs_mod.LOCAL_DIR / "gone.txt").unlink()
+    out = client.delete(f"/api/docs/{up['id']}").json()
+    assert out["deleted"] == up["id"] and out["local"] is False
+    assert client.get("/api/docs").json()["documents"] == []
+
+
+def test_deleting_an_unknown_document_404s(client):
+    assert client.delete("/api/docs/999").status_code == 404
+
+
 # ── archived sessions from the pre-Crucible pipeline ──
 
 def test_old_sessions_stay_readable_and_are_never_resumed(client):

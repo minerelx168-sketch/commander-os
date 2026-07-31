@@ -383,10 +383,18 @@ def _shared_evidence(session: dict, exclude: str | None = None) -> str:
     return "\n\n".join(blocks)
 
 
+def _library(session: dict, max_chars: int = 3500) -> str:
+    """The CEO's documents — unless this is a general question, where dragging
+    in the business library would only bias an answer that is not about it."""
+    if not session.get("use_docs", True):
+        return ""
+    return docs.knowledge_context(project=session.get("project"), max_chars=max_chars)
+
+
 def _grounding(session: dict, dept: str | None = None) -> str:
     """Documents the CEO owns, plus this seat's own evidence."""
     blocks = []
-    knowledge = docs.knowledge_context(project=session.get("project"))
+    knowledge = _library(session)
     if knowledge:
         blocks.append("[คลังเอกสารธุรกิจของ CEO — ใช้เป็นบริบทจริง อย่าเดาสวนข้อมูลนี้]\n"
                       + knowledge)
@@ -496,7 +504,7 @@ def _frame(session: dict, directive: str | None, tail: str) -> dict:
     ctx.append(f"มุมมองที่เรียกได้ (เลือกจาก key เหล่านี้เท่านั้น):\n{roster}")
     if past:
         ctx.append(f"มติเก่าของบอร์ดในโปรเจคนี้:\n{memory.as_prompt(past)}")
-    knowledge = docs.knowledge_context(project=session.get("project"), max_chars=1500)
+    knowledge = _library(session, max_chars=1500)
     if knowledge:
         ctx.append(f"ตัวอย่างเอกสารที่ CEO มี:\n{knowledge}")
 
@@ -700,7 +708,7 @@ def _brief(session: dict, tail: str) -> dict:
     """Fold the whole session into one ruling the CEO can act on — and file it
     to memory so the next session can be checked against it."""
     transcript = _transcript(session, ("frame", "positions", "debate", "redteam"))
-    grounding = docs.knowledge_context(project=session.get("project"))
+    grounding = _library(session)
     evidence = _shared_evidence(session)
     conf = confidence_summary(session)
     conf_line = ("ความมั่นใจที่แต่ละที่นั่งให้ตัวเอง: "
