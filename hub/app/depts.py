@@ -601,7 +601,7 @@ def _independent_research(session: dict, tail: str) -> dict:
             head = ("⚠️ ค้นเว็บไม่สำเร็จ — ยังไม่ได้อ่านอินเทอร์เน็ตเลย ไม่ใช่ว่าอินเทอร์เน็ตไม่มีข้อมูล"
                     if blocked else "ค้นได้แต่ไม่พบหลักฐานที่เกี่ยวกับโจทย์นี้")
             detail = ("\nสาเหตุ:\n" + "\n".join(f"• {e}" for e in errors)
-                      + f"\n\nวิธีแก้: ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env "
+                      + f"\n\nวิธีแก้: ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env "
                         f"แล้วรีสตาร์ท hub (ตอนนี้ใช้ {research.backend_label()})"
                       if blocked else "")
             return dept, {
@@ -642,7 +642,7 @@ def _independent_research(session: dict, tail: str) -> dict:
         text += (f"\n\n⚠️ {len(blocked)} ที่นั่งค้นเว็บไม่ได้เลย ({names}) — "
                  f"ใช้ {research.backend_label()} อยู่ ซึ่งบล็อกคำขออัตโนมัติบ่อย "
                  "ข้อสรุปของบอร์ดรอบนี้จึงยืนอยู่บนหลักฐานที่บางกว่าที่ควรเป็น "
-                 "ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อให้ค้นได้จริง")
+                 "ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อให้ค้นได้จริง")
     results["analyst"] = {
         "text": text,
         "provider": research.backend_label(), "ok": bool(merged),

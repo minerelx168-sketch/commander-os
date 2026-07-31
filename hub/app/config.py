@@ -65,7 +65,8 @@ DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/
 # --- Web research: first key wins; falls back to keyless DuckDuckGo ---
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
-SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")  # serper.dev — cheap Google index
+SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY", "")  # serpapi.com — Google + engines
 WEB_RESEARCH_DEFAULT = os.getenv("WEB_RESEARCH_DEFAULT", "1") not in ("0", "false", "False")
 
 # --- Documents: Google Drive + LINE ---

@@ -415,6 +415,62 @@ def test_a_keyed_backend_does_not_fall_through_to_the_keyless_engines(client, mo
     assert out["error"].startswith("tavily:")
 
 
+def test_serpapi_reads_organic_results_and_defaults_to_thai(client, monkeypatch):
+    """The engine=google endpoint returns organic_results with title/link/snippet.
+    Thai locale is the sensible default here; the CEO's business is in Thailand,
+    and a Thai query landing on the US SERP is the failure mode to prevent."""
+    from app import config, research
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "serpapi-test")
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "")   # SerpApi is now first
+    assert research.backend() == "serpapi"
+    payload = {"organic_results": [
+        {"title": "บาร์เอกมัย 2026", "link": "https://example.com/bars",
+         "snippet": "รวมบาร์เปิดใหม่ ราคาเฉลี่ย 450 บาท"}]}
+
+    class _Resp:
+        def json(self):
+            return payload
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.get", return_value=_Resp()) as get:
+        out = research._serpapi("บาร์ เอกมัย", 5)
+    params = get.call_args.kwargs["params"]
+    assert params["engine"] == "google" and params["hl"] == "th" and params["gl"] == "th"
+    assert params["api_key"] == "serpapi-test"
+    assert out[0]["url"] == "https://example.com/bars"
+    assert "450 บาท" in out[0]["snippet"]
+
+
+def test_serpapi_surfaces_plan_or_quota_errors_carried_in_200_ok(client, monkeypatch):
+    """SerpApi returns HTTP 200 with an "error" field when the plan is out — a
+    caller that only checks the status code silently treats it as empty results."""
+    from app import config, research
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "x")
+
+    class _Resp:
+        def json(self):
+            return {"error": "You have reached your monthly search limit"}
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.get", return_value=_Resp()):
+        with pytest.raises(RuntimeError, match="monthly search limit"):
+            research._serpapi("q", 5)
+
+
+def test_tavily_wins_over_serpapi_when_both_are_configured(client, monkeypatch):
+    """Tavily returns extracted page bodies with the results, so the analyst can
+    read the full content instead of re-fetching each URL. A key that ships more
+    per request should outrank a plain SERP scraper."""
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "t")
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "s")
+    assert research.backend() == "tavily"
+
+
 def test_tavily_authenticates_by_header_and_asks_for_page_bodies(client, monkeypatch):
     """Tavily's documented auth is a Bearer header, and raw_content is opt-in —
     without it every source came back empty and had to be re-fetched by hand."""

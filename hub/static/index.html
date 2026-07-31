@@ -1396,7 +1396,7 @@ async function loadState() {
     if (!SEARCH_TESTED) {           // a real diagnose verdict outranks this hint
       document.getElementById('scope-note').textContent =
         `ค้นเว็บผ่าน ${rs.label || '-'}` +
-        (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+        (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
     }
     if (!WEB_TOGGLE_SET) {          // seed once; never fight the CEO's choice
       document.getElementById('ask-web').checked = rs.default_on !== false;
@@ -1820,7 +1820,7 @@ async function testSearch(btn) {
       note.style.color = 'var(--green)';
     } else {
       note.innerHTML = `❌ ค้นเว็บไม่ได้ — ${esc(j.error || 'ไม่ทราบสาเหตุ')}` +
-        (j.keyed ? '' : ' · ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env แล้วรีสตาร์ท hub');
+        (j.keyed ? '' : ' · ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env แล้วรีสตาร์ท hub');
       note.style.color = 'var(--red)';
     }
   } catch (e) {

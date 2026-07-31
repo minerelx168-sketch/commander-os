@@ -4,9 +4,10 @@ the CEO's own document library.
 Search backend is chosen by whichever key exists, best first, and degrades to
 a keyless DuckDuckGo fallback so the feature works out of the box:
 
-    TAVILY_API_KEY  -> Tavily   (LLM-oriented, returns extracted content)
-    BRAVE_API_KEY   -> Brave Search API
-    SERPER_API_KEY  -> serper.dev (Google index)
+    TAVILY_API_KEY  -> Tavily     (LLM-oriented, returns extracted content)
+    BRAVE_API_KEY   -> Brave       (independent index)
+    SERPAPI_API_KEY -> SerpApi     (Google, per-search pricing)
+    SERPER_API_KEY  -> serper.dev  (Google, cheaper)
     (none)          -> DuckDuckGo lite HTML
 
 Raw results are never fed to the advisors directly. `depts.run_research`
@@ -30,6 +31,8 @@ UA = "Mozilla/5.0 (compatible; CommanderHub/1.0; +strategic-advisory)"
 def backend() -> str:
     if config.TAVILY_API_KEY:
         return "tavily"
+    if config.SERPAPI_API_KEY:
+        return "serpapi"
     if config.BRAVE_API_KEY:
         return "brave"
     if config.SERPER_API_KEY:
@@ -38,7 +41,8 @@ def backend() -> str:
 
 
 def backend_label() -> str:
-    return {"tavily": "Tavily", "brave": "Brave Search", "serper": "Serper (Google)",
+    return {"tavily": "Tavily", "brave": "Brave Search",
+            "serpapi": "SerpApi (Google)", "serper": "Serper (Google)",
             "duckduckgo": "DuckDuckGo (ไม่ต้องใช้ key)"}[backend()]
 
 
@@ -71,6 +75,25 @@ def _brave(query: str, k: int) -> list[dict]:
     return [{"title": x.get("title", ""), "url": x.get("url", ""),
              "snippet": _strip_html(x.get("description", ""))}
             for x in r.json().get("web", {}).get("results", [])]
+
+
+def _serpapi(query: str, k: int) -> list[dict]:
+    """SerpApi — Google results via GET, with num capped at 20 per docs."""
+    r = httpx.get("https://serpapi.com/search",
+                  params={"engine": "google", "q": query,
+                          "num": min(k, 20), "api_key": config.SERPAPI_API_KEY,
+                          # Thai defaults so a query in Thai lands on Thai SERPs
+                          "hl": "th", "gl": "th"},
+                  timeout=TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+    # SerpApi surfaces plan/quota issues in the payload with 200 OK — read it,
+    # or a rate-limited key looks like an empty search.
+    if data.get("error"):
+        raise RuntimeError(data["error"])
+    return [{"title": x.get("title", ""), "url": x.get("link", ""),
+             "snippet": x.get("snippet", "")}
+            for x in data.get("organic_results", []) if x.get("link")]
 
 
 def _serper(query: str, k: int) -> list[dict]:
@@ -195,7 +218,8 @@ def _mojeek(query: str, k: int) -> list[dict]:
 # the function objects here would freeze them into this dict, so patching
 # app.research._duckduckgo (tests, hot-swaps) would silently keep hitting the
 # real network instead of the replacement.
-_BACKENDS = {"tavily": "_tavily", "brave": "_brave", "serper": "_serper",
+_BACKENDS = {"tavily": "_tavily", "brave": "_brave",
+             "serpapi": "_serpapi", "serper": "_serper",
              "duckduckgo": "_duckduckgo"}
 # Tried in order when no key is configured, so one engine's bot check does not
 # take the whole board's evidence with it.
