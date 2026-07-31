@@ -588,7 +588,9 @@ def build_step_pdf(session: dict, step_key: str) -> bytes:
     pdf.add_page()
     _h2(pdf, "คำตอบเต็มของรอบนี้")
     for key, val in step["results"].items():
-        name = ({"analyst": "ฝ่ายวิจัยข้อมูล", "chair": "ประธานบอร์ด"}.get(key)
+        name = ({"analyst": "ฝ่ายวิจัยข้อมูล", "chair": "ประธานบอร์ด",
+                 "framer": "Moderator", "redteam": "Evidence Red Team",
+                 "framing_redteam": "Framing Red Team"}.get(key)
                 or config.DEPTS.get(key, {}).get("name", key))
         _h3(pdf, f"{name}  ·  {val.get('provider', '')}")
         _body(pdf, val.get("text", ""))
@@ -661,11 +663,24 @@ def build_executive_summary_pdf(session: dict) -> bytes:
                         f"{config.DEPTS.get(conf['lowest'], {}).get('name', conf['lowest'])} — "
                         "อ่านเสียงค้านของเขาก่อนตัดสินใจ")
 
-    # the red team's attack on the framing, on the record
+    # Framing Red Team's early challenge to the moderator's framing.
+    # This runs *before* research spends any token — if it flagged CONCERN or
+    # BLOCK and the CEO pressed on anyway, that decision belongs on the record.
+    fr_step = next((s for s in session["steps"] if s["key"] == "framing_redteam"), None)
+    fr = (fr_step or {}).get("results", {}).get("framing_redteam") if fr_step else None
+    if fr and fr.get("ok"):
+        v = fr.get("verdict", "OK")
+        _h2(pdf, f"Framing Red Team (Stage 1.5) — คำตัดสิน: {v}")
+        _body(pdf, fr.get("text", ""))
+        if v in ("CONCERN", "BLOCK"):
+            _small(pdf, "CEO เดินหน้าต่อทั้งที่มีข้อกังวลนี้ — ระดับความมั่นใจของบอร์ด "
+                        "ควรถูกอ่านโดยรู้ว่ากรอบเคยถูกท้าทายมาแล้ว")
+
+    # Evidence Red Team's attack on the evidence itself, on the record
     red = next((s for s in session["steps"] if s["key"] == "redteam"), None)
     rt = (red or {}).get("results", {}).get("redteam") if red else None
     if rt and rt.get("ok"):
-        _h2(pdf, "Red Team — สิ่งที่โจมตีการตั้งกรอบของการประชุมนี้")
+        _h2(pdf, "Evidence Red Team — สิ่งที่โจมตีคุณภาพหลักฐาน")
         _body(pdf, rt.get("text", ""))
         div = rt.get("diversity") or {}
         if div.get("warning"):
