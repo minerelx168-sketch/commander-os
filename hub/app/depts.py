@@ -592,14 +592,22 @@ def _independent_research(session: dict, tail: str) -> dict:
             return dept, {"text": "⏹ CEO สั่งหยุดก่อนรอบนี้จบ", "provider": "-", "ok": False,
                           "queries": [], "sources": []}
         queries = _seat_queries(session, dept, tail)
-        sources = research.gather(queries, per_query=3, max_sources=5, cancel=cancel)
+        found = research.gather(queries, per_query=3, max_sources=5, cancel=cancel)
+        sources, errors = found["sources"], found["errors"]
         if not sources:
+            # Never let "the search was blocked" read as "the web has nothing on
+            # this" — the CEO acts on those two very differently.
+            blocked = bool(errors)
+            head = ("⚠️ ค้นเว็บไม่สำเร็จ — ยังไม่ได้อ่านอินเทอร์เน็ตเลย ไม่ใช่ว่าอินเทอร์เน็ตไม่มีข้อมูล"
+                    if blocked else "ค้นได้แต่ไม่พบหลักฐานที่เกี่ยวกับโจทย์นี้")
+            detail = ("\nสาเหตุ:\n" + "\n".join(f"• {e}" for e in errors)
+                      + f"\n\nวิธีแก้: ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env "
+                        f"แล้วรีสตาร์ท hub (ตอนนี้ใช้ {research.backend_label()})"
+                      if blocked else "")
             return dept, {
-                "text": (f"⚠️ ค้นหลักฐานไม่สำเร็จ (backend: {research.backend_label()}) — "
-                         "ที่นั่งนี้จะถกจากคลังเอกสารของ CEO อย่างเดียว\n"
-                         f"คำค้นที่ลอง: {', '.join(queries)}"),
-                "provider": research.backend(), "ok": False,
-                "queries": queries, "sources": []}
+                "text": f"{head}{detail}\n\nคำค้นที่ลอง: {', '.join(queries)}",
+                "provider": research.backend(), "ok": False, "blocked": blocked,
+                "queries": queries, "sources": [], "errors": errors}
         out = llm.chat(_dept_provider(dept), _fmt(dept, SEAT_RESEARCH_SYSTEM),
                        f"คำถามของ CEO: {session['question']}\n"
                        f"คำค้นที่คุณสั่ง: {', '.join(queries)}\n\n"
@@ -626,10 +634,19 @@ def _independent_research(session: dict, tail: str) -> dict:
                 seen.add(url)
                 merged.append({**s, "found_by": dept})
     desks = sum(1 for v in results.values() if v.get("ok"))
+    blocked = [d for d, v in results.items() if v.get("blocked")]
+    text = (f"หลักฐานรวมของการประชุมนี้: {len(merged)} แหล่ง จาก {desks} ที่นั่งที่ค้นสำเร็จ "
+            "(แต่ละที่นั่งค้นเองแยกกัน จึงไม่แชร์จุดบอดเดียวกัน)")
+    if blocked:
+        names = ", ".join(config.DEPTS.get(d, {}).get("name", d) for d in blocked)
+        text += (f"\n\n⚠️ {len(blocked)} ที่นั่งค้นเว็บไม่ได้เลย ({names}) — "
+                 f"ใช้ {research.backend_label()} อยู่ ซึ่งบล็อกคำขออัตโนมัติบ่อย "
+                 "ข้อสรุปของบอร์ดรอบนี้จึงยืนอยู่บนหลักฐานที่บางกว่าที่ควรเป็น "
+                 "ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อให้ค้นได้จริง")
     results["analyst"] = {
-        "text": (f"หลักฐานรวมของการประชุมนี้: {len(merged)} แหล่ง จาก {desks} ที่นั่งที่ค้นสำเร็จ "
-                 f"(แต่ละที่นั่งค้นเองแยกกัน จึงไม่แชร์จุดบอดเดียวกัน)"),
+        "text": text,
         "provider": research.backend_label(), "ok": bool(merged),
+        "blocked_seats": blocked,
         "queries": sorted({q for v in results.values() for q in v.get("queries", [])}),
         "sources": merged,
     }

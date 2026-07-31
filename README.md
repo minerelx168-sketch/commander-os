@@ -78,6 +78,31 @@ scripts/        start_all.sh, e2e_live.sh, set_default_providers.sh
   เท่ากับให้บอร์ดตรวจงานตัวเองด้วยคำแนะนำที่คุณปฏิเสธไปแล้ว)
 - 🗑 **ลบบันทึก** — ลบการตัดสินใจทิ้ง เลือกได้ว่าจะเอาการเรียนรู้ไปด้วยหรือไม่
 
+## ทำไม Researcher "ค้นไม่เจอ" ทั้งที่อินเทอร์เน็ตมีข้อมูล
+
+เกือบทุกครั้งคำตอบคือ **ค้นไม่ได้ ไม่ใช่ไม่มีข้อมูล**
+
+ถ้าไม่ได้ใส่ search key ระบบจะ fallback ไปใช้ DuckDuckGo แบบไม่มี key ซึ่ง**บล็อกคำขอ
+อัตโนมัติบ่อยมาก** (ตอบ 403 / 429 หรือส่งหน้าตรวจบอทกลับมา) — บอร์ดจึงไม่มีหลักฐานให้อ่าน
+แล้วรายงานตรงๆ ว่า "ไม่พบหลักฐาน" ซึ่งอ่านเหมือนว่าอินเทอร์เน็ตไม่มีข้อมูลเรื่องนั้น
+
+**กดปุ่ม 🔎 ทดสอบการค้นเว็บ** ในหน้า Boardroom (หรือเรียก `GET /api/research/diagnose`)
+จะยิงคำค้นจริง 1 ครั้งแล้วบอกตรงๆ ว่าค้นได้หรือถูกบล็อก พร้อมสาเหตุ
+
+**วิธีแก้ถาวร** — ใส่ key ตัวใดตัวหนึ่งใน `hub/.env` แล้วรีสตาร์ท hub (ทั้งสองเจ้ามี free tier):
+
+```bash
+TAVILY_API_KEY=...     # tavily.com — ออกแบบมาให้ LLM ใช้ คืนเนื้อหาหน้าเว็บมาให้เลย
+BRAVE_API_KEY=...      # brave.com/search/api
+```
+
+สิ่งที่ระบบทำให้แล้วเมื่อค้นไม่ได้:
+
+- แยก **"ถูกบล็อก"** ออกจาก **"ค้นได้แต่ไม่เจอ"** ทั้งในการ์ดของแต่ละที่นั่งและในดัชนีหลักฐานรวม
+- ลองทั้ง GET และ POST บนสอง endpoint ของ DuckDuckGo แล้ว **fallback ไป Mojeek**
+  (คนละ index) ก่อนจะยอมแพ้
+- เตือนในดัชนีหลักฐานรวมว่า *ข้อสรุปรอบนี้ยืนอยู่บนหลักฐานที่บางกว่าที่ควรเป็น*
+
 ## กัน Echo Chamber
 
 `DEFAULT_PROVIDERS` ผูกแต่ละที่นั่งไว้กับ **โมเดลคนละค่าย** และหน้า Agents สลับได้ตลอด
@@ -148,7 +173,7 @@ cd hub && .venv/bin/python -m pytest tests/ -q
 | `ANTHROPIC_API_KEY` | Claude (claude-fable-5) |
 | `GOOGLE_API_KEY` | Gemini (ใช้อ่าน/OCR รูปเอกสารด้วย) |
 | `MANUS_API_KEY` + `MANUS_API_URL` | Manus (native task API) |
-| `TAVILY_API_KEY` / `BRAVE_API_KEY` / `SERPER_API_KEY` | ค้นเว็บ — ใส่ตัวใดตัวหนึ่ง (ไม่ใส่ก็ยังค้นได้ผ่าน DuckDuckGo) |
+| `TAVILY_API_KEY` / `BRAVE_API_KEY` / `SERPER_API_KEY` | ค้นเว็บ — **ควรใส่ตัวใดตัวหนึ่ง** (ดู "ทำไมค้นไม่เจอ" ด้านล่าง) |
 | `GDRIVE_SERVICE_ACCOUNT_JSON` + `GDRIVE_FOLDER_ID` | เก็บเอกสารขึ้น Google Drive |
 | `LINE_CHANNEL_SECRET` + `LINE_CHANNEL_ACCESS_TOKEN` | รับเอกสารผ่าน LINE bot |
 

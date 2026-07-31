@@ -108,32 +108,81 @@ def _unwrap_ddg(url: str) -> str:
     return url
 
 
+class BlockedError(RuntimeError):
+    """The engine answered, but with a bot check instead of results."""
+
+
+def _parse_ddg(html_text: str, k: int) -> list[dict]:
+    for pattern in _DDG_PATTERNS:
+        out = []
+        for m in pattern.finditer(html_text):
+            href = _HREF.search(m.group("attrs"))
+            if not href:
+                continue
+            out.append({"title": _strip_html(m.group("title")),
+                        "url": _unwrap_ddg(href.group(1)),
+                        "snippet": _strip_html(m.group("snippet"))})
+            if len(out) >= k:
+                break
+        if out:
+            return out
+    return []
+
+
 def _duckduckgo(query: str, k: int) -> list[dict]:
+    """Keyless fallback. DuckDuckGo throttles automated traffic hard, so try
+    GET before POST on both endpoints — a POST-only client is the first thing
+    its bot check rejects."""
     last_error: Exception | None = None
     for endpoint in _DDG_ENDPOINTS:
-        try:
-            r = httpx.post(endpoint, data={"q": query}, headers=_DDG_HEADERS,
-                           timeout=TIMEOUT, follow_redirects=True)
-            r.raise_for_status()
-        except Exception as e:  # noqa: BLE001 — try the next endpoint
-            last_error = e
-            continue
-        for pattern in _DDG_PATTERNS:
-            out = []
-            for m in pattern.finditer(r.text):
-                href = _HREF.search(m.group("attrs"))
-                if not href:
-                    continue
-                out.append({"title": _strip_html(m.group("title")),
-                            "url": _unwrap_ddg(href.group(1)),
-                            "snippet": _strip_html(m.group("snippet"))})
-                if len(out) >= k:
-                    break
+        for method in ("GET", "POST"):
+            try:
+                if method == "GET":
+                    r = httpx.get(endpoint, params={"q": query}, headers=_DDG_HEADERS,
+                                  timeout=TIMEOUT, follow_redirects=True)
+                else:
+                    r = httpx.post(endpoint, data={"q": query}, headers=_DDG_HEADERS,
+                                   timeout=TIMEOUT, follow_redirects=True)
+                r.raise_for_status()
+            except Exception as e:  # noqa: BLE001 — try the next shape
+                last_error = e
+                continue
+            out = _parse_ddg(r.text, k)
             if out:
                 return out
+            # 200 with nothing parseable is DuckDuckGo's bot-check page, not an
+            # empty index. Saying "no results" here is what makes a blocked
+            # search look like a subject the internet has nothing on.
+            last_error = BlockedError(
+                "DuckDuckGo ตอบกลับมาแต่ไม่มีผลลัพธ์ที่อ่านได้ (น่าจะโดนหน้าตรวจบอท)")
     if last_error is not None:
         raise last_error
     return []
+
+
+_MOJEEK_ROW = re.compile(
+    r'<a[^>]*\bclass="ob"[^>]*href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>'
+    r'.*?<p class="s">(?P<snippet>.*?)</p>', re.S)
+
+
+def _mojeek(query: str, k: int) -> list[dict]:
+    """A second keyless engine on an independent index. When DuckDuckGo blocks
+    us there is otherwise nothing left, and the board silently loses the web."""
+    r = httpx.get("https://www.mojeek.com/search", params={"q": query},
+                  headers=_DDG_HEADERS, timeout=TIMEOUT, follow_redirects=True)
+    r.raise_for_status()
+    out = []
+    for m in _MOJEEK_ROW.finditer(r.text):
+        url = html.unescape(m.group("url"))
+        if not url.startswith("http"):
+            continue
+        out.append({"title": _strip_html(m.group("title")), "url": url,
+                    "snippet": _strip_html(m.group("snippet"))})
+        if len(out) >= k:
+            break
+    if not out:
+        raise BlockedError("Mojeek ตอบกลับมาแต่ไม่มีผลลัพธ์ที่อ่านได้")
+    return out
 
 
 # Backends are resolved by NAME at call time, not bound at import time: binding
@@ -142,16 +191,68 @@ def _duckduckgo(query: str, k: int) -> list[dict]:
 # real network instead of the replacement.
 _BACKENDS = {"tavily": "_tavily", "brave": "_brave", "serper": "_serper",
              "duckduckgo": "_duckduckgo"}
+# Tried in order when no key is configured, so one engine's bot check does not
+# take the whole board's evidence with it.
+_KEYLESS_CHAIN = ("_duckduckgo", "_mojeek")
+
+
+def _reason(exc: Exception) -> str:
+    """A failure the CEO can act on, not a stack trace."""
+    if isinstance(exc, BlockedError):
+        return str(exc)
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (403, 429, 202):
+            return (f"ถูกบล็อก/จำกัดอัตราการค้น (HTTP {code}) — "
+                    "เครื่องมือค้นแบบไม่ใช้ key ปฏิเสธคำขออัตโนมัติ")
+        return f"เซิร์ฟเวอร์ค้นหาตอบ HTTP {code}"
+    if isinstance(exc, httpx.TimeoutException):
+        return "ค้นหาหมดเวลา (timeout) — เครือข่ายช้าหรือถูกบล็อก"
+    if isinstance(exc, httpx.RequestError):
+        return f"ต่อเครื่องมือค้นหาไม่ได้: {type(exc).__name__}"
+    return f"{type(exc).__name__}: {str(exc)[:120]}"
+
+
+def search_detail(query: str, k: int = 5) -> dict:
+    """One search, with the reason it came back empty.
+
+    `search()` used to swallow every failure into an empty list, which made a
+    blocked search indistinguishable from a subject the web has nothing on —
+    and the board reported "ไม่พบหลักฐาน" for both.
+    """
+    name = backend()
+    chain = _KEYLESS_CHAIN if name == "duckduckgo" else (_BACKENDS[name],)
+    errors = []
+    for fn in chain:
+        try:
+            results = globals()[fn](query, k)
+        except Exception as e:  # noqa: BLE001 — a dead engine must not kill the consult
+            log.warning("search %s failed for %r: %s", fn, query, e)
+            errors.append(f"{fn.lstrip('_')}: {_reason(e)}")
+            continue
+        if results:
+            return {"results": results, "error": None, "engine": fn.lstrip("_")}
+        errors.append(f"{fn.lstrip('_')}: ไม่พบผลลัพธ์")
+    return {"results": [], "error": " · ".join(errors) or "ไม่พบผลลัพธ์",
+            "engine": None}
 
 
 def search(query: str, k: int = 5) -> list[dict]:
-    """One search against the active backend. Never raises — a dead backend
-    must not take the whole consult down with it."""
-    try:
-        return globals()[_BACKENDS[backend()]](query, k)
-    except Exception as e:  # noqa: BLE001
-        log.warning("search backend %s failed for %r: %s", backend(), query, e)
-        return []
+    """Results only. Prefer `search_detail` when the caller should be able to
+    tell "blocked" from "genuinely nothing there"."""
+    return search_detail(query, k)["results"]
+
+
+def diagnose() -> dict:
+    """Run one canary query so the CEO can tell a blocked search from a quiet
+    one without reading server logs."""
+    out = search_detail("ตลาดร้านอาหาร กรุงเทพ 2026", 3)
+    return {"backend": backend(), "label": backend_label(),
+            "keyed": backend() != "duckduckgo",
+            "ok": bool(out["results"]), "engine": out["engine"],
+            "found": len(out["results"]), "error": out["error"],
+            "sample": [{"title": s.get("title", ""), "url": s.get("url", "")}
+                       for s in out["results"][:3]]}
 
 
 # ── page fetching (only when the backend gave no usable body text) ──
@@ -178,14 +279,23 @@ def fetch_text(url: str, max_chars: int = 4000) -> str:
 
 
 def gather(queries: list[str], per_query: int = 4, max_sources: int = 8,
-           cancel=None) -> list[dict]:
+           cancel=None) -> dict:
     """Run every query, de-duplicate by URL, and make sure each surviving
-    source carries enough body text for the analyst to screen it."""
+    source carries enough body text for the analyst to screen it.
+
+    Returns {sources, errors} — the errors matter as much as the sources,
+    because a caller that only sees an empty list cannot tell whether the web
+    had nothing or the search never ran.
+    """
     seen: dict[str, dict] = {}
+    errors: list[str] = []
     for q in queries:
         if cancel is not None and cancel():
             break
-        for hit in search(q, per_query):
+        out = search_detail(q, per_query)
+        if out["error"] and not out["results"]:
+            errors.append(f"«{q}» → {out['error']}")
+        for hit in out["results"]:
             url = (hit.get("url") or "").strip()
             if not url or url in seen:
                 continue
@@ -199,7 +309,7 @@ def gather(queries: list[str], per_query: int = 4, max_sources: int = 8,
         if len(body) < 400:
             body = fetch_text(s["url"]) or s.get("snippet", "")
         s["body"] = body[:4000]
-    return sources
+    return {"sources": sources, "errors": errors}
 
 
 def as_prompt(sources: list[dict], max_chars: int = 9000) -> str:

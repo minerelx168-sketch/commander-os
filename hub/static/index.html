@@ -1182,6 +1182,8 @@ body {
         <label class="toggle" title="บอร์ดจะสืบข้อมูลจริงจากอินเทอร์เน็ต คัดกรอง แล้วใช้ประกอบการถก">
           <input type="checkbox" id="ask-web" checked> 🌐 สืบข้อมูลจากอินเทอร์เน็ตก่อนถก
         </label>
+        <button class="step-act" onclick="testSearch(this)"
+          title="ยิงคำค้นจริง 1 ครั้ง เพื่อดูว่าค้นเว็บได้จริงไหม — แยก 'ถูกบล็อก' ออกจาก 'ไม่มีข้อมูล'">🔎 ทดสอบการค้นเว็บ</button>
         <span class="scope-note" id="scope-note"></span>
       </div>
       <div class="ask-row">
@@ -1346,6 +1348,7 @@ let SESSION = null;        // current consult session (carries next_step / statu
 let RUNNING = false;
 let ABORT = null;          // AbortController for the round in flight
 let WEB_TOGGLE_SET = false;
+let SEARCH_TESTED = false;   // a diagnose verdict outranks the idle hint
 
 /* ---------- page meta ---------- */
 const PAGE_META = {
@@ -1390,9 +1393,11 @@ async function loadState() {
     fillProjects(document.getElementById('ask-project'), STATE.projects);
     fillProjects(document.getElementById('up-project'), STATE.projects);
     const rs = STATE.research || {};
-    document.getElementById('scope-note').textContent =
-      `ค้นเว็บผ่าน ${rs.label || '-'}` +
-      (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+    if (!SEARCH_TESTED) {           // a real diagnose verdict outranks this hint
+      document.getElementById('scope-note').textContent =
+        `ค้นเว็บผ่าน ${rs.label || '-'}` +
+        (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+    }
     if (!WEB_TOGGLE_SET) {          // seed once; never fight the CEO's choice
       document.getElementById('ask-web').checked = rs.default_on !== false;
       WEB_TOGGLE_SET = true;
@@ -1794,6 +1799,30 @@ function pickOption(name) {
   inp.value = chosen ? `เลือก: ${chosen.name} — ${chosen.first_move || chosen.summary || ''}` : name;
   inp.focus();
   inp.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+/* One real search, so "ไม่พบหลักฐาน" can be told apart from "ค้นไม่ได้". */
+async function testSearch(btn) {
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ กำลังทดสอบ…';
+  const note = document.getElementById('scope-note');
+  try {
+    const j = await (await fetch('/api/research/diagnose')).json();
+    if (j.ok) {
+      note.innerHTML = `✅ ค้นเว็บได้ปกติ — ${esc(j.label)} (engine: ${esc(j.engine||'-')}) เจอ ${j.found} แหล่ง` +
+        (j.keyed ? '' : ' · ยังใช้แบบไม่มี key อยู่ ถ้าโดนบล็อกบ่อยให้ใส่ TAVILY_API_KEY');
+      note.style.color = 'var(--green)';
+    } else {
+      note.innerHTML = `❌ ค้นเว็บไม่ได้ — ${esc(j.error || 'ไม่ทราบสาเหตุ')}` +
+        (j.keyed ? '' : ' · ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env แล้วรีสตาร์ท hub');
+      note.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    note.textContent = 'ทดสอบไม่สำเร็จ: ' + e;
+    note.style.color = 'var(--red)';
+  }
+  SEARCH_TESTED = true;
+  btn.disabled = false; btn.innerHTML = old;
 }
 
 async function openPdf(step, btn) {

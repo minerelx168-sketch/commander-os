@@ -106,6 +106,16 @@ def state() -> dict:
     }
 
 
+@app.get("/api/research/diagnose")
+def research_diagnose() -> dict:
+    """Run one real search and report what happened.
+
+    Without this the CEO cannot tell a blocked search engine from a subject the
+    web genuinely has nothing on — both arrive as "ไม่พบหลักฐาน".
+    """
+    return research.diagnose()
+
+
 @app.get("/api/memory")
 def board_memory(project: str | None = None, limit: int = 40) -> dict:
     """What the board concluded before — the archive Frame checks against."""

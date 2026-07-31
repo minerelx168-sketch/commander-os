@@ -280,7 +280,7 @@ def test_every_seat_researches_independently(client):
     s = _framed(client, question="ควรลงทุนตู้กดอัตโนมัติไหม", web=True)
     assert s["next_step"] == "research"
 
-    with patch("app.research.gather", return_value=FAKE_SOURCES) as g, \
+    with patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}) as g, \
          patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])
     research_step = s["steps"][-1]
@@ -311,7 +311,7 @@ def test_each_seat_writes_its_own_queries_on_its_own_model(client):
     s = _framed(client, web=True)
     reply = _reply("ขนาดตลาดตู้กดไทย\nvending machine market thailand\nกฎหมายตู้หยอดเหรียญ")
     with patch("app.llm.chat", return_value=reply) as m, \
-         patch("app.research.gather", return_value=FAKE_SOURCES) as g:
+         patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}) as g:
         _advance(client, s["id"])
     assert g.call_args.args[0] == ["ขนาดตลาดตู้กดไทย", "vending machine market thailand",
                                    "กฎหมายตู้หยอดเหรียญ"]
@@ -324,7 +324,7 @@ def test_each_seat_writes_its_own_queries_on_its_own_model(client):
 
 def test_research_failure_degrades_to_documents_only(client):
     s = _framed(client, web=True)
-    with patch("app.research.gather", return_value=[]), \
+    with patch("app.research.gather", return_value={"sources": [], "errors": []}), \
          patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])
     desks = s["steps"][-1]["results"]
@@ -357,8 +357,118 @@ def test_research_backend_selection_follows_the_keys(client, monkeypatch):
 
 def test_search_never_raises_when_the_backend_dies(client):
     from app import research
-    with patch("app.research._duckduckgo", side_effect=RuntimeError("boom")):
+    with patch("app.research._duckduckgo", side_effect=RuntimeError("boom")), \
+         patch("app.research._mojeek", side_effect=RuntimeError("boom")):
         assert research.search("อะไรก็ได้") == []
+
+
+# ── telling "the search was blocked" apart from "the web has nothing" ──
+
+def test_a_blocked_search_reports_why_instead_of_looking_empty(client):
+    """The bug this guards: a 403 and a genuinely empty index both arrived as
+    an empty list, so the board said "ไม่พบหลักฐาน" for a search that never ran."""
+    from app import research
+    blocked = httpx.HTTPStatusError(
+        "403", request=httpx.Request("GET", "https://duckduckgo.com"),
+        response=httpx.Response(403))
+    with patch("app.research._duckduckgo", side_effect=blocked), \
+         patch("app.research._mojeek", side_effect=blocked):
+        out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert out["results"] == [] and out["engine"] is None
+    assert "403" in out["error"] and "ถูกบล็อก" in out["error"]
+    assert "duckduckgo" in out["error"] and "mojeek" in out["error"]
+
+
+def test_an_engine_that_answers_with_a_bot_check_is_not_an_empty_index(client):
+    """HTTP 200 with nothing parseable is a bot wall, not a quiet internet."""
+    from app import research
+
+    class _Resp:
+        text = "<html><body>Please verify you are human</body></html>"
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.get", return_value=_Resp()), patch("httpx.post", return_value=_Resp()):
+        with pytest.raises(research.BlockedError):
+            research._duckduckgo("อะไรก็ได้", 5)
+
+
+def test_the_keyless_path_falls_through_to_a_second_engine(client):
+    """One engine's bot check must not take the board's whole evidence base."""
+    from app import research
+    hits = [{"title": "t", "url": "https://example.com/a", "snippet": "s"}]
+    with patch("app.research._duckduckgo", side_effect=research.BlockedError("bot check")), \
+         patch("app.research._mojeek", return_value=hits) as second:
+        out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert second.called
+    assert out["results"] == hits and out["engine"] == "mojeek" and out["error"] is None
+
+
+def test_a_keyed_backend_does_not_fall_through_to_the_keyless_engines(client, monkeypatch):
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
+    with patch("app.research._tavily", side_effect=RuntimeError("down")), \
+         patch("app.research._mojeek") as keyless:
+        out = research.search_detail("q")
+    assert not keyless.called and out["results"] == []
+    assert out["error"].startswith("tavily:")
+
+
+def test_gather_hands_the_reason_back_to_the_caller(client):
+    from app import research
+    with patch("app.research.search_detail",
+               return_value={"results": [], "error": "ถูกบล็อก (HTTP 403)", "engine": None}):
+        out = research.gather(["คำค้น ก", "คำค้น ข"])
+    assert out["sources"] == [] and len(out["errors"]) == 2
+    assert all("ถูกบล็อก" in e for e in out["errors"])
+
+
+def test_a_seat_that_was_blocked_says_so_instead_of_no_evidence(client):
+    s = _framed(client, web=True)
+    with patch("app.research.gather",
+               return_value={"sources": [], "errors": ["«q» → ถูกบล็อก (HTTP 403)"]}), \
+         patch("app.llm.chat", side_effect=_fake_chat):
+        s = _advance(client, s["id"])
+    desk = s["steps"][-1]["results"]["cfo"]
+    assert desk["blocked"] is True
+    assert "ยังไม่ได้อ่านอินเทอร์เน็ตเลย" in desk["text"]
+    assert "TAVILY_API_KEY" in desk["text"]          # tells the CEO the actual fix
+    # the merged index warns that the board's conclusion rests on thin evidence
+    index = s["steps"][-1]["results"]["analyst"]
+    assert index["blocked_seats"] and "ค้นเว็บไม่ได้เลย" in index["text"]
+
+
+def test_a_search_that_ran_but_found_nothing_is_not_blamed_on_blocking(client):
+    s = _framed(client, web=True)
+    with patch("app.research.gather", return_value={"sources": [], "errors": []}), \
+         patch("app.llm.chat", side_effect=_fake_chat):
+        s = _advance(client, s["id"])
+    desk = s["steps"][-1]["results"]["cfo"]
+    assert desk["blocked"] is False
+    assert "ค้นได้แต่ไม่พบหลักฐาน" in desk["text"]
+    assert "TAVILY_API_KEY" not in desk["text"]
+
+
+def test_diagnose_reports_a_working_search(client):
+    hits = [{"title": "ตลาดร้านอาหาร", "url": "https://example.com/x", "snippet": "s"}]
+    with patch("app.research._duckduckgo", return_value=hits):
+        j = client.get("/api/research/diagnose").json()
+    assert j["ok"] is True and j["found"] == 1 and j["engine"] == "duckduckgo"
+    assert j["error"] is None and j["sample"][0]["url"] == "https://example.com/x"
+
+
+def test_diagnose_reports_a_blocked_search(client):
+    with patch("app.research._duckduckgo", side_effect=research_blocked()), \
+         patch("app.research._mojeek", side_effect=research_blocked()):
+        j = client.get("/api/research/diagnose").json()
+    assert j["ok"] is False and j["found"] == 0
+    assert "ถูกบล็อก" in j["error"] and j["keyed"] is False
+
+
+def research_blocked():
+    return httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"),
+                                 response=httpx.Response(403))
 
 
 DDG_LITE = ('<table><tr><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg='
@@ -435,7 +545,7 @@ OPTIONS_JSON = json.dumps({
 def _finished_consult(client, web=False):
     s = _framed(client, question="ควรขยายสาขาไหม", web=web)
     with patch("app.llm.chat", side_effect=_fake_chat), \
-         patch("app.research.gather", return_value=FAKE_SOURCES):
+         patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}):
         while s["next_step"] is not None:
             s = _advance(client, s["id"])
     return s
@@ -967,7 +1077,7 @@ def test_guardrails_in_prompts(client):
 def test_the_debate_attacks_evidence_not_opinions(client):
     s = _framed(client, web=True)
     with patch("app.llm.chat", side_effect=_fake_chat), \
-         patch("app.research.gather", return_value=FAKE_SOURCES):
+         patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}):
         s = _advance(client, s["id"])            # research
         s = _advance(client, s["id"])            # positions
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
@@ -1542,7 +1652,8 @@ def test_deliverable_cites_the_web_sources_it_was_given(client):
     """Claims must trace to a real URL, so the source table has to be printed."""
     s = _start(client, question="ควรขยายสาขาไหม", web=True)
     with patch("app.llm.chat", side_effect=_fake_chat), \
-         patch("app.research.search", return_value=FAKE_SOURCES), \
+         patch("app.research.search_detail",
+               return_value={"results": FAKE_SOURCES, "error": None, "engine": "test"}), \
          patch("app.research.fetch_text", return_value="เนื้อหาเต็มของหน้า"):
         for _ in range(5):
             if s["next_step"] is None:
