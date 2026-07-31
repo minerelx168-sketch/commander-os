@@ -23,6 +23,10 @@ app = FastAPI(title="Commander Hub — C-Suite Advisory")
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
+# Sentinel the project picker sends for "ask this without my documents".
+NO_PROJECT = "__none__"
+
+
 class AskIn(BaseModel):
     question: str
     project: str | None = None
@@ -48,6 +52,10 @@ class DecisionIn(BaseModel):
     decision: str
 
 
+class RethinkIn(BaseModel):
+    direction: str | None = None   # what the CEO wants explored differently
+
+
 class ScoreIn(BaseModel):
     outcome: str
     verdict: str  # saved | faster | neutral | missed
@@ -56,9 +64,12 @@ class ScoreIn(BaseModel):
 def _view(session: dict) -> dict:
     """Session + what the CEO may do next (drives the decision gate in the UI)."""
     nxt = depts.next_step(session)
+    legacy = bool({s["key"] for s in session.get("steps", [])} & depts.LEGACY_STEPS)
     return {**session, "next_step": nxt,
             "next_label": depts.STEP_LABELS.get(nxt) if nxt else None,
-            "steps_all": depts.STEPS, "step_labels": depts.STEP_LABELS}
+            "steps_all": depts.STEPS, "step_labels": depts.STEP_LABELS,
+            "convened": depts.seats(session), "legacy": legacy,
+            "confidence": depts.confidence_summary(session)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -88,9 +99,34 @@ def state() -> dict:
         "research": {"backend": research.backend(), "label": research.backend_label(),
                      "keyed": research.backend() != "duckduckgo",
                      "default_on": config.WEB_RESEARCH_DEFAULT},
+        "diversity": depts.model_diversity(),
+        "memory_count": len(store.get_memory(limit=500)),
         "consults": store.get_consults(8),
         "decision_stats": store.decision_stats(),
     }
+
+
+@app.get("/api/research/diagnose")
+def research_diagnose() -> dict:
+    """Run one real search and report what happened.
+
+    Without this the CEO cannot tell a blocked search engine from a subject the
+    web genuinely has nothing on — both arrive as "ไม่พบหลักฐาน".
+    """
+    return research.diagnose()
+
+
+@app.get("/api/memory")
+def board_memory(project: str | None = None, limit: int = 40) -> dict:
+    """What the board concluded before — the archive Frame checks against."""
+    return {"memory": store.get_memory(project, limit)}
+
+
+@app.delete("/api/memory/{memory_id}")
+def forget(memory_id: int) -> dict:
+    if not store.forget_memory(memory_id):
+        raise HTTPException(404, "memory not found")
+    return {"forgotten": memory_id}
 
 
 # ── Boardroom: a consult advances one step at a time ──
@@ -103,8 +139,14 @@ def consult(body: AskIn) -> dict:
     if not q:
         raise HTTPException(400, "question is required")
     project = (body.project or "").strip() or None
+    # NO_PROJECT asks a question that has nothing to do with the CEO's own
+    # business — pulling the library in would only bias the answer with numbers
+    # from a different problem.
+    use_docs = project != NO_PROJECT
+    if not use_docs:
+        project = None
     web = config.WEB_RESEARCH_DEFAULT if body.web_research is None else body.web_research
-    return _view(store.create_session(q, project, web_research=web))
+    return _view(store.create_session(q, project, web_research=web, use_docs=use_docs))
 
 
 @app.post("/api/consult/{session_id}/advance")
@@ -187,7 +229,9 @@ def step_report(session_id: int, step: str, refresh: bool = False) -> Response:
     session = store.get_consult(session_id)
     if session is None:
         raise HTTPException(404, "consult not found")
-    if step not in depts.STEPS:
+    # STEP_LABELS also covers the pre-Crucible stage names, so archived sessions
+    # can still be exported instead of 400-ing on their own history.
+    if step not in depts.STEP_LABELS:
         raise HTTPException(400, f"unknown step: {step}")
     if refresh:
         report.methodology(session, step, refresh=True)
@@ -329,6 +373,58 @@ def score_decision(decision_id: int, body: ScoreIn) -> dict:
     return d
 
 
+@app.post("/api/decisions/{decision_id}/rethink")
+def rethink(decision_id: int, body: RethinkIn) -> dict:
+    """Take the same question down a different road.
+
+    Branching from the Boardroom forks a stage of one meeting; branching from a
+    decision reopens the question itself, which is what the CEO wants when the
+    call turned out wrong and the whole framing deserves another pass.
+    """
+    d = store.get_decision(decision_id)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    source = store.get_consult(d["consult_id"]) if d.get("consult_id") else None
+    child = store.create_session(
+        d["question"],
+        project=(source or {}).get("project"),
+        web_research=(source or {}).get("web_research", config.WEB_RESEARCH_DEFAULT),
+        use_docs=(source or {}).get("use_docs", True),
+        parent_id=d.get("consult_id"),
+        branched_from="decision",
+    )
+    return {**_view(child), "direction": (body.direction or "").strip(),
+            "from_decision": decision_id}
+
+
+@app.post("/api/decisions/{decision_id}/forget")
+def forget_decision_learning(decision_id: int) -> dict:
+    """Erase what the board learned from the consult behind this decision.
+
+    Scoring a decision "missed" and leaving its conclusion in memory means every
+    later session is still audited against advice the CEO already rejected.
+    """
+    d = store.get_decision(decision_id)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    if not d.get("consult_id"):
+        return {"forgotten": 0, "reason": "การตัดสินใจนี้ไม่ได้ผูกกับการประชุมใด"}
+    return {"forgotten": store.forget_memory_for_consult(d["consult_id"]),
+            "consult_id": d["consult_id"]}
+
+
+@app.delete("/api/decisions/{decision_id}")
+def delete_decision(decision_id: int, forget: bool = False) -> dict:
+    """Remove a decision from the log; `forget=true` also drops its learning."""
+    d = store.get_decision(decision_id)
+    if d is None:
+        raise HTTPException(404, "decision not found")
+    dropped = (store.forget_memory_for_consult(d["consult_id"])
+               if forget and d.get("consult_id") else 0)
+    store.delete_decision(decision_id)
+    return {"deleted": decision_id, "forgotten": dropped}
+
+
 @app.put("/api/dept/{dept}/provider")
 def set_provider(dept: str, body: ProviderIn) -> dict:
     if dept not in config.DEPTS:
@@ -349,6 +445,15 @@ def documents(limit: int = 50) -> dict:
         "line_connected": docs.line_ready(),
         "knowledge_chars": len(docs.knowledge_context()),
     }
+
+
+@app.delete("/api/docs/{doc_id}")
+def delete_document(doc_id: int) -> dict:
+    """Remove a stale or superseded document from the board's library."""
+    out = docs.delete_document(doc_id)
+    if out is None:
+        raise HTTPException(404, "document not found")
+    return out
 
 
 @app.post("/api/docs/upload")

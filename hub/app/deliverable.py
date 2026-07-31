@@ -250,7 +250,7 @@ def _grounding(session: dict) -> str:
         parts.append("(ไม่มีผลค้นหาเว็บในการประชุมนี้ — ห้ามใส่ [n] และต้องกำกับว่า (ประมาณการ) "
                      "ทุกตัวเลขที่คุณเสนอ)")
 
-    knowledge = docs.knowledge_context(project=session.get("project"))
+    knowledge = depts._library(session)
     if knowledge:
         parts.append(f"คลังเอกสารของ CEO:\n{knowledge}")
     return "\n\n".join(parts)

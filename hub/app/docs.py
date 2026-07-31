@@ -244,6 +244,43 @@ def list_documents(limit: int = 50) -> list:
     return _load_meta()[-limit:][::-1]
 
 
+def delete_document(doc_id: int) -> dict | None:
+    """Drop a document the CEO says is stale or superseded.
+
+    The board reads this library on every consult, so a document left behind
+    after the facts changed keeps steering advice with numbers nobody believes
+    any more. Removal is best-effort per layer: the metadata entry always goes,
+    and a Drive or local file that resists deletion is reported rather than
+    silently leaving a ghost in the list.
+    """
+    meta = _load_meta()
+    entry = next((m for m in meta if m["id"] == doc_id), None)
+    if entry is None:
+        return None
+
+    removed = {"local": False, "drive": False, "errors": []}
+    for path in (LOCAL_DIR / entry["name"],
+                 LOCAL_DIR / (entry.get("project") or "") / entry["name"]):
+        try:
+            if path.is_file():
+                path.unlink()
+                removed["local"] = True
+        except OSError as e:
+            removed["errors"].append(f"ลบไฟล์ในเครื่องไม่สำเร็จ: {e}")
+
+    if entry.get("drive_id") and drive_ready():
+        try:
+            _drive().files().update(fileId=entry["drive_id"],
+                                    body={"trashed": True}).execute()
+            removed["drive"] = True
+        except Exception as e:  # noqa: BLE001 — Drive down must not block the removal
+            log.warning("drive trash failed for %s: %s", entry["name"], e)
+            removed["errors"].append(f"ย้ายไฟล์ใน Google Drive ลงถังขยะไม่สำเร็จ: {str(e)[:120]}")
+
+    _save_meta([m for m in meta if m["id"] != doc_id])
+    return {"deleted": doc_id, "name": entry["name"], **removed}
+
+
 def reclassify_all() -> dict:
     """Re-run the librarian over unfiled documents (after creating new projects)."""
     meta = _load_meta()

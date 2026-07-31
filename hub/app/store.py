@@ -22,6 +22,7 @@ _DEFAULT = {
     "providers": {d: config.DEFAULT_PROVIDERS.get(d, "mock") for d in config.DEPTS},
     "consults": [],                                   # step-by-step board sessions
     "decisions": [],                                  # Proven-by-Decision log
+    "memory": [],                                     # what past sessions concluded
 }
 
 
@@ -74,11 +75,18 @@ def set_provider(dept: str, provider: str) -> dict:
 # ── consult sessions ──
 
 def create_session(question: str, project: str | None = None,
-                   web_research: bool = True,
+                   web_research: bool = True, use_docs: bool = True,
                    parent_id: int | None = None, branched_from: str | None = None,
-                   steps: list | None = None, history: list | None = None) -> dict:
+                   steps: list | None = None, history: list | None = None,
+                   seats: list | None = None) -> dict:
     entry = {"id": None, "question": question, "project": project,
              "web_research": web_research,
+             # False = a general question with no tie to the CEO's own business,
+             # so the document library is left out of the prompts entirely.
+             "use_docs": use_docs,
+             # Which seats the Frame stage convened. None until Frame runs; the
+             # pipeline falls back to every seat so a session is never empty.
+             "seats": seats,
              "parent_id": parent_id, "branched_from": branched_from,
              "steps": steps or [], "history": history or [],
              "status": "awaiting", "at": _now()}
@@ -156,6 +164,65 @@ def attach_deliverable(session_id: int, dept: str, data: dict) -> None:
         _save(store)
 
 
+def set_seats(session_id: int, seats: list) -> None:
+    """Record which perspectives the Frame stage convened for this question."""
+    with _LOCK:
+        data = _load()
+        c = _find(data, session_id)
+        if c is None:
+            return
+        c["seats"] = seats
+        _save(data)
+
+
+# ── persistent memory: what past sessions concluded ──
+
+def add_memory(entry: dict) -> dict:
+    """Store one distilled conclusion so later sessions can be checked against it."""
+    with _LOCK:
+        data = _load()
+        entry = {**entry, "id": max((m["id"] for m in data["memory"]), default=0) + 1,
+                 "at": _now()}
+        data["memory"].append(entry)
+        data["memory"] = data["memory"][-200:]
+        _save(data)
+        return entry
+
+
+def get_memory(project: str | None = None, limit: int = 40) -> list:
+    """Past conclusions, newest first. `project` scopes to one business line —
+    a ruling about YourFin should not be waved at a FlowerVending question."""
+    with _LOCK:
+        items = _load()["memory"]
+    if project:
+        items = [m for m in items if m.get("project") == project]
+    return items[-limit:][::-1]
+
+
+def forget_memory(memory_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        before = len(data["memory"])
+        data["memory"] = [m for m in data["memory"] if m["id"] != memory_id]
+        _save(data)
+        return len(data["memory"]) < before
+
+
+def forget_memory_for_consult(consult_id: int) -> int:
+    """Erase what the board learned from one session.
+
+    When the CEO decides a past ruling was wrong, leaving it in memory means
+    every later session is audited against a conclusion nobody stands behind.
+    Returns how many entries were dropped.
+    """
+    with _LOCK:
+        data = _load()
+        before = len(data["memory"])
+        data["memory"] = [m for m in data["memory"] if m.get("consult_id") != consult_id]
+        _save(data)
+        return before - len(data["memory"])
+
+
 def set_status(session_id: int, status: str) -> dict | None:
     with _LOCK:
         data = _load()
@@ -204,8 +271,10 @@ def branch_from(session_id: int, step_key: str) -> dict | None:
         abandoned = [{**json.loads(json.dumps(s)), "reason": "branch", "discarded_at": _now()}
                      for s in c["steps"][idx:]]
     return create_session(c["question"], c.get("project"),
-                          web_research=c.get("web_research", True), parent_id=session_id,
-                          branched_from=step_key, steps=kept, history=abandoned)
+                          web_research=c.get("web_research", True),
+                          use_docs=c.get("use_docs", True), parent_id=session_id,
+                          branched_from=step_key, steps=kept, history=abandoned,
+                          seats=c.get("seats"))
 
 
 def get_consults(limit: int = 10) -> list:
@@ -265,6 +334,20 @@ def score_decision(decision_id: int, outcome: str, verdict: str) -> dict | None:
         d["scored_at"] = _now()
         _save(data)
         return d
+
+
+def get_decision(decision_id: int) -> dict | None:
+    with _LOCK:
+        return next((d for d in _load()["decisions"] if d["id"] == decision_id), None)
+
+
+def delete_decision(decision_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        before = len(data["decisions"])
+        data["decisions"] = [d for d in data["decisions"] if d["id"] != decision_id]
+        _save(data)
+        return len(data["decisions"]) < before
 
 
 def get_decisions(limit: int = 30) -> list:

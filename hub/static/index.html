@@ -881,7 +881,16 @@ body {
 .step-act.pdf    { color: var(--green); border-color: rgba(34,197,94,.25); }
 .step-act.pdf:hover { border-color: var(--green); }
 .step-act.branch:hover { color: var(--purple); border-color: var(--purple); }
+.step-act.warn        { color: var(--amber); border-color: rgba(245,158,11,.25); }
+.step-act.warn:hover  { border-color: var(--amber); }
+.step-act.danger      { color: var(--red); border-color: rgba(239,68,68,.25); }
+.step-act.danger:hover{ border-color: var(--red); }
 .step-act:disabled { opacity: .6; cursor: wait; }
+
+.dec-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;
+            padding-top: 10px; border-top: 1px solid var(--border); }
+.doc-item { position: relative; }
+.doc-del { flex-shrink: 0; align-self: flex-start; margin-left: auto; }
 
 .directive-note {
   background: rgba(139,92,246,.08);
@@ -971,7 +980,7 @@ body {
 /* ============================================================
    RESEARCH + CHAIRMAN CARDS
    ============================================================ */
-.research-card, .chair-card {
+.research-card, .chair-card, .frame-card, .redteam-card {
   background: var(--bg-3);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-lg);
@@ -979,6 +988,8 @@ body {
 }
 .research-card { border-color: rgba(34,197,94,.3); }
 .chair-card    { border-color: rgba(59,130,246,.35); }
+.frame-card    { border-color: rgba(139,92,246,.4); }
+.redteam-card  { border-color: rgba(239,68,68,.4); }
 .research-card.err { border-color: rgba(239,68,68,.3); }
 
 .wide-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -988,6 +999,8 @@ body {
   background: var(--bg-2); border: 1px solid var(--border-2);
 }
 .research-card .wide-icon { border-color: rgba(34,197,94,.4); }
+.frame-card .wide-icon    { border-color: rgba(139,92,246,.5); }
+.redteam-card .wide-icon  { border-color: rgba(239,68,68,.5); }
 .chair-card .wide-icon    { background: var(--accent); box-shadow: 0 2px 8px rgba(59,130,246,.3); }
 .wide-name { font-size: 14px; font-weight: 600; }
 .wide-sub  { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .8px; margin-top: 1px; }
@@ -998,6 +1011,10 @@ body {
   font-size: 11px; padding: 4px 10px; border-radius: 20px;
   background: rgba(34,197,94,.1); color: var(--green);
   border: 1px solid rgba(34,197,94,.25);
+}
+.qchip.conf {
+  background: rgba(59,130,246,.12); color: #93c5fd;
+  border-color: rgba(59,130,246,.3); font-weight: 600;
 }
 .srcs { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 13px; }
 .srcs-h {
@@ -1144,7 +1161,7 @@ body {
   <div class="topbar" id="topbar">
     <div>
       <div class="page-title" id="page-title">Boardroom</div>
-      <div class="page-subtitle" id="page-subtitle">โยนโจทย์ยากให้บอร์ดถกก่อนคุณตัดสิน</div>
+      <div class="page-subtitle" id="page-subtitle">บอร์ดหลายโมเดลถกกันจนได้ข้อเสนอที่ปกป้องได้ ก่อนคุณตัดสิน</div>
     </div>
     <div class="topbar-actions" id="topbar-actions"></div>
   </div>
@@ -1159,16 +1176,19 @@ body {
       <div class="ask-label">ถามบอร์ด</div>
       <div class="scope-row">
         <select class="select" id="ask-project">
-          <option value="">— ทุกโปรเจค (ใช้เอกสารทั้งคลัง) —</option>
+          <option value="" data-fixed>— ทุกโปรเจค (ใช้เอกสารทั้งคลัง) —</option>
+          <option value="__none__" data-fixed>— ไม่อ้างอิงโปรเจคใด (ถามทั่วไป ไม่ใช้เอกสาร) —</option>
         </select>
         <label class="toggle" title="บอร์ดจะสืบข้อมูลจริงจากอินเทอร์เน็ต คัดกรอง แล้วใช้ประกอบการถก">
           <input type="checkbox" id="ask-web" checked> 🌐 สืบข้อมูลจากอินเทอร์เน็ตก่อนถก
         </label>
+        <button class="step-act" onclick="testSearch(this)"
+          title="ยิงคำค้นจริง 1 ครั้ง เพื่อดูว่าค้นเว็บได้จริงไหม — แยก 'ถูกบล็อก' ออกจาก 'ไม่มีข้อมูล'">🔎 ทดสอบการค้นเว็บ</button>
         <span class="scope-note" id="scope-note"></span>
       </div>
       <div class="ask-row">
         <textarea class="ask-textarea" id="ask-text" rows="2"
-          placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะสืบข้อมูล → ให้ความเห็น → วิพากษ์กันเอง → คำตัดสิน → บทสรุปประธาน"></textarea>
+          placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะตั้งกรอบ → หาหลักฐานแยกกัน → เปิดจุดยืน → ถกเถียง → Red-team + วัดความมั่นใจ → Defensible Brief"></textarea>
         <button class="btn btn-primary" id="ask-btn" onclick="askBoard()">
           ⚡ CONSULT
         </button>
@@ -1317,15 +1337,22 @@ const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 let STATE = { depts:[], providers:[], projects:[], consults:[], decision_stats:{} };
 // Derived from /api/state, never hand-listed — a seat added on the server
 // (e.g. the Researcher) must appear in the board without touching this file.
-const deptKeys = () => STATE.depts.map(d => d.key);
+// Seats in the order the sidebar shows them, narrowed to the ones Frame
+// convened for this session — an uninvited seat has nothing to render.
+const deptKeys = () => {
+  const all = STATE.depts.map(d => d.key);
+  const convened = (SESSION && SESSION.convened) || null;
+  return convened ? all.filter(k => convened.includes(k)) : all;
+};
 let SESSION = null;        // current consult session (carries next_step / status)
 let RUNNING = false;
 let ABORT = null;          // AbortController for the round in flight
 let WEB_TOGGLE_SET = false;
+let SEARCH_TESTED = false;   // a diagnose verdict outranks the idle hint
 
 /* ---------- page meta ---------- */
 const PAGE_META = {
-  board:     { title:'Boardroom',  sub:'โยนโจทย์ยากให้บอร์ดถกก่อนคุณตัดสิน' },
+  board:     { title:'Boardroom',  sub:'บอร์ดหลายโมเดลถกกันจนได้ข้อเสนอที่ปกป้องได้ ก่อนคุณตัดสิน' },
   decisions: { title:'Decisions',  sub:'วัดผลที่ปรึกษาจากการตัดสินใจจริง' },
   docs:      { title:'เอกสาร',     sub:'คลังความรู้ธุรกิจของคุณ (LINE → Google Drive)' },
   agents:    { title:'Agents',     sub:'เลือก AI ให้แต่ละที่ปรึกษา' },
@@ -1366,9 +1393,11 @@ async function loadState() {
     fillProjects(document.getElementById('ask-project'), STATE.projects);
     fillProjects(document.getElementById('up-project'), STATE.projects);
     const rs = STATE.research || {};
-    document.getElementById('scope-note').textContent =
-      `ค้นเว็บผ่าน ${rs.label || '-'}` +
-      (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+    if (!SEARCH_TESTED) {           // a real diagnose verdict outranks this hint
+      document.getElementById('scope-note').textContent =
+        `ค้นเว็บผ่าน ${rs.label || '-'}` +
+        (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+    }
     if (!WEB_TOGGLE_SET) {          // seed once; never fight the CEO's choice
       document.getElementById('ask-web').checked = rs.default_on !== false;
       WEB_TOGGLE_SET = true;
@@ -1386,8 +1415,11 @@ async function loadState() {
 function fillProjects(sel, projects, keepValue) {
   if (!sel) return;
   const cur = keepValue ?? sel.value;
-  const first = sel.options[0] ? sel.options[0].outerHTML : '';
-  sel.innerHTML = first + (projects || []).map(p =>
+  // Options marked data-fixed are scope choices, not projects ("all projects",
+  // "no project at all") — they survive every refresh of the project list.
+  const fixed = [...sel.querySelectorAll('option[data-fixed]')].map(o => o.outerHTML).join('')
+    || (sel.options[0] ? sel.options[0].outerHTML : '');
+  sel.innerHTML = fixed + (projects || []).map(p =>
     `<option value="${esc(p)}">📁 ${esc(p)}</option>`).join('');
   if (cur) sel.value = cur;
 }
@@ -1420,6 +1452,7 @@ function opCard(dept, a, cls) {
         <div class="op-card-name">${esc(d.name)}</div>
         <span class="op-card-provider">${esc(a.provider)}</span>
       </div>
+      ${a.confidence != null ? `<div class="qchips"><span class="qchip conf">ความมั่นใจ ${a.confidence}%</span></div>` : ''}
       <div class="op-card-body">${esc(a.text)}</div>
       ${dl ? `<div class="dl-bar">
         <button class="btn btn-alt btn-sm" onclick="getDeliverable('${dept}', this)"
@@ -1443,33 +1476,94 @@ function wideCard(kind, icon, name, sub, a, extra) {
     </div>`;
 }
 
-function researchCard(a) {
-  const chips = (a.queries||[]).length
-    ? `<div class="qchips">${a.queries.map(q => `<span class="qchip">🔍 ${esc(q)}</span>`).join('')}</div>` : '';
+// Each seat's own evidence desk: its queries, its screened brief, its sources.
+function seatResearchCard(dept, a) {
+  const d = STATE.depts.find(x => x.key === dept) || { icon:'🔬', name:dept };
+  const chips = (a.queries||[]).map(q => `<span class="qchip">🔍 ${esc(q)}</span>`).join('');
   const srcs = (a.sources||[]).map((s,i) => `
     <div class="src"><span class="src-n">[${i+1}]</span>
       <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a></div>`).join('');
-  return wideCard('research-card', '🌐', 'ฝ่ายวิจัยข้อมูล — ข้อมูลจากอินเทอร์เน็ตที่ผ่านการคัดกรอง',
-                  'RESEARCH ANALYST', a, chips)
-    + (srcs ? `<div class="research-card" style="margin-top:-1px;border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);padding-top:0;">
-         <div class="srcs"><div class="srcs-h">แหล่งข้อมูลที่ดึงมาคัดกรอง (${(a.sources||[]).length})</div>${srcs}</div></div>` : '');
+  return `
+    <div class="op-card ${a.ok?'':'err'}">
+      <div class="op-card-head">
+        <div class="op-card-icon">${d.icon}</div>
+        <div class="op-card-name">${esc(d.name)}</div>
+        <span class="op-card-provider">${esc(a.provider)}</span>
+      </div>
+      ${chips ? `<div class="qchips">${chips}</div>` : ''}
+      <div class="op-card-body">${esc(a.text)}</div>
+      ${srcs ? `<div class="srcs"><div class="srcs-h">แหล่งของที่นั่งนี้ (${(a.sources||[]).length})</div>${srcs}</div>` : ''}
+    </div>`;
+}
+
+function researchBlock(s) {
+  const merged = s.results.analyst || {};
+  const cards = deptKeys().filter(k => s.results[k])
+    .map(k => seatResearchCard(k, s.results[k])).join('');
+  const found = (merged.sources || []).length;
+  const blockedSeats = (merged.blocked_seats || []).length;
+  // Show the index whenever there is something to say. Hiding it when nothing
+  // was found buried the warning in exactly the case it exists for: a board
+  // about to rule on evidence it never managed to read.
+  const index = (found || blockedSeats)
+    ? `<div class="research-card ${found ? '' : 'err'}" style="margin-top:12px;">
+         <div class="wide-head"><div class="wide-icon">${found ? '🌐' : '⚠️'}</div>
+           <div><div class="wide-name">ดัชนีหลักฐานรวมของการประชุม</div>
+                <div class="wide-sub">EVIDENCE INDEX · ${esc(merged.provider||'')}</div></div></div>
+         <div class="wide-body">${esc(merged.text||'')}</div>
+         ${!found ? '' : `<div class="srcs"><div class="srcs-h">รวมทุกที่นั่ง (${found} แหล่ง)</div>
+           ${merged.sources.map((x,i) => `
+             <div class="src"><span class="src-n">[${i+1}]</span>
+               <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a>
+               ${x.found_by ? `<span class="scope-note">— ${deptName(x.found_by)}</span>` : ''}</div>`).join('')}
+         </div>`}
+       </div>`
+    : '';
+  return `<div class="round-grid">${cards}</div>${index}`;
+}
+
+function frameCard(a) {
+  const conflicts = (a.conflicts||[]).map(c => `
+    <div class="opt-must" style="margin-top:8px;">⚠️ ขัดกับมติเก่า #${c.memory_id} (${esc(c.severity||'')})<br>
+      <b>เคยสรุปว่า:</b> ${esc(c.past||'')}<br><b>ขัดตรงไหน:</b> ${esc(c.tension||'')}</div>`).join('');
+  const div = a.diversity || {};
+  const divNote = div.warning
+    ? `<div class="opt-must" style="margin-top:8px;">🧠 ${esc(div.warning)}</div>`
+    : `<div class="qchips" style="margin-top:8px;"><span class="qchip">🧠 ${div.distinct||0} provider ต่างกัน จาก ${div.live||0} ที่นั่งที่ใช้งานได้ — ยิ่งต่างยิ่งจับจุดบอดกันได้</span></div>`;
+  const seatChips = (a.seats||[]).map(k => `<span class="qchip">${deptName(k)}</span>`).join('');
+  return wideCard('frame-card', '🎯', 'Moderator — กรอบการตัดสินใจ', 'FRAME', a,
+    (seatChips ? `<div class="qchips">เรียกเข้าประชุม: ${seatChips}</div>` : ''))
+    + divNote + conflicts
+    + (a.memory_checked ? `<div class="scope-note" style="display:block;margin-top:8px;">ตรวจกับมติเก่า ${a.memory_checked} รายการ${(a.conflicts||[]).length ? '' : ' — ไม่พบข้อขัดแย้ง'}</div>` : '');
+}
+
+function redteamCard(a) {
+  return wideCard('redteam-card', '🛡', 'Red Team — โจมตีการตั้งกรอบ ไม่ใช่คำตอบ', 'RED TEAM', a);
 }
 
 function chairCard(a) {
-  return wideCard('chair-card', '⚖️', 'ประธานบอร์ด — บทสรุปเพื่อการตัดสินใจ', 'CHAIRMAN SYNTHESIS', a)
+  const conf = a.confidence != null
+    ? `<div class="qchips"><span class="qchip conf">ความมั่นใจของบอร์ด ${a.confidence}%</span></div>` : '';
+  return wideCard('chair-card', '⚖️', 'Defensible Brief — ข้อเสนอที่ปกป้องได้', 'BRIEF', a, conf)
     + `<div class="exec-bar">
          <button class="btn btn-primary btn-sm" onclick="openPdf('exec', this)">📑 บทสรุปสำหรับผู้บริหาร (.PDF)</button>
          <button class="btn btn-alt btn-sm" onclick="openXlsx(this)">📊 แบบจำลองการเงิน 3 Scenario (.XLSX)</button>
-         <span class="scope-note">PDF = ข้อสรุปรายความเชี่ยวชาญ + ทางเลือกที่บอร์ดแนะนำ · Excel = Forecast 24 เดือน แก้สมมติฐานแล้วคำนวณใหม่ทั้งไฟล์</span>
+         <span class="scope-note">PDF = ข้อเสนอ + ความมั่นใจ + เสียงค้าน + แหล่งอ้างอิง · Excel = Forecast 24 เดือน แก้สมมติฐานแล้วคำนวณใหม่ทั้งไฟล์</span>
        </div>`;
 }
 
 function stepBlock(s) {
   const label = (SESSION.step_labels || {})[s.key] || s.key;
   let body;
-  if (s.key === 'research') {
-    body = researchCard(s.results.analyst || { text:'(ไม่มีผลสืบค้น)', provider:'-', ok:false });
-  } else if (s.key === 'synthesis') {
+  if (s.key === 'frame') {
+    body = frameCard(s.results.framer || { text:'(ไม่มีกรอบ)', provider:'-', ok:false });
+  } else if (s.key === 'research') {
+    body = researchBlock(s);
+  } else if (s.key === 'redteam') {
+    body = `<div class="round-grid">${deptKeys().map(k => s.results[k]
+      ? opCard(k, s.results[k], 'verdict') : '').join('')}</div>`
+      + (s.results.redteam ? `<div style="margin-top:12px;">${redteamCard(s.results.redteam)}</div>` : '');
+  } else if (s.key === 'brief' || s.key === 'synthesis') {
     body = chairCard(s.results.chair || { text:'(ไม่มีบทสรุป)', provider:'-', ok:false });
   } else {
     body = `<div class="round-grid">${deptKeys().map(k => s.results[k]
@@ -1491,7 +1585,7 @@ function stepBlock(s) {
 
 function gateBlock() {
   const label = SESSION.next_label || SESSION.next_step;
-  const isLast = SESSION.next_step === 'synthesis';
+  const isLast = SESSION.next_step === 'brief';
   return `
     <div class="gate">
       <div class="gate-title">🛑 จุดตัดสินใจของ CEO</div>
@@ -1499,7 +1593,7 @@ function gateBlock() {
       <input id="directive" placeholder="สั่งบอร์ดเพิ่มเติมก่อนเข้ารอบนี้ เช่น 'เน้นความเสี่ยงด้านกระแสเงินสดเป็นหลัก' (เว้นว่างได้)">
       <div class="gate-acts">
         <button class="btn btn-primary btn-sm" onclick="advance()">▶ ดำเนินการต่อ — ${esc(label)}</button>
-        ${isLast ? '' : '<button class="btn btn-warn btn-sm" onclick="advance(\'synthesis\')">⏭ ข้ามไปบทสรุปประธานเลย</button>'}
+        ${isLast ? '' : '<button class="btn btn-warn btn-sm" onclick="advance(\'brief\')">⏭ ข้ามไป Defensible Brief เลย</button>'}
         <button class="btn btn-danger btn-sm" onclick="stopBoard()">⏹ จบการประชุมที่นี่</button>
       </div>
     </div>`;
@@ -1557,7 +1651,9 @@ function optionsBlock() {
 function renderSession(s, runningLabel) {
   SESSION = s;
   const badges = [
-    s.project ? `<span class="badge badge-blue">📁 ${esc(s.project)}</span>` : '',
+    s.use_docs === false
+      ? '<span class="badge badge-muted">📄 ไม่อ้างอิงเอกสาร — ถามทั่วไป</span>'
+      : (s.project ? `<span class="badge badge-blue">📁 ${esc(s.project)}</span>` : ''),
     s.web_research ? '<span class="badge badge-green">🌐 สืบเว็บ</span>' : '',
     s.parent_id ? `<span class="badge badge-muted">🔀 แตกกิ่งจาก #${s.parent_id} ที่ ${esc(s.branched_from||'')}</span>` : '',
   ].join(' ');
@@ -1711,6 +1807,30 @@ function pickOption(name) {
   inp.scrollIntoView({behavior:'smooth', block:'center'});
 }
 
+/* One real search, so "ไม่พบหลักฐาน" can be told apart from "ค้นไม่ได้". */
+async function testSearch(btn) {
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ กำลังทดสอบ…';
+  const note = document.getElementById('scope-note');
+  try {
+    const j = await (await fetch('/api/research/diagnose')).json();
+    if (j.ok) {
+      note.innerHTML = `✅ ค้นเว็บได้ปกติ — ${esc(j.label)} (engine: ${esc(j.engine||'-')}) เจอ ${j.found} แหล่ง` +
+        (j.keyed ? '' : ' · ยังใช้แบบไม่มี key อยู่ ถ้าโดนบล็อกบ่อยให้ใส่ TAVILY_API_KEY');
+      note.style.color = 'var(--green)';
+    } else {
+      note.innerHTML = `❌ ค้นเว็บไม่ได้ — ${esc(j.error || 'ไม่ทราบสาเหตุ')}` +
+        (j.keyed ? '' : ' · ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env แล้วรีสตาร์ท hub');
+      note.style.color = 'var(--red)';
+    }
+  } catch (e) {
+    note.textContent = 'ทดสอบไม่สำเร็จ: ' + e;
+    note.style.color = 'var(--red)';
+  }
+  SEARCH_TESTED = true;
+  btn.disabled = false; btn.innerHTML = old;
+}
+
 async function openPdf(step, btn) {
   if (!SESSION) return;
   const url = step === 'exec'
@@ -1844,6 +1964,14 @@ async function loadDecisions() {
             <button class="score-btn sb-neutral" onclick="score(${d.id},'neutral')">— เฉยๆ</button>
             <button class="score-btn sb-missed"  onclick="score(${d.id},'missed')">✗ พลาด</button>
           </div>`}
+      <div class="dec-acts">
+        <button class="step-act branch" onclick="rethink(${d.id})"
+          title="เปิดการประชุมใหม่จากโจทย์เดิม แล้วสั่งให้บอร์ดไปอีกทาง — ของเดิมยังอยู่ครบ">🔀 ถกใหม่อีกทาง</button>
+        <button class="step-act warn" onclick="forgetLearning(${d.id})"
+          title="ลบสิ่งที่บอร์ดเรียนรู้จากการประชุมนี้ ไม่ให้ถูกใช้อ้างอิงในครั้งถัดไป">🧠 ลบการเรียนรู้</button>
+        <button class="step-act danger" onclick="delDecision(${d.id})"
+          title="ลบบันทึกการตัดสินใจนี้ทิ้ง">🗑 ลบบันทึก</button>
+      </div>
     </div>`).join('') || `<div class="empty-state"><div class="empty-state-icon">⚖️</div><div class="empty-state-text">ยังไม่มี — ตัดสินใจจากหน้า Boardroom แล้วบันทึกไว้ที่นี่</div></div>`;
 }
 
@@ -1854,6 +1982,41 @@ async function score(id, verdict) {
     body: JSON.stringify({outcome, verdict})
   });
   loadDecisions();
+}
+
+/* Reopen the question itself, not just one stage of one meeting. */
+async function rethink(id) {
+  const direction = prompt('อยากให้บอร์ดไปทางไหนแทน? (เว้นว่างได้ — จะถกใหม่ตั้งแต่ต้น)') ;
+  if (direction === null) return;
+  const r = await fetch(`/api/decisions/${id}/rethink`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({direction})
+  });
+  if (!r.ok) { alert(await r.text()); return; }
+  const s = await r.json();
+  document.querySelector("#nav button[data-view='board']").click();
+  renderSession(s);
+  const box = document.getElementById('directive');
+  if (box && s.direction) box.value = s.direction;
+  document.querySelector('.main').scrollTo(0, 0);
+  loadState();
+}
+
+async function forgetLearning(id) {
+  if (!confirm('ลบสิ่งที่บอร์ดเรียนรู้จากการประชุมนี้?\n\nมติเดิมจะไม่ถูกนำไปตรวจหรืออ้างอิงในการประชุมครั้งถัดไปอีก บันทึกการตัดสินใจยังอยู่')) return;
+  const r = await fetch(`/api/decisions/${id}/forget`, {method:'POST'});
+  if (!r.ok) { alert(await r.text()); return; }
+  const j = await r.json();
+  alert(j.forgotten ? `ลบการเรียนรู้แล้ว ${j.forgotten} รายการ` : (j.reason || 'ไม่มีการเรียนรู้ที่ผูกกับการตัดสินใจนี้'));
+  loadState();
+}
+
+async function delDecision(id) {
+  if (!confirm('ลบบันทึกการตัดสินใจ #' + id + '?')) return;
+  const alsoForget = confirm('ลบสิ่งที่บอร์ดเรียนรู้จากการประชุมนี้ด้วยหรือไม่?\n\nOK = ลบด้วย · Cancel = เก็บการเรียนรู้ไว้');
+  await fetch(`/api/decisions/${id}?forget=${alsoForget}`, {method:'DELETE'});
+  loadDecisions();
+  loadState();
 }
 
 /* ---------- documents ---------- */
@@ -1893,7 +2056,19 @@ async function loadDocs() {
         <div class="doc-meta">#${d.id} · ${SRC_TH[d.source]||d.source} · ${(d.at||'').substring(0,16).replace('T',' ')}</div>
         ${d.text ? `<div class="doc-preview">${esc(d.text.substring(0,200))}${d.text.length>200?'…':''}</div>` : ''}
       </div>
+      <button class="step-act danger doc-del" onclick="delDoc(${d.id}, ${JSON.stringify(d.name).replace(/"/g,'&quot;')})"
+        title="ลบเอกสารนี้ออกจากคลัง — บอร์ดจะไม่ใช้อ้างอิงอีก">🗑</button>
     </div>`).join('') || `<div class="empty-state"><div class="empty-state-icon">📄</div><div class="empty-state-text">ยังไม่มี — อัพโหลด หรือส่งไฟล์เข้า LINE bot แล้วเอกสารจะขึ้นที่นี่</div></div>`;
+}
+
+async function delDoc(id, name) {
+  if (!confirm(`ลบเอกสาร "${name}" ออกจากคลัง?\n\nบอร์ดจะไม่ใช้เอกสารนี้อ้างอิงอีก และไฟล์ใน Google Drive จะถูกย้ายลงถังขยะ`)) return;
+  const r = await fetch('/api/docs/' + id, {method:'DELETE'});
+  if (!r.ok) { alert(await r.text()); return; }
+  const j = await r.json();
+  if ((j.errors || []).length) alert('ลบออกจากคลังแล้ว แต่:\n' + j.errors.join('\n'));
+  loadDocs();
+  loadState();
 }
 
 /* upload: click or drag-and-drop */

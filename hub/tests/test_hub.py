@@ -31,7 +31,9 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def _fake_chat(provider, system, user, cancel=None):
+def _fake_chat(provider, system, user, cancel=None, **kw):
+    # **kw absorbs per-call knobs like max_tokens so a fake never has to track
+    # llm.chat's signature to stay usable.
     return {"text": f"[{provider}] คำตอบทดสอบ", "provider": provider, "model": "m", "ok": True}
 
 
@@ -58,6 +60,31 @@ def _advance(client, sid, step=None, directive=None):
     return r.json()
 
 
+def _frame_json(seats=None):
+    return json.dumps({
+        "reframed": "ควรผูกสัญญาเช่าสาขาใหม่ 3 ปีในไตรมาสนี้หรือไม่",
+        "decision_type": "กลับตัวยาก — ผูกสัญญาเช่า 3 ปี",
+        "seats": list(seats if seats is not None else config.DEPTS),
+        "seat_reasons": {"cfo": "เป็นการผูกพันเงินสดระยะยาว"},
+        "excluded": {},
+        "what_would_change_the_answer": ["ยอดขายต่อสาขาจริงย้อนหลัง 6 เดือน"],
+        "success_criteria": ["สาขาใหม่คุ้มทุนภายใน 14 เดือน"],
+        "framing_risk": "",
+    }, ensure_ascii=False)
+
+
+def _reply(text, provider="anthropic"):
+    return {"text": text, "provider": provider, "model": "m", "ok": True}
+
+
+def _framed(client, seats=None, **kw):
+    """Open a session and run Stage 1, so the board is convened and the later
+    stages have a framing to argue inside."""
+    s = _start(client, **kw)
+    with patch("app.llm.chat", return_value=_reply(_frame_json(seats))):
+        return _advance(client, s["id"])
+
+
 # ── state ──
 
 def test_state_shape(client):
@@ -73,23 +100,31 @@ def test_state_shape(client):
 
 # ── stepwise board flow with decision gates ──
 
-def test_consult_stops_at_a_gate_before_every_round(client):
+def test_consult_stops_at_a_gate_before_every_stage(client):
     s = _start(client)
-    # creating a session runs nothing — the CEO owns the first move
-    assert s["steps"] == [] and s["next_step"] == "opinions" and s["status"] == "awaiting"
+    # creating a session runs nothing — the CEO owns the first move, and Frame
+    # is the first thing that happens, before anyone is even convened
+    assert s["steps"] == [] and s["next_step"] == "frame" and s["status"] == "awaiting"
+
+    with patch("app.llm.chat", return_value=_reply(_frame_json())) as m:
+        s = _advance(client, s["id"])
+    assert [x["key"] for x in s["steps"]] == ["frame"]
+    assert s["next_step"] == "positions" and s["status"] == "awaiting"
+    assert m.call_count == 1                      # one moderator, not a whole board
 
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         s = _advance(client, s["id"])
-    assert [x["key"] for x in s["steps"]] == ["opinions"]
-    assert s["status"] == "awaiting" and s["next_step"] == "cross_exam"
-    # one round only — the board waits for the CEO, one call per seat
-    assert m.call_count == len(config.DEPTS)
+    assert [x["key"] for x in s["steps"]] == ["frame", "positions"]
+    assert s["next_step"] == "debate"
+    assert m.call_count == len(config.DEPTS)      # one call per convened seat
 
     with patch("app.llm.chat", side_effect=_fake_chat):
-        s = _advance(client, s["id"])
-        s = _advance(client, s["id"])
-    assert [x["key"] for x in s["steps"]] == ["opinions", "cross_exam", "verdicts"]
-    assert s["next_step"] == "synthesis"
+        s = _advance(client, s["id"])             # debate
+        s = _advance(client, s["id"])             # red-team & converge
+    assert [x["key"] for x in s["steps"]] == ["frame", "positions", "debate", "redteam"]
+    assert s["next_step"] == "brief"
+    # the red team is an outside voice, on top of every seat's own self-audit
+    assert "redteam" in s["steps"][-1]["results"]
 
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])
@@ -98,46 +133,41 @@ def test_consult_stops_at_a_gate_before_every_round(client):
 
 
 def test_ceo_directive_is_injected_into_the_round(client):
-    s = _start(client)
-    with patch("app.llm.chat", side_effect=_fake_chat):
-        s = _advance(client, s["id"])
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         s = _advance(client, s["id"], directive="เน้นความเสี่ยงกระแสเงินสดเป็นหลัก")
     assert all("เน้นความเสี่ยงกระแสเงินสดเป็นหลัก" in c.args[2] for c in m.call_args_list)
     assert s["steps"][-1]["directive"] == "เน้นความเสี่ยงกระแสเงินสดเป็นหลัก"
 
 
-def test_ceo_can_skip_straight_to_the_chairman(client):
-    s = _start(client)
+def test_ceo_can_skip_straight_to_the_brief(client):
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
-        s = _advance(client, s["id"])
-        s = _advance(client, s["id"], step="synthesis")
-    assert [x["key"] for x in s["steps"]] == ["opinions", "synthesis"]
-    assert s["next_step"] is None and s["status"] == "done"  # synthesis is terminal
+        s = _advance(client, s["id"], step="brief")
+    assert [x["key"] for x in s["steps"]] == ["frame", "brief"]
+    assert s["next_step"] is None and s["status"] == "done"   # the brief is terminal
 
 
-def test_rerunning_a_finished_round_is_rejected(client):
-    s = _start(client)
-    with patch("app.llm.chat", side_effect=_fake_chat):
-        _advance(client, s["id"])
-    r = client.post(f"/api/consult/{s['id']}/advance", json={"step": "opinions"})
+def test_rerunning_a_finished_stage_is_rejected(client):
+    s = _framed(client)
+    r = client.post(f"/api/consult/{s['id']}/advance", json={"step": "frame"})
     assert r.status_code == 400 and "reset" in r.text
 
 
 # ── branch & reset (git-style history the board learns from) ──
 
 def test_reset_rewinds_and_feeds_the_rejected_path_back(client):
-    s = _start(client)
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
-        s = _advance(client, s["id"])
-        s = _advance(client, s["id"])
-    assert len(s["steps"]) == 2
+        s = _advance(client, s["id"])            # positions
+        s = _advance(client, s["id"])            # debate
+    assert len(s["steps"]) == 3
 
-    r = client.post(f"/api/consult/{s['id']}/reset", json={"step": "cross_exam"})
+    r = client.post(f"/api/consult/{s['id']}/reset", json={"step": "debate"})
     s = r.json()
-    assert [x["key"] for x in s["steps"]] == ["opinions"]
-    assert [h["key"] for h in s["history"]] == ["cross_exam"]
-    assert s["history"][0]["reason"] == "reset" and s["next_step"] == "cross_exam"
+    assert [x["key"] for x in s["steps"]] == ["frame", "positions"]
+    assert [h["key"] for h in s["history"]] == ["debate"]
+    assert s["history"][0]["reason"] == "reset" and s["next_step"] == "debate"
 
     # the discarded round is replayed so the board must find a different angle
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
@@ -146,24 +176,25 @@ def test_reset_rewinds_and_feeds_the_rejected_path_back(client):
 
 
 def test_branch_forks_an_alternate_timeline_keeping_the_original(client):
-    s = _start(client)
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])
         s = _advance(client, s["id"])
 
-    child = client.post(f"/api/consult/{s['id']}/branch", json={"step": "cross_exam"}).json()
+    child = client.post(f"/api/consult/{s['id']}/branch", json={"step": "debate"}).json()
     assert child["id"] != s["id"] and child["parent_id"] == s["id"]
-    assert child["branched_from"] == "cross_exam"
-    assert [x["key"] for x in child["steps"]] == ["opinions"]      # kept the shared prefix
-    assert child["history"][0]["reason"] == "branch"                # remembers the road not taken
+    assert child["branched_from"] == "debate"
+    assert [x["key"] for x in child["steps"]] == ["frame", "positions"]  # shared prefix
+    assert child["history"][0]["reason"] == "branch"          # remembers the road not taken
+    assert child["seats"] == s["seats"]                        # same board, different route
 
     original = client.get(f"/api/consults/{s['id']}").json()
-    assert [x["key"] for x in original["steps"]] == ["opinions", "cross_exam"]  # untouched
+    assert [x["key"] for x in original["steps"]] == ["frame", "positions", "debate"]
 
 
-def test_branch_on_a_round_that_never_ran_is_rejected(client):
+def test_branch_on_a_stage_that_never_ran_is_rejected(client):
     s = _start(client)
-    r = client.post(f"/api/consult/{s['id']}/branch", json={"step": "verdicts"})
+    r = client.post(f"/api/consult/{s['id']}/branch", json={"step": "redteam"})
     assert r.status_code == 400
     assert client.post(f"/api/consult/{s['id']}/branch", json={"step": "nope"}).status_code == 400
 
@@ -171,85 +202,148 @@ def test_branch_on_a_round_that_never_ran_is_rejected(client):
 # ── stop ──
 
 def test_stop_marks_the_session_and_abandons_pending_advisors(client):
-    s = _start(client)
+    s = _framed(client)
     sid = s["id"]
 
-    def chat_then_stop(provider, system, user, cancel=None):
+    def chat_then_stop(provider, system, user, cancel=None, **kw):
         client.post(f"/api/consult/{sid}/stop")   # CEO hits STOP mid-round
         return _fake_chat(provider, system, user)
 
     with patch("app.llm.chat", side_effect=chat_then_stop) as m:
         s = _advance(client, sid)
     assert s["status"] == "stopped"
-    # every advisor holds a live cancel probe, so a slow provider (Manus polls
-    # for minutes) bails out instead of waiting out its own deadline
+    # every seat holds a live cancel probe, so a slow provider (Manus polls for
+    # minutes) bails out instead of waiting out its own deadline
     probes = [c.kwargs["cancel"] for c in m.call_args_list]
     assert probes and all(callable(p) for p in probes)
     # partial results are kept so nothing the board already said is lost
-    assert s["steps"][0]["key"] == "opinions"
-    assert len(s["steps"][0]["results"]) == len(config.DEPTS)
+    assert s["steps"][-1]["key"] == "positions"
+    assert len(s["steps"][-1]["results"]) == len(config.DEPTS)
 
     # and the CEO can resume from where it stopped
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, sid)
-    assert s["status"] == "awaiting" and len(s["steps"]) == 2
+    assert s["status"] == "awaiting" and len(s["steps"]) == 3
 
 
 def test_stop_on_unknown_session_404s(client):
     assert client.post("/api/consult/999/stop").status_code == 404
 
 
-# ── web research (Round 0) ──
+# ── Stage 1: frame ──
 
-def test_research_round_screens_the_web_and_grounds_the_board(client):
-    s = _start(client, question="ควรลงทุนตู้กดอัตโนมัติไหม", web=True)
-    assert s["next_step"] == "research"
-
-    with patch("app.research.gather", return_value=FAKE_SOURCES) as g, \
-         patch("app.llm.chat", side_effect=_fake_chat):
+def test_frame_convenes_only_the_seats_the_question_needs(client):
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply(_frame_json(["cfo", "coo"]))):
         s = _advance(client, s["id"])
-    assert g.called
-    analyst = s["steps"][0]["results"]["analyst"]
-    assert analyst["ok"] and analyst["queries"]
-    assert [x["url"] for x in analyst["sources"]] == [x["url"] for x in FAKE_SOURCES]
+    framer = s["steps"][0]["results"]["framer"]
+    assert framer["ok"] and framer["seats"] == ["cfo", "coo"]
+    assert s["seats"] == ["cfo", "coo"] and s["convened"] == ["cfo", "coo"]
+    assert framer["reframed"].startswith("ควรผูกสัญญาเช่า")
 
-    # every advisor downstream receives the screened brief with its sources
+    # the uninvited seats never speak — calling everyone is noise, not rigour
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        s = _advance(client, s["id"])
+    assert set(s["steps"][-1]["results"]) == {"cfo", "coo"}
+    assert m.call_count == 2
+
+
+def test_a_one_voice_board_is_refused(client):
+    """A debate needs someone to disagree; one seat is a monologue."""
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply(_frame_json(["cfo"]))):
+        s = _advance(client, s["id"])
+    assert s["seats"] == list(config.DEPTS)
+
+
+def test_frame_failure_still_convenes_the_board(client):
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply("ขอโทษครับ ผมไม่เข้าใจ")):
+        s = _advance(client, s["id"])
+    framer = s["steps"][0]["results"]["framer"]
+    assert framer["ok"] is False and framer["seats"] == list(config.DEPTS)
+    assert s["next_step"] == "positions"          # the session is not blocked
+
+
+def test_the_framing_travels_into_every_later_stage(client):
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         _advance(client, s["id"])
     for c in m.call_args_list:
-        assert "ผลสืบค้นจากอินเทอร์เน็ตที่ผ่านการคัดกรองแล้ว" in c.args[2]
+        assert "กรอบการตัดสินใจที่ moderator ตั้งไว้" in c.args[2]
+        assert "ควรผูกสัญญาเช่าสาขาใหม่ 3 ปีในไตรมาสนี้หรือไม่" in c.args[2]
+
+
+# ── Stage 2: independent research, one desk per seat ──
+
+def test_every_seat_researches_independently(client):
+    s = _framed(client, question="ควรลงทุนตู้กดอัตโนมัติไหม", web=True)
+    assert s["next_step"] == "research"
+
+    with patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}) as g, \
+         patch("app.llm.chat", side_effect=_fake_chat):
+        s = _advance(client, s["id"])
+    research_step = s["steps"][-1]
+    assert research_step["key"] == "research"
+
+    # one desk per seat — shared research would hand every seat the same
+    # evidence, and with it the same blind spot
+    for dept in config.DEPTS:
+        desk = research_step["results"][dept]
+        assert desk["ok"] and desk["queries"]
+        assert [x["url"] for x in desk["sources"]] == [x["url"] for x in FAKE_SOURCES]
+    assert g.call_count == len(config.DEPTS)
+
+    # the merged index is the union, tagged with which seat found what
+    merged = research_step["results"]["analyst"]
+    assert {x["url"] for x in merged["sources"]} == {x["url"] for x in FAKE_SOURCES}
+    assert all(x["found_by"] in config.DEPTS for x in merged["sources"])
+
+    # downstream, a seat argues from the evidence IT found
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    for c in m.call_args_list:
+        assert "หลักฐานที่คุณค้นมาเอง" in c.args[2]
         assert "https://example.com/market" in c.args[2]
 
 
+def test_each_seat_writes_its_own_queries_on_its_own_model(client):
+    s = _framed(client, web=True)
+    reply = _reply("ขนาดตลาดตู้กดไทย\nvending machine market thailand\nกฎหมายตู้หยอดเหรียญ")
+    with patch("app.llm.chat", return_value=reply) as m, \
+         patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}) as g:
+        _advance(client, s["id"])
+    assert g.call_args.args[0] == ["ขนาดตลาดตู้กดไทย", "vending machine market thailand",
+                                   "กฎหมายตู้หยอดเหรียญ"]
+    # the query prompt is the seat's own, in its own lane, on its assigned agent
+    query_calls = [c for c in m.call_args_list if "ตั้งคำค้นสำหรับ search engine" in c.args[1]]
+    assert len(query_calls) == len(config.DEPTS)
+    assert {c.args[0] for c in query_calls} == {
+        config.DEFAULT_PROVIDERS.get(d, "mock") for d in config.DEPTS}
+
+
 def test_research_failure_degrades_to_documents_only(client):
-    s = _start(client, web=True)
-    with patch("app.research.gather", return_value=[]), \
+    s = _framed(client, web=True)
+    with patch("app.research.gather", return_value={"sources": [], "errors": []}), \
          patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])
-    analyst = s["steps"][0]["results"]["analyst"]
-    assert analyst["ok"] is False and analyst["sources"] == []
+    desks = s["steps"][-1]["results"]
+    assert all(desks[d]["ok"] is False and desks[d]["sources"] == [] for d in config.DEPTS)
+    assert desks["analyst"]["ok"] is False
 
     # the board still debates — a dead search backend cannot block the consult
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         s = _advance(client, s["id"])
-    assert s["steps"][-1]["key"] == "opinions"
-    assert all("ผลสืบค้นจากอินเทอร์เน็ต" not in c.args[2] for c in m.call_args_list)
+    assert s["steps"][-1]["key"] == "positions"
+    assert all("หลักฐานที่คุณค้นมาเอง" not in c.args[2] for c in m.call_args_list)
 
 
 def test_web_research_can_be_turned_off(client):
     s = _start(client, web=False)
-    assert s["next_step"] == "opinions"  # Round 0 is skipped entirely
-
-
-def test_search_queries_are_generated_from_the_question(client):
-    s = _start(client, web=True)
-    reply = {"text": "ขนาดตลาดตู้กดไทย\nvending machine market thailand\nกฎหมายตู้หยอดเหรียญ",
-             "provider": "gemini", "model": "m", "ok": True}
-    with patch("app.llm.chat", return_value=reply), \
-         patch("app.research.gather", return_value=FAKE_SOURCES) as g:
+    assert s["next_step"] == "frame"          # framing always happens
+    with patch("app.llm.chat", return_value=_reply(_frame_json())):
         s = _advance(client, s["id"])
-    assert g.call_args.args[0] == ["ขนาดตลาดตู้กดไทย", "vending machine market thailand",
-                                   "กฎหมายตู้หยอดเหรียญ"]
+    assert s["next_step"] == "positions"      # the research stage is skipped
 
 
 def test_research_backend_selection_follows_the_keys(client, monkeypatch):
@@ -263,8 +357,203 @@ def test_research_backend_selection_follows_the_keys(client, monkeypatch):
 
 def test_search_never_raises_when_the_backend_dies(client):
     from app import research
-    with patch("app.research._duckduckgo", side_effect=RuntimeError("boom")):
+    with patch("app.research._duckduckgo", side_effect=RuntimeError("boom")), \
+         patch("app.research._mojeek", side_effect=RuntimeError("boom")):
         assert research.search("อะไรก็ได้") == []
+
+
+# ── telling "the search was blocked" apart from "the web has nothing" ──
+
+def test_a_blocked_search_reports_why_instead_of_looking_empty(client):
+    """The bug this guards: a 403 and a genuinely empty index both arrived as
+    an empty list, so the board said "ไม่พบหลักฐาน" for a search that never ran."""
+    from app import research
+    blocked = httpx.HTTPStatusError(
+        "403", request=httpx.Request("GET", "https://duckduckgo.com"),
+        response=httpx.Response(403))
+    with patch("app.research._duckduckgo", side_effect=blocked), \
+         patch("app.research._mojeek", side_effect=blocked):
+        out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert out["results"] == [] and out["engine"] is None
+    assert "403" in out["error"] and "ถูกบล็อก" in out["error"]
+    assert "duckduckgo" in out["error"] and "mojeek" in out["error"]
+
+
+def test_an_engine_that_answers_with_a_bot_check_is_not_an_empty_index(client):
+    """HTTP 200 with nothing parseable is a bot wall, not a quiet internet."""
+    from app import research
+
+    class _Resp:
+        text = "<html><body>Please verify you are human</body></html>"
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.get", return_value=_Resp()), patch("httpx.post", return_value=_Resp()):
+        with pytest.raises(research.BlockedError):
+            research._duckduckgo("อะไรก็ได้", 5)
+
+
+def test_the_keyless_path_falls_through_to_a_second_engine(client):
+    """One engine's bot check must not take the board's whole evidence base."""
+    from app import research
+    hits = [{"title": "t", "url": "https://example.com/a", "snippet": "s"}]
+    with patch("app.research._duckduckgo", side_effect=research.BlockedError("bot check")), \
+         patch("app.research._mojeek", return_value=hits) as second:
+        out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert second.called
+    assert out["results"] == hits and out["engine"] == "mojeek" and out["error"] is None
+
+
+def test_a_keyed_backend_does_not_fall_through_to_the_keyless_engines(client, monkeypatch):
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
+    with patch("app.research._tavily", side_effect=RuntimeError("down")), \
+         patch("app.research._mojeek") as keyless:
+        out = research.search_detail("q")
+    assert not keyless.called and out["results"] == []
+    assert out["error"].startswith("tavily:")
+
+
+def test_serpapi_reads_organic_results_and_defaults_to_thai(client, monkeypatch):
+    """The engine=google endpoint returns organic_results with title/link/snippet.
+    Thai locale is the sensible default here; the CEO's business is in Thailand,
+    and a Thai query landing on the US SERP is the failure mode to prevent."""
+    from app import config, research
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "serpapi-test")
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "")   # SerpApi is now first
+    assert research.backend() == "serpapi"
+    payload = {"organic_results": [
+        {"title": "บาร์เอกมัย 2026", "link": "https://example.com/bars",
+         "snippet": "รวมบาร์เปิดใหม่ ราคาเฉลี่ย 450 บาท"}]}
+
+    class _Resp:
+        def json(self):
+            return payload
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.get", return_value=_Resp()) as get:
+        out = research._serpapi("บาร์ เอกมัย", 5)
+    params = get.call_args.kwargs["params"]
+    assert params["engine"] == "google" and params["hl"] == "th" and params["gl"] == "th"
+    assert params["api_key"] == "serpapi-test"
+    assert out[0]["url"] == "https://example.com/bars"
+    assert "450 บาท" in out[0]["snippet"]
+
+
+def test_serpapi_surfaces_plan_or_quota_errors_carried_in_200_ok(client, monkeypatch):
+    """SerpApi returns HTTP 200 with an "error" field when the plan is out — a
+    caller that only checks the status code silently treats it as empty results."""
+    from app import config, research
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "x")
+
+    class _Resp:
+        def json(self):
+            return {"error": "You have reached your monthly search limit"}
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.get", return_value=_Resp()):
+        with pytest.raises(RuntimeError, match="monthly search limit"):
+            research._serpapi("q", 5)
+
+
+def test_tavily_wins_over_serpapi_when_both_are_configured(client, monkeypatch):
+    """Tavily returns extracted page bodies with the results, so the analyst can
+    read the full content instead of re-fetching each URL. A key that ships more
+    per request should outrank a plain SERP scraper."""
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "t")
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "s")
+    assert research.backend() == "tavily"
+
+
+def test_tavily_authenticates_by_header_and_asks_for_page_bodies(client, monkeypatch):
+    """Tavily's documented auth is a Bearer header, and raw_content is opt-in —
+    without it every source came back empty and had to be re-fetched by hand."""
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "tvly-test")
+    payload = {"results": [{"title": "t", "url": "https://example.com/a",
+                            "content": "snippet", "raw_content": "หน้าเต็ม"}]}
+
+    class _Resp:
+        def json(self):
+            return payload
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.post", return_value=_Resp()) as post:
+        out = research._tavily("q", 3)
+    kwargs = post.call_args.kwargs
+    assert kwargs["headers"]["Authorization"] == "Bearer tvly-test"
+    assert kwargs["json"]["include_raw_content"] is True
+    assert "api_key" not in kwargs["json"]          # the key never rides in the body
+    assert out[0]["content"] == "หน้าเต็ม"           # body arrives without a second fetch
+
+
+def test_gather_hands_the_reason_back_to_the_caller(client):
+    from app import research
+    with patch("app.research.search_detail",
+               return_value={"results": [], "error": "ถูกบล็อก (HTTP 403)", "engine": None}):
+        out = research.gather(["คำค้น ก", "คำค้น ข"])
+    assert out["sources"] == [] and len(out["errors"]) == 2
+    assert all("ถูกบล็อก" in e for e in out["errors"])
+
+
+def test_a_seat_that_was_blocked_says_so_instead_of_no_evidence(client):
+    s = _framed(client, web=True)
+    with patch("app.research.gather",
+               return_value={"sources": [], "errors": ["«q» → ถูกบล็อก (HTTP 403)"]}), \
+         patch("app.llm.chat", side_effect=_fake_chat):
+        s = _advance(client, s["id"])
+    desk = s["steps"][-1]["results"]["cfo"]
+    assert desk["blocked"] is True
+    assert "ยังไม่ได้อ่านอินเทอร์เน็ตเลย" in desk["text"]
+    assert "TAVILY_API_KEY" in desk["text"]          # tells the CEO the actual fix
+    # the merged index warns that the board's conclusion rests on thin evidence
+    index = s["steps"][-1]["results"]["analyst"]
+    assert index["blocked_seats"] and "ค้นเว็บไม่ได้เลย" in index["text"]
+    # and the UI must still render that index with zero sources — hiding it when
+    # nothing was found buries the warning in the one case it exists for
+    html = client.get("/").text
+    assert "const blockedSeats = (merged.blocked_seats || []).length;" in html
+    assert "const index = (found || blockedSeats)" in html
+
+
+def test_a_search_that_ran_but_found_nothing_is_not_blamed_on_blocking(client):
+    s = _framed(client, web=True)
+    with patch("app.research.gather", return_value={"sources": [], "errors": []}), \
+         patch("app.llm.chat", side_effect=_fake_chat):
+        s = _advance(client, s["id"])
+    desk = s["steps"][-1]["results"]["cfo"]
+    assert desk["blocked"] is False
+    assert "ค้นได้แต่ไม่พบหลักฐาน" in desk["text"]
+    assert "TAVILY_API_KEY" not in desk["text"]
+
+
+def test_diagnose_reports_a_working_search(client):
+    hits = [{"title": "ตลาดร้านอาหาร", "url": "https://example.com/x", "snippet": "s"}]
+    with patch("app.research._duckduckgo", return_value=hits):
+        j = client.get("/api/research/diagnose").json()
+    assert j["ok"] is True and j["found"] == 1 and j["engine"] == "duckduckgo"
+    assert j["error"] is None and j["sample"][0]["url"] == "https://example.com/x"
+
+
+def test_diagnose_reports_a_blocked_search(client):
+    with patch("app.research._duckduckgo", side_effect=research_blocked()), \
+         patch("app.research._mojeek", side_effect=research_blocked()):
+        j = client.get("/api/research/diagnose").json()
+    assert j["ok"] is False and j["found"] == 0
+    assert "ถูกบล็อก" in j["error"] and j["keyed"] is False
+
+
+def research_blocked():
+    return httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"),
+                                 response=httpx.Response(403))
 
 
 DDG_LITE = ('<table><tr><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg='
@@ -339,11 +628,10 @@ OPTIONS_JSON = json.dumps({
 
 
 def _finished_consult(client, web=False):
-    s = _start(client, question="ควรขยายสาขาไหม", web=web)
-    with patch("app.llm.chat", side_effect=_fake_chat):
-        for _ in range(4 if not web else 5):
-            if s["next_step"] is None:
-                break
+    s = _framed(client, question="ควรขยายสาขาไหม", web=web)
+    with patch("app.llm.chat", side_effect=_fake_chat), \
+         patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}):
+        while s["next_step"] is not None:
             s = _advance(client, s["id"])
     return s
 
@@ -362,7 +650,7 @@ def test_step_pdf_carries_the_methodology_appendix(client):
     method = {"text": METHOD_JSON, "provider": "anthropic", "model": "m", "ok": True}
     with patch("app.llm.chat", return_value=method), \
          patch("app.llm.provider_ready", return_value=True):
-        r = client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        r = client.get(f"/api/consult/{s['id']}/report/positions.pdf")
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
     assert r.content[:4] == b"%PDF"
@@ -383,9 +671,10 @@ def test_thai_text_layer_is_clean(client):
     method = {"text": METHOD_JSON, "provider": "anthropic", "model": "m", "ok": True}
     with patch("app.llm.chat", return_value=method), \
          patch("app.llm.provider_ready", return_value=True):
-        r = client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        r = client.get(f"/api/consult/{s['id']}/report/positions.pdf")
     text = _pdf_text(r.content)
-    for word in ("ที่ปรึกษา", "เชี่ยวชาญ", "ที่มา", "คำตอบเต็มของรอบนี้"):
+    # ที่ = ◌ี + ◌่ · นี้ = ◌ี + ◌้ · คำ = the SARA AM that needs pre-decomposing
+    for word in ("ที่ปรึกษา", "ที่มา", "คำตอบเต็มของรอบนี้", "หลักการและตรรกะที่ใช้ในรอบนี้"):
         assert word in text, f"lost in the text layer: {word}"
     # no substitution/control bytes leaking from unmapped glyphs
     assert not [c for c in text if ord(c) < 32 and c not in "\n\r\t"]
@@ -396,11 +685,11 @@ def test_methodology_is_cached_so_a_second_pdf_is_free(client):
     method = {"text": METHOD_JSON, "provider": "anthropic", "model": "m", "ok": True}
     with patch("app.llm.chat", return_value=method) as m, \
          patch("app.llm.provider_ready", return_value=True):
-        client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        client.get(f"/api/consult/{s['id']}/report/positions.pdf")
         assert m.call_count == 1
-        client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        client.get(f"/api/consult/{s['id']}/report/positions.pdf")
         assert m.call_count == 1                       # served from the cache
-        client.get(f"/api/consult/{s['id']}/report/opinions.pdf?refresh=true")
+        client.get(f"/api/consult/{s['id']}/report/positions.pdf?refresh=true")
         assert m.call_count == 2                       # explicit re-audit
 
 
@@ -409,7 +698,7 @@ def test_pdf_still_renders_when_the_audit_pass_fails(client):
     s = _finished_consult(client)
     junk = {"text": "ขอโทษครับ ผมไม่เข้าใจ", "provider": "mock", "model": "m", "ok": True}
     with patch("app.llm.chat", return_value=junk):
-        r = client.get(f"/api/consult/{s['id']}/report/opinions.pdf")
+        r = client.get(f"/api/consult/{s['id']}/report/positions.pdf")
     assert r.status_code == 200 and r.content[:4] == b"%PDF"
     text = _pdf_text(r.content)
     assert "ถอดวิธีคิดอัตโนมัติไม่สำเร็จ" in text
@@ -449,19 +738,17 @@ def test_options_endpoint_feeds_the_one_click_choices(client):
     assert client.get(f"/api/consults/{s['id']}").json()["options"]["recommended"] == "นำร่อง 4 จุด"
 
 
-def test_executive_summary_before_round_4_is_rejected(client):
-    s = _start(client)
-    with patch("app.llm.chat", side_effect=_fake_chat):
-        _advance(client, s["id"])
+def test_executive_summary_before_the_brief_is_rejected(client):
+    s = _framed(client)
     r = client.get(f"/api/consult/{s['id']}/executive-summary.pdf")
-    assert r.status_code == 400 and "Round 4" in r.text
+    assert r.status_code == 400 and "Stage 6" in r.text
 
 
 def test_report_bad_inputs(client):
     s = _finished_consult(client)
     assert client.get(f"/api/consult/{s['id']}/report/nope.pdf").status_code == 400
     assert client.get(f"/api/consult/{s['id']}/report/research.pdf").status_code == 400  # never ran
-    assert client.get("/api/consult/999/report/opinions.pdf").status_code == 404
+    assert client.get("/api/consult/999/report/positions.pdf").status_code == 404
     assert client.get("/api/consult/999/executive-summary.pdf").status_code == 404
     assert client.get("/api/consult/999/options").status_code == 404
 
@@ -492,42 +779,414 @@ def test_json_extraction_fails_closed(client, raw):
     assert report._parse_json(raw) is None
 
 
-# ── guardrails / prompt integrity ──
+# ── Stage 5: red team, confidence ──
 
-def test_guardrails_in_prompts(client):
-    s = _start(client)
-    with patch("app.llm.chat", side_effect=_fake_chat) as m:
-        _advance(client, s["id"])
-    opinion_systems = [c.args[1] for c in m.call_args_list if "กฎเหล็ก" in c.args[1]]
-    assert len(opinion_systems) == len(config.DEPTS)
-    joined = "\n".join(opinion_systems)
-    assert "ห้ามออกความเห็นเรื่องสภาพคล่อง" in joined      # CMO guardrail
-    assert "ห้ามออกความเห็นเรื่องกลยุทธ์การตลาด" in joined  # CFO guardrail
-    for sys_prompt in opinion_systems:
-        for part in ("มุมมอง/โอกาส", "ความเสี่ยงที่ซ่อนอยู่", "คำแนะนำขั้นเด็ดขาด"):
-            assert part in sys_prompt
-
-
-def test_cross_exam_carries_the_other_opinions(client):
-    s = _start(client)
+def test_red_team_attacks_the_framing_and_every_seat_scores_itself(client):
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
+        s = _advance(client, s["id"])            # positions
+        s = _advance(client, s["id"])            # debate
+
+    def scored(provider, system, user, cancel=None, **kw):
+        return _reply(f"จุดยืนหลังถกเถียง: คงเดิม\nความมั่นใจ: 62%", provider)
+
+    with patch("app.llm.chat", side_effect=scored) as m:
         s = _advance(client, s["id"])
-    with patch("app.llm.chat", side_effect=_fake_chat) as m:
-        _advance(client, s["id"])
-    assert all("ความเห็นของที่ปรึกษาคนอื่น" in c.args[2] for c in m.call_args_list)
+    results = s["steps"][-1]["results"]
+
+    # the red team is briefed on what the debate cannot see: who was NOT invited
+    # and how many genuinely different models are behind the seats
+    red = [c for c in m.call_args_list if "Red Team อิสระ" in c.args[1]]
+    assert len(red) == 1
+    assert "ที่นั่งที่ไม่ถูกเรียก" in red[0].args[2]
+    assert "จำนวน provider ที่ต่างกันจริง" in red[0].args[2]
+    assert results["redteam"]["ok"] and "diversity" in results["redteam"]
+
+    # every seat scores its own confidence, and the board average follows
+    assert all(results[d]["confidence"] == 62 for d in config.DEPTS)
+    assert s["confidence"]["average"] == 62
+    assert s["confidence"]["lowest"] in config.DEPTS
 
 
-def test_chairman_reads_the_whole_debate(client):
-    s = _start(client)
+@pytest.mark.parametrize(("text", "expected"), [
+    ("ความมั่นใจ: 70%", 70),
+    ("ความมั่นใจ 0%", 0),
+    ("ความมั่นใจ: 100", 100),
+    ("ความมั่นใจ: 120%", None),      # out of range, not a score
+    ("มั่นใจมาก", None),
+    ("", None),
+])
+def test_confidence_is_read_from_the_seat_reply(client, text, expected):
+    from app import depts
+    assert depts.parse_confidence(text) == expected
+
+
+def test_the_brief_carries_confidence_into_the_pdf(client):
+    s = _framed(client)
+
+    def scored(provider, system, user, cancel=None, **kw):
+        if "Defensible Brief" in system:
+            return _reply("ข้อเสนอ: ทำแบบมีเงื่อนไข\nความมั่นใจ: 55%", provider)
+        return _reply("จุดยืนหลังถกเถียง: คงเดิม\nความมั่นใจ: 55%", provider)
+
+    with patch("app.llm.chat", side_effect=scored):
+        while s["next_step"] is not None:
+            s = _advance(client, s["id"])
+    assert s["steps"][-1]["results"]["chair"]["confidence"] == 55
+
+    with patch("app.llm.chat", side_effect=scored):
+        r = client.get(f"/api/consult/{s['id']}/executive-summary.pdf")
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    assert "ความมั่นใจของบอร์ด: 55%" in text
+    assert "ความมั่นใจที่แต่ละที่นั่งให้ตัวเอง" in text
+    assert "Red Team" in text                     # dissent and its cause stay on the record
+
+
+# ── echo-chamber control: distinct models behind the seats ──
+
+def test_seats_run_on_different_vendors_by_default(client):
+    """Personas on one model is one brain in five hats — the seats must differ."""
+    assigned = set(config.DEFAULT_PROVIDERS.values())
+    assert len(assigned) == len(config.DEFAULT_PROVIDERS), "two seats share an agent"
+    assert len(assigned) >= 4
+
+
+def test_a_single_vendor_board_is_called_out(client, monkeypatch):
+    from app import depts
+    monkeypatch.setattr("app.llm.provider_ready", lambda p: p == "zai")
+    for dept in config.DEPTS:
+        client.put(f"/api/dept/{dept}/provider", json={"provider": "zai"})
+    div = depts.model_diversity()
+    assert div["distinct"] == 1 and "provider เดียวกัน" in div["warning"]
+    assert client.get("/api/state").json()["diversity"]["distinct"] == 1
+
+
+def test_no_live_provider_is_called_out(client, monkeypatch):
+    from app import depts
+    monkeypatch.setattr("app.llm.provider_ready", lambda p: False)
+    div = depts.model_diversity()
+    assert div["live"] == 0 and "mock" in div["warning"]
+
+
+# ── persistent memory across sessions ──
+
+MEMORY_JSON = json.dumps({
+    "conclusion": "ชะลอการขยายสาขาจนกว่า runway จะเกิน 12 เดือน",
+    "stance": "ทำแบบมีเงื่อนไข", "confidence": 70,
+    "constraints": ["ห้ามผูกสัญญาเช่าเกิน 1 ปีจนกว่าจะพิสูจน์ยอดต่อสาขา"],
+    "open_questions": ["ยอดต่อสาขาที่แท้จริง"],
+    "tripwires": ["runway ต่ำกว่า 6 เดือน"],
+}, ensure_ascii=False)
+
+
+def test_a_finished_session_is_filed_to_memory(client):
+    s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
         for _ in range(3):
             s = _advance(client, s["id"])
+    with patch("app.llm.chat", return_value=_reply(MEMORY_JSON)):
+        s = _advance(client, s["id"])             # brief -> distil -> file
+
+    saved = client.get("/api/memory").json()["memory"]
+    assert len(saved) == 1
+    assert saved[0]["conclusion"].startswith("ชะลอการขยายสาขา")
+    assert saved[0]["consult_id"] == s["id"] and saved[0]["confidence"] == 70
+    assert client.get("/api/state").json()["memory_count"] == 1
+
+
+def test_a_failed_distil_does_not_break_the_brief(client):
+    s = _framed(client)
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        while s["next_step"] is not None:
+            s = _advance(client, s["id"])
+    assert s["status"] == "done"                  # brief still landed
+    assert client.get("/api/memory").json()["memory"] == []
+
+
+def test_frame_flags_a_question_that_cuts_against_a_past_ruling(client):
+    from app import store
+    store.add_memory({"consult_id": 1, "question": "ควรขยายสาขาไหม",
+                      "project": None, "conclusion": "ชะลอการขยาย",
+                      "stance": "ไม่ทำ", "confidence": 80,
+                      "constraints": ["ห้ามผูกสัญญาเกิน 1 ปี"],
+                      "open_questions": [], "tripwires": []})
+    conflict = json.dumps({
+        "conflicts": [{"memory_id": 1, "past": "เคยสรุปว่าให้ชะลอการขยาย",
+                       "tension": "คำถามนี้กลับมาขยายอีกครั้งโดยยังไม่มีหลักฐานใหม่",
+                       "severity": "สูง"}],
+        "carry_forward": ["ห้ามผูกสัญญาเกิน 1 ปี"],
+    }, ensure_ascii=False)
+
+    def reply(provider, system, user, cancel=None, **kw):
+        if "decision consistency auditor" in system:
+            assert "ควรขยายสาขาไหม" in user      # the archive is what it audits against
+            return _reply(conflict, provider)
+        return _reply(_frame_json(), provider)
+
+    s = _start(client)
+    with patch("app.llm.chat", side_effect=reply):
+        s = _advance(client, s["id"])
+    framer = s["steps"][0]["results"]["framer"]
+    assert framer["memory_checked"] == 1
+    assert framer["conflicts"][0]["memory_id"] == 1
+    assert framer["carry_forward"] == ["ห้ามผูกสัญญาเกิน 1 ปี"]
+
+    # and the constraint the board already committed to reaches the seats
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    assert all("ห้ามผูกสัญญาเกิน 1 ปี" in c.args[2] for c in m.call_args_list)
+
+
+def test_a_hallucinated_memory_reference_is_dropped(client):
+    from app import memory, store
+    store.add_memory({"consult_id": 1, "question": "q", "project": None,
+                      "conclusion": "c", "stance": "ทำ", "confidence": 50,
+                      "constraints": [], "open_questions": [], "tripwires": []})
+    bogus = json.dumps({"conflicts": [{"memory_id": 99, "past": "x", "tension": "y"}],
+                        "carry_forward": []}, ensure_ascii=False)
+    with patch("app.llm.chat", return_value=_reply(bogus)):
+        out = memory.conflicts("คำถามใหม่", None, "anthropic")
+    assert out["conflicts"] == [] and out["checked"] == 1
+
+
+def test_memory_is_scoped_per_project_and_can_be_forgotten(client):
+    from app import store
+    a = store.add_memory({"question": "q1", "project": "YourFin", "conclusion": "c1"})
+    store.add_memory({"question": "q2", "project": "FlowerVending", "conclusion": "c2"})
+    assert [m["project"] for m in store.get_memory("YourFin")] == ["YourFin"]
+    assert len(client.get("/api/memory").json()["memory"]) == 2
+    assert len(client.get("/api/memory?project=YourFin").json()["memory"]) == 1
+    assert client.delete(f"/api/memory/{a['id']}").status_code == 200
+    assert client.delete(f"/api/memory/{a['id']}").status_code == 404
+
+
+# ── asking a general question, with the business library left out ──
+
+def test_a_general_question_leaves_the_document_library_out(client):
+    client.post("/api/line/webhook", json={"events": [{"type": "message",
+        "message": {"type": "text", "text": "ธุรกิจของฉันคือตู้กดดอกไม้ที่เอกมัย"}}]})
+
+    r = client.post("/api/consult", json={"question": "SaaS pricing ควรคิดยังไง",
+                                          "project": "__none__", "web_research": False})
+    s = r.json()
+    assert s["use_docs"] is False and s["project"] is None
+
+    with patch("app.llm.chat", return_value=_reply(_frame_json())) as m:
+        s = _advance(client, s["id"])
+    assert all("ตู้กดดอกไม้" not in c.args[2] for c in m.call_args_list)
+
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    for c in m.call_args_list:
+        assert "คลังเอกสารธุรกิจของ CEO" not in c.args[2]
+        assert "ตู้กดดอกไม้" not in c.args[2]
+
+
+def test_the_library_is_still_used_when_no_project_is_picked(client):
+    """Empty project means "every project", which is not the same as "none"."""
+    client.post("/api/line/webhook", json={"events": [{"type": "message",
+        "message": {"type": "text", "text": "ธุรกิจของฉันคือตู้กดดอกไม้ที่เอกมัย"}}]})
+    s = _framed(client, question="ควรขยายไหม")
+    assert s["use_docs"] is True
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    assert all("ตู้กดดอกไม้" in c.args[2] for c in m.call_args_list)
+
+
+def test_a_doc_free_session_keeps_that_choice_when_branched(client):
+    r = client.post("/api/consult", json={"question": "q", "project": "__none__",
+                                          "web_research": False})
+    s = r.json()
+    with patch("app.llm.chat", return_value=_reply(_frame_json())):
+        s = _advance(client, s["id"])
+    child = client.post(f"/api/consult/{s['id']}/branch", json={"step": "frame"}).json()
+    assert child["use_docs"] is False
+
+
+# ── decisions: reopen the question, or erase what it taught the board ──
+
+def _decided(client):
+    """A finished consult, its memory filed, and a decision recorded against it."""
+    s = _framed(client, question="ควรขยายสาขาไหม")
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        for _ in range(3):
+            s = _advance(client, s["id"])
+    with patch("app.llm.chat", return_value=_reply(MEMORY_JSON)):
+        s = _advance(client, s["id"])
+    d = client.post("/api/decisions", json={"consult_id": s["id"],
+                                            "question": s["question"],
+                                            "decision": "ขยาย 3 สาขา"}).json()
+    return s, d
+
+
+def test_rethink_reopens_the_question_without_touching_the_original(client):
+    s, d = _decided(client)
+    r = client.post(f"/api/decisions/{d['id']}/rethink",
+                    json={"direction": "คราวนี้ให้มองมุมชะลอการลงทุน"})
+    assert r.status_code == 200
+    child = r.json()
+    assert child["id"] != s["id"] and child["parent_id"] == s["id"]
+    assert child["branched_from"] == "decision"
+    assert child["question"] == s["question"] and child["steps"] == []
+    assert child["next_step"] == "frame"          # a fresh framing, not a resumed stage
+    assert child["direction"] == "คราวนี้ให้มองมุมชะลอการลงทุน"
+
+    original = client.get(f"/api/consults/{s['id']}").json()
+    assert original["status"] == "done" and len(original["steps"]) == 5
+
+
+def test_rethink_inherits_the_scope_of_the_consult_it_came_from(client):
+    r = client.post("/api/consult", json={"question": "q", "project": "__none__",
+                                          "web_research": False})
+    s = r.json()
+    with patch("app.llm.chat", return_value=_reply(_frame_json())):
+        s = _advance(client, s["id"])
+    d = client.post("/api/decisions", json={"consult_id": s["id"], "question": "q",
+                                            "decision": "ลุย"}).json()
+    child = client.post(f"/api/decisions/{d['id']}/rethink", json={}).json()
+    assert child["use_docs"] is False and child["web_research"] is False
+
+
+def test_forgetting_a_decision_stops_it_steering_later_sessions(client):
+    s, d = _decided(client)
+    assert len(client.get("/api/memory").json()["memory"]) == 1
+
+    out = client.post(f"/api/decisions/{d['id']}/forget").json()
+    assert out["forgotten"] == 1 and out["consult_id"] == s["id"]
+    assert client.get("/api/memory").json()["memory"] == []
+    # the decision itself survives — only the board's learning was erased
+    assert len(client.get("/api/decisions").json()["decisions"]) == 1
+
+    # and the next session is no longer audited against it
+    with patch("app.llm.chat", return_value=_reply(_frame_json())) as m:
+        s2 = _start(client, question="ควรขยายอีกไหม")
+        _advance(client, s2["id"])
+    assert not [c for c in m.call_args_list if "decision consistency auditor" in c.args[1]]
+
+
+def test_a_decision_with_no_consult_has_nothing_to_forget(client):
+    d = client.post("/api/decisions", json={"question": "โจทย์", "decision": "ลุย"}).json()
+    out = client.post(f"/api/decisions/{d['id']}/forget").json()
+    assert out["forgotten"] == 0 and out["reason"]
+
+
+def test_deleting_a_decision_can_take_its_learning_with_it(client):
+    s, d = _decided(client)
+    out = client.delete(f"/api/decisions/{d['id']}?forget=true").json()
+    assert out["deleted"] == d["id"] and out["forgotten"] == 1
+    assert client.get("/api/decisions").json()["decisions"] == []
+    assert client.get("/api/memory").json()["memory"] == []
+
+
+def test_deleting_a_decision_can_keep_its_learning(client):
+    s, d = _decided(client)
+    assert client.delete(f"/api/decisions/{d['id']}").json()["forgotten"] == 0
+    assert len(client.get("/api/memory").json()["memory"]) == 1
+
+
+def test_decision_actions_404_on_unknown_ids(client):
+    assert client.post("/api/decisions/999/rethink", json={}).status_code == 404
+    assert client.post("/api/decisions/999/forget").status_code == 404
+    assert client.delete("/api/decisions/999").status_code == 404
+
+
+# ── documents: removing what went stale ──
+
+def test_deleting_a_document_removes_it_from_the_board_and_from_disk(client):
+    import app.docs as docs_mod
+    client.post("/api/docs/projects", json={"name": "YourFin"})
+    up = client.post("/api/docs/upload",
+                     files={"file": ("old-rent.txt", "ค่าเช่าเดิม 85,000".encode(), "text/plain")},
+                     data={"project": "YourFin"}).json()
+    path = docs_mod.LOCAL_DIR / "YourFin" / "old-rent.txt"
+    assert path.exists()
+    assert "ค่าเช่าเดิม" in docs_mod.knowledge_context()
+
+    out = client.delete(f"/api/docs/{up['id']}").json()
+    assert out["deleted"] == up["id"] and out["local"] is True and out["errors"] == []
+    assert not path.exists()
+    assert client.get("/api/docs").json()["documents"] == []
+    # and the board stops quoting it on the next consult
+    assert "ค่าเช่าเดิม" not in docs_mod.knowledge_context()
+
+
+def test_deleting_a_document_survives_a_missing_file(client):
+    """The metadata entry must go even when the file is already gone, or the
+    library keeps listing a document nobody can open."""
+    import app.docs as docs_mod
+    up = client.post("/api/docs/upload",
+                     files={"file": ("gone.txt", b"x", "text/plain")}).json()
+    (docs_mod.LOCAL_DIR / "gone.txt").unlink()
+    out = client.delete(f"/api/docs/{up['id']}").json()
+    assert out["deleted"] == up["id"] and out["local"] is False
+    assert client.get("/api/docs").json()["documents"] == []
+
+
+def test_deleting_an_unknown_document_404s(client):
+    assert client.delete("/api/docs/999").status_code == 404
+
+
+# ── archived sessions from the pre-Crucible pipeline ──
+
+def test_old_sessions_stay_readable_and_are_never_resumed(client):
+    from app import store
+    s = store.create_session("โจทย์เก่า")
+    store.append_step(s["id"], "opinions", {"cfo": {"text": "x", "provider": "m", "ok": True}})
+    store.append_step(s["id"], "synthesis", {"chair": {"text": "y", "provider": "m", "ok": True}})
+
+    view = client.get(f"/api/consults/{s['id']}").json()
+    assert view["legacy"] is True and view["next_step"] is None
+    assert view["step_labels"]["opinions"].endswith("(รูปแบบเดิม)")
+    # and its executive summary still exports, off the old key
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        assert client.get(f"/api/consult/{s['id']}/executive-summary.pdf").status_code == 200
+
+
+# ── guardrails / prompt integrity ──
+
+def test_guardrails_in_prompts(client):
+    s = _framed(client)
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    position_systems = [c.args[1] for c in m.call_args_list if "กฎเหล็ก" in c.args[1]]
+    assert len(position_systems) == len(config.DEPTS)
+    joined = "\n".join(position_systems)
+    assert "ห้ามออกความเห็นเรื่องสภาพคล่อง" in joined      # CMO guardrail
+    assert "ห้ามออกความเห็นเรื่องกลยุทธ์การตลาด" in joined  # CFO guardrail
+    for sys_prompt in position_systems:
+        for part in ("จุดยืน", "หลักฐานที่หนุนจุดยืนนี้", "สิ่งที่จะทำให้ผมเปลี่ยนใจ"):
+            assert part in sys_prompt
+
+
+def test_the_debate_attacks_evidence_not_opinions(client):
+    s = _framed(client, web=True)
+    with patch("app.llm.chat", side_effect=_fake_chat), \
+         patch("app.research.gather", return_value={"sources": FAKE_SOURCES, "errors": []}):
+        s = _advance(client, s["id"])            # research
+        s = _advance(client, s["id"])            # positions
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])                # debate
+    for c in m.call_args_list:
+        assert "จงโจมตี **หลักฐาน** ของเขา" in c.args[1]
+        assert "จุดยืนของที่ปรึกษาคนอื่น" in c.args[2]
+        # a seat can only attack evidence it can see, so the others' sources travel with it
+        assert "หลักฐานที่คนอื่นใช้" in c.args[2]
+
+
+def test_the_brief_reads_the_whole_session(client):
+    s = _framed(client)
+    with patch("app.llm.chat", side_effect=_fake_chat):
+        for _ in range(3):                       # positions, debate, redteam
+            s = _advance(client, s["id"])
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         s = _advance(client, s["id"])
-    assert m.call_count == 1                       # one chairman, not four advisors
-    system, user = m.call_args.args[1], m.call_args.args[2]
-    assert "ประธานบอร์ด" in system and "มติบอร์ด" in system
-    assert "Round 1" in user and "Round 3" in user
+    # one chair writing the brief, plus one pass that files it to memory
+    brief_calls = [c for c in m.call_args_list if "Defensible Brief" in c.args[1]]
+    assert len(brief_calls) == 1
+    system, user = brief_calls[0].args[1], brief_calls[0].args[2]
+    assert "ห้ามกลบเสียงค้าน" in system and "ความมั่นใจ" in system
+    assert "Stage 1" in user and "Stage 5" in user
 
 
 # ── decisions ──
@@ -586,7 +1245,9 @@ def test_index_serves_advisory_ui(client):
                    "loadDocs", "syncDrive", "step_labels",
                    # new core-flow controls
                    "ask-project", "uploadFiles", "stopBoard", "resetTo", "branchAt",
-                   "researchCard", "chairCard", "ask-web", "gateBlock", "dot"):
+                   "seatResearchCard", "chairCard", "ask-web", "gateBlock", "dot",
+                   # Crucible stages
+                   "frameCard", "redteamCard", "researchBlock", "convened"):
         assert marker in html, marker
     for stale in ("view-cmo", "runTask", "LLM Learning"):
         assert stale not in html, f"stale automation marker: {stale}"
@@ -637,7 +1298,7 @@ def test_empty_upload_is_rejected(client):
 def test_docs_knowledge_feeds_consult(client):
     client.post("/api/line/webhook", json={"events": [{"type": "message",
         "message": {"type": "text", "text": "ธุรกิจของฉันคือตู้กดดอกไม้ที่เอกมัย"}}]})
-    s = _start(client, question="ควรขยายไหม")
+    s = _framed(client, question="ควรขยายไหม")
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         _advance(client, s["id"])
     users = [c.args[2] for c in m.call_args_list]
@@ -1076,7 +1737,8 @@ def test_deliverable_cites_the_web_sources_it_was_given(client):
     """Claims must trace to a real URL, so the source table has to be printed."""
     s = _start(client, question="ควรขยายสาขาไหม", web=True)
     with patch("app.llm.chat", side_effect=_fake_chat), \
-         patch("app.research.search", return_value=FAKE_SOURCES), \
+         patch("app.research.search_detail",
+               return_value={"results": FAKE_SOURCES, "error": None, "engine": "test"}), \
          patch("app.research.fetch_text", return_value="เนื้อหาเต็มของหน้า"):
         for _ in range(5):
             if s["next_step"] is None:
