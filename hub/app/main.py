@@ -89,6 +89,7 @@ def state() -> dict:
     return {
         "depts": [
             {"key": k, **d, "provider": providers.get(k, "mock"),
+             "vendor": depts.vendor_of(providers.get(k, "mock")),
              "provider_ready": llm.provider_ready(providers.get(k, "mock")),
              "online": online.get(k, False)}
             for k, d in config.DEPTS.items()

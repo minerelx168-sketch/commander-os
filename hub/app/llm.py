@@ -58,6 +58,10 @@ def _anthropic_fable(system: str, user: str, cancel=None, max_tokens: int | None
     return _claude("anthropic_fable", system, user, max_tokens)
 
 
+def _anthropic_sonnet(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
+    return _claude("anthropic_sonnet", system, user, max_tokens)
+
+
 def _deepseek(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
     """DeepSeek — OpenAI-compatible chat completions."""
     r = httpx.post(
@@ -142,15 +146,17 @@ def _mock(system: str, user: str, cancel=None) -> str:
 
 
 _CALLERS = {"anthropic": _anthropic, "anthropic_fable": _anthropic_fable,
+            "anthropic_sonnet": _anthropic_sonnet,
             "gemini": _gemini, "manus": _manus, "zai": _zai,
             "deepseek": _deepseek, "mock": _mock}
 
 # Only these accept a max_tokens hint; the rest use their own server-side default.
-_ACCEPTS_MAX_TOKENS = {"anthropic", "anthropic_fable", "deepseek"}
+_ACCEPTS_MAX_TOKENS = {"anthropic", "anthropic_fable", "anthropic_sonnet", "deepseek"}
 
 _HAS_KEY = {
     "anthropic": lambda: bool(config.ANTHROPIC_API_KEY),
     "anthropic_fable": lambda: bool(config.ANTHROPIC_API_KEY),
+    "anthropic_sonnet": lambda: bool(config.ANTHROPIC_API_KEY),
     "deepseek": lambda: bool(config.DEEPSEEK_API_KEY),
     "gemini": lambda: bool(config.GOOGLE_API_KEY),
     "manus": lambda: bool(config.MANUS_API_KEY),

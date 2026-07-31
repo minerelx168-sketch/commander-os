@@ -29,28 +29,37 @@ DEPTS = {
                  "expertise": "วิเคราะห์ข้อมูล, สถิติ, แนวโน้ม, ความเสี่ยงเชิงตัวเลข"},
 }
 
-# AI providers selectable per C-level on the Agents page
+# AI providers selectable per C-level on the Agents page.
+# `vendor` is what makes this a Crucible rather than a costume party: two seats
+# on the same vendor share training data, refusal habits and blind spots, so
+# their "disagreement" is theatre. The board surfaces vendor overlap instead of
+# trusting whoever configured it to remember.
 PROVIDERS = {
-    "anthropic": {"label": "Claude Opus (Anthropic)",
+    "anthropic": {"label": "Claude Opus (Anthropic)", "vendor": "Anthropic",
                   "model": os.getenv("ANTHROPIC_MODEL", "claude-opus-5")},
-    "anthropic_fable": {"label": "Claude Fable (Anthropic)",
+    "anthropic_sonnet": {"label": "Claude Sonnet (Anthropic)", "vendor": "Anthropic",
+                         "model": os.getenv("ANTHROPIC_SONNET_MODEL", "claude-sonnet-5")},
+    "anthropic_fable": {"label": "Claude Fable (Anthropic)", "vendor": "Anthropic",
                         "model": os.getenv("ANTHROPIC_FABLE_MODEL", "claude-fable-5")},
-    "gemini": {"label": "Gemini Pro (Google)",
+    "gemini": {"label": "Gemini Pro (Google)", "vendor": "Google",
                "model": os.getenv("GEMINI_MODEL", "gemini-3.1-pro-preview")},
-    "manus": {"label": "Manus", "model": os.getenv("MANUS_MODEL", "manus-1.6-agent")},
-    "zai": {"label": "Z.AI (GLM)", "model": os.getenv("ZAI_MODEL", "glm-5.2")},
-    "deepseek": {"label": "DeepSeek", "model": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")},
-    "mock": {"label": "Mock (offline)", "model": "mock"},
+    "manus": {"label": "Manus", "vendor": "Manus",
+              "model": os.getenv("MANUS_MODEL", "manus-1.6-agent")},
+    "zai": {"label": "Z.AI (GLM)", "vendor": "Z.AI",
+            "model": os.getenv("ZAI_MODEL", "glm-5.2")},
+    "deepseek": {"label": "DeepSeek", "vendor": "DeepSeek",
+                 "model": os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")},
+    "mock": {"label": "Mock (offline)", "vendor": "—", "model": "mock"},
 }
 
 # Which agent each seat runs on by default (the CEO can still switch any seat
 # on the Agents page; this is only the first-run assignment).
 DEFAULT_PROVIDERS = {
-    "coo": "zai",                 # GLM-5.2
-    "cmo": "gemini",              # Gemini 3.1 Pro
-    "cfo": "anthropic_fable",     # Claude Fable 5
-    "researcher": "anthropic",    # Claude Opus 5
-    "datalyst": "deepseek",       # DeepSeek V4 Pro
+    "coo": "zai",                   # GLM-5.2
+    "cmo": "gemini",                # Gemini 3.1 Pro
+    "cfo": "anthropic_fable",       # Claude Fable 5
+    "researcher": "anthropic_sonnet",  # Claude Sonnet 5
+    "datalyst": "deepseek",         # DeepSeek V4 Pro
 }
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")

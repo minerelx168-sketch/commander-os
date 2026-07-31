@@ -1527,9 +1527,10 @@ function frameCard(a) {
     <div class="opt-must" style="margin-top:8px;">⚠️ ขัดกับมติเก่า #${c.memory_id} (${esc(c.severity||'')})<br>
       <b>เคยสรุปว่า:</b> ${esc(c.past||'')}<br><b>ขัดตรงไหน:</b> ${esc(c.tension||'')}</div>`).join('');
   const div = a.diversity || {};
+  const vendors = Object.keys(div.per_vendor || {});
   const divNote = div.warning
     ? `<div class="opt-must" style="margin-top:8px;">🧠 ${esc(div.warning)}</div>`
-    : `<div class="qchips" style="margin-top:8px;"><span class="qchip">🧠 ${div.distinct||0} provider ต่างกัน จาก ${div.live||0} ที่นั่งที่ใช้งานได้ — ยิ่งต่างยิ่งจับจุดบอดกันได้</span></div>`;
+    : `<div class="qchips" style="margin-top:8px;"><span class="qchip">🧠 ${div.distinct||0} ค่าย AI ต่างกัน จาก ${div.live||0} ที่นั่งที่ใช้งานได้${vendors.length ? ' — ' + esc(vendors.join(' · ')) : ''}</span></div>`;
   const seatChips = (a.seats||[]).map(k => `<span class="qchip">${deptName(k)}</span>`).join('');
   return wideCard('frame-card', '🎯', 'Moderator — กรอบการตัดสินใจ', 'FRAME', a,
     (seatChips ? `<div class="qchips">เรียกเข้าประชุม: ${seatChips}</div>` : ''))
@@ -2138,13 +2139,27 @@ async function syncDrive() {
 
 /* ---------- agents ---------- */
 function renderAgents() {
-  document.getElementById('agent-rows').innerHTML = STATE.depts.map(d => `
+  // Vendor overlap is decided on this page, so it must be visible on this page:
+  // a seat sharing a lab with another is flagged in place, not only in Frame.
+  const shared = (STATE.diversity || {}).shared_vendors || {};
+  const sharedSeats = {};
+  Object.entries(shared).forEach(([v, seats]) => seats.forEach(s => { sharedSeats[s] = v; }));
+  const div = STATE.diversity || {};
+  const banner = div.warning
+    ? `<div class="opt-must" style="margin-bottom:12px;">🧠 ${esc(div.warning)}</div>`
+    : `<div class="qchips" style="margin-bottom:12px;"><span class="qchip">🧠 ${div.distinct||0} ค่าย AI ต่างกัน จาก ${div.live||0} ที่นั่งที่ใช้งานได้ — ยิ่งต่างค่าย จุดบอดร่วมยิ่งน้อย</span></div>`;
+
+  document.getElementById('agent-rows').innerHTML = banner + (STATE.depts.map(d => `
     <div class="agent-row">
       <div class="agent-icon">${d.icon}</div>
       <div>
         <div class="agent-name">${esc(d.name)}</div>
         <div class="agent-role">${esc(d.role)}</div>
       </div>
+      <span class="badge ${sharedSeats[d.key] ? 'badge-amber' : 'badge-muted'}"
+            title="${sharedSeats[d.key] ? 'ที่นั่งนี้ใช้ค่ายเดียวกับที่นั่งอื่น — มีจุดบอดร่วมกัน' : 'ค่ายผู้ให้บริการของที่นั่งนี้'}">
+        ${sharedSeats[d.key] ? '⚠ ' : ''}${esc(d.vendor || '—')}
+      </span>
       <span class="badge ${d.online ? 'badge-green' : 'badge-muted'}" style="margin-left:12px;" title="${esc(d.url||'')}">
         <span class="dot ${d.online?'on':'off'}"></span> service ${d.online ? 'online' : 'offline'}
       </span>
@@ -2157,7 +2172,7 @@ function renderAgents() {
             ${esc(p.label)} — ${esc(p.model)}${p.ready?'':' (no key)'}
           </option>`).join('')}
       </select>
-    </div>`).join('') || `<div class="empty-state"><div class="empty-state-text">กำลังโหลด…</div></div>`;
+    </div>`).join('') || `<div class="empty-state"><div class="empty-state-text">กำลังโหลด…</div></div>`);
 }
 
 async function setProvider(dept, provider) {

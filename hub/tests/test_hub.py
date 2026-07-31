@@ -582,7 +582,10 @@ def test_keyless_duckduckgo_parses_both_layouts(client, markup, url, title):
     assert hits[0]["title"] == title and hits[0]["snippet"]
 
 
-def test_duckduckgo_falls_through_to_the_second_endpoint(client):
+def test_duckduckgo_tries_every_shape_before_giving_up(client):
+    """DuckDuckGo blocks automated traffic per method and per endpoint, so the
+    fallback must walk GET/POST across both hosts rather than stop at the first
+    refusal. Patch both verbs — patching only POST used to hide the GET path."""
     from app import research
 
     class _Resp:
@@ -591,9 +594,24 @@ def test_duckduckgo_falls_through_to_the_second_endpoint(client):
         def raise_for_status(self):
             pass
 
-    with patch("httpx.post", side_effect=[RuntimeError("lite down"), _Resp()]) as p:
+    calls = []
+
+    def _fail(url, **kw):
+        calls.append(("GET" if "params" in kw else "POST", url))
+        raise RuntimeError("blocked")
+
+    # first endpoint refuses both verbs; the second answers on GET
+    with patch("httpx.get", side_effect=[RuntimeError("lite GET down"), _Resp()]), \
+         patch("httpx.post", side_effect=RuntimeError("lite POST down")):
         hits = research._duckduckgo("อะไรก็ได้", 5)
-    assert p.call_count == 2 and hits[0]["url"] == "https://example.com/b"
+    assert hits[0]["url"] == "https://example.com/b"
+
+    # every shape refusing must raise, never report an empty internet
+    with patch("httpx.get", side_effect=_fail), patch("httpx.post", side_effect=_fail), \
+         pytest.raises(Exception):
+        research._duckduckgo("อะไรก็ได้", 5)
+    assert len(calls) == 2 * len(research._DDG_ENDPOINTS), \
+        f"expected GET+POST on every endpoint, got {calls}"
 
 
 # ── PDF reports ──
@@ -853,13 +871,106 @@ def test_seats_run_on_different_vendors_by_default(client):
 
 
 def test_a_single_vendor_board_is_called_out(client, monkeypatch):
+    """Five seats on one lab is one brain in five hats — the board must say so
+    rather than let unanimous agreement look like corroboration."""
     from app import depts
     monkeypatch.setattr("app.llm.provider_ready", lambda p: p == "zai")
     for dept in config.DEPTS:
         client.put(f"/api/dept/{dept}/provider", json={"provider": "zai"})
     div = depts.model_diversity()
-    assert div["distinct"] == 1 and "provider เดียวกัน" in div["warning"]
+    assert div["distinct"] == 1
+    assert div["warning"] and "Z.AI" in div["warning"]
     assert client.get("/api/state").json()["diversity"]["distinct"] == 1
+
+
+def test_two_models_from_one_lab_count_as_one_vendor(client, monkeypatch):
+    """Opus and Fable are two provider keys but one lab: same corpus, same
+    refusal habits, same blind spots. Counting keys would have reported a
+    diverse board while two seats shared a brain."""
+    from app import depts
+    monkeypatch.setattr("app.llm.provider_ready",
+                        lambda p: p in ("anthropic", "anthropic_fable"))
+    client.put("/api/dept/cfo/provider", json={"provider": "anthropic_fable"})
+    client.put("/api/dept/researcher/provider", json={"provider": "anthropic"})
+    for dept in ("cmo", "coo", "datalyst"):
+        client.put(f"/api/dept/{dept}/provider", json={"provider": "mock"})
+
+    div = depts.model_diversity()
+    assert div["distinct"] == 1, "two Anthropic models are one vendor"
+    assert div["live"] == 2, "both seats are live"
+    assert div["shared_vendors"].get("Anthropic") == ["cfo", "researcher"]
+    assert div["warning"] and "Anthropic" in div["warning"]
+
+
+def test_vendor_overlap_is_named_seat_by_seat(client, monkeypatch):
+    """The CEO needs to know *which* seats share a lab, not just that some do."""
+    from app import depts
+    monkeypatch.setattr("app.llm.provider_ready", lambda p: p != "mock")
+    assignment = {"cmo": "gemini", "cfo": "anthropic_fable", "coo": "zai",
+                  "researcher": "anthropic", "datalyst": "deepseek"}
+    for dept, prov in assignment.items():
+        client.put(f"/api/dept/{dept}/provider", json={"provider": prov})
+
+    div = depts.model_diversity()
+    assert div["distinct"] == 4, "Anthropic twice -> four labs across five seats"
+    assert set(div["per_vendor"]) == {"Anthropic", "Google", "Z.AI", "DeepSeek"}
+    assert sorted(div["shared_vendors"]["Anthropic"]) == ["cfo", "researcher"]
+    # the warning must name the seats, using their display names
+    assert "CFO" in div["warning"] and "Researcher" in div["warning"]
+
+
+def test_search_backend_priority_follows_the_keys_present(client, monkeypatch):
+    """Which index the board searches must follow from the keys configured, not
+    from luck. Tavily first (returns extracted content), then SerpApi's Google
+    index, then Brave, then serper, and only then the keyless fallback."""
+    from app import research
+
+    order = [("TAVILY_API_KEY", "tavily"), ("SERPAPI_API_KEY", "serpapi"),
+             ("BRAVE_API_KEY", "brave"), ("SERPER_API_KEY", "serper")]
+    for name, _ in order:
+        monkeypatch.setattr(f"app.config.{name}", "")
+    assert research.backend() == "duckduckgo", "no keys -> keyless fallback"
+
+    # add keys back in reverse priority: each one must take over the top slot
+    for name, expected in reversed(order):
+        monkeypatch.setattr(f"app.config.{name}", "k")
+        assert research.backend() == expected, f"{name} should win, got {research.backend()}"
+        assert expected in research.backend_label().lower() or \
+            research.backend_label(), "the label must name the live backend"
+
+
+def test_every_backend_has_a_caller_and_a_label(client):
+    """A backend that resolves but has no implementation would silently return
+    nothing, which reads as 'the internet has no data on this'."""
+    from app import research
+
+    for key in research._BACKENDS:
+        assert hasattr(research, research._BACKENDS[key]), f"{key} has no caller"
+    for name, _ in [("TAVILY_API_KEY", 0), ("SERPAPI_API_KEY", 0),
+                    ("BRAVE_API_KEY", 0), ("SERPER_API_KEY", 0)]:
+        assert hasattr(config, name), f"config is missing {name}"
+
+
+def test_every_provider_declares_a_vendor(client):
+    """A provider without a vendor label would silently become its own lab and
+    inflate the diversity count."""
+    from app import depts
+    for key, meta in config.PROVIDERS.items():
+        assert meta.get("vendor"), f"{key} declares no vendor"
+        assert depts.vendor_of(key) == meta["vendor"]
+    # an unknown key must not crash the count; it stands in as its own lab
+    assert depts.vendor_of("does-not-exist") == "does-not-exist"
+
+
+def test_a_fully_diverse_board_raises_no_warning(client, monkeypatch):
+    from app import depts
+    monkeypatch.setattr("app.llm.provider_ready", lambda p: p != "mock")
+    for dept, prov in {"cmo": "gemini", "cfo": "manus", "coo": "zai",
+                       "researcher": "anthropic", "datalyst": "deepseek"}.items():
+        client.put(f"/api/dept/{dept}/provider", json={"provider": prov})
+    div = depts.model_diversity()
+    assert div["distinct"] == 5 and div["shared_vendors"] == {}
+    assert div["warning"] is None
 
 
 def test_no_live_provider_is_called_out(client, monkeypatch):
@@ -1910,7 +2021,7 @@ def test_each_seat_runs_the_agent_the_ceo_assigned(client):
         "coo": "glm-5.2",
         "cmo": "gemini-3.1-pro-preview",
         "cfo": "claude-fable-5",
-        "researcher": "claude-opus-5",
+        "researcher": "claude-sonnet-5",
         "datalyst": "deepseek-v4-pro",
     }
     for dept, model in expected.items():

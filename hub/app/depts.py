@@ -258,29 +258,53 @@ def _chair_provider() -> str:
 
 
 def model_diversity(session: dict | None = None) -> dict:
-    """How many distinct vendors the convened seats actually run on.
+    """How many distinct *vendors* the convened seats actually run on.
 
     The whole premise is that disagreement comes from different reasoning, not
     from different system prompts. One vendor behind every seat is one brain in
     five hats, and the board's agreement means nothing.
+
+    Counting provider keys is not enough: two Anthropic models are two keys but
+    one lab, one pretraining corpus and one set of refusal habits, so they share
+    blind spots. Vendors are the unit that matters.
     """
     keys = seats(session) if session else list(config.DEPTS)
     assigned = store.get_providers()
     per_seat = {k: assigned.get(k, "mock") for k in keys}
     live = [p for p in per_seat.values() if p != "mock" and llm.provider_ready(p)]
-    distinct = len(set(live))
+    vendors = [vendor_of(p) for p in live]
+    distinct = len(set(vendors))
+    per_vendor: dict[str, list[str]] = {}
+    for seat, prov in per_seat.items():
+        if prov == "mock" or not llm.provider_ready(prov):
+            continue
+        per_vendor.setdefault(vendor_of(prov), []).append(seat)
+    doubled = {v: s for v, s in per_vendor.items() if len(s) > 1}
+
     warning = None
     if not live:
         warning = ("ยังไม่มี seat ไหนต่อ AI จริงเลย — บอร์ดจะตอบด้วย mock ทั้งหมด "
                    "ไปที่หน้า Agents เพื่อผูก provider")
     elif distinct == 1:
-        warning = (f"ทุก seat ที่ใช้งานได้รันบน provider เดียวกัน ({live[0]}) — "
+        warning = (f"ทุก seat ที่ใช้งานได้รันบนค่ายเดียวกัน ({vendors[0]}) — "
                    "ความเห็นที่ได้มาจากสมองเดียวกันสวมหลายหมวก "
-                   "ไม่ใช่การถกเถียงจริง ควรกระจาย provider ในหน้า Agents")
+                   "ไม่ใช่การถกเถียงจริง ควรกระจายค่ายในหน้า Agents")
+    elif doubled:
+        overlap = "; ".join(f"{v}: {', '.join(config.DEPTS[s]['name'] for s in ss)}"
+                            for v, ss in doubled.items())
+        warning = (f"มีค่ายที่ถือหลายที่นั่ง ({overlap}) — "
+                   "ที่นั่งเหล่านั้นมีจุดบอดร่วมกัน ถ้าเห็นด้วยกันอย่านับเป็นสองเสียง")
     elif distinct < min(3, len(live)):
-        warning = (f"seat ที่ใช้งานได้ {len(live)} ที่นั่ง แต่มาจาก provider เพียง {distinct} ราย — "
+        warning = (f"seat ที่ใช้งานได้ {len(live)} ที่นั่ง แต่มาจากค่ายเพียง {distinct} ราย — "
                    "ยิ่งกระจายได้มาก จุดบอดร่วมยิ่งน้อย")
-    return {"per_seat": per_seat, "distinct": distinct, "live": len(live), "warning": warning}
+    return {"per_seat": per_seat, "distinct": distinct, "live": len(live),
+            "per_vendor": per_vendor, "shared_vendors": doubled, "warning": warning}
+
+
+def vendor_of(provider: str) -> str:
+    """Vendor for a provider key, falling back to the key itself so a provider
+    added without a vendor label still counts as its own lab rather than None."""
+    return config.PROVIDERS.get(provider, {}).get("vendor") or provider
 
 
 def _fmt(dept: str, template: str) -> str:
