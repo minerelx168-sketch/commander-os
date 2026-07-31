@@ -990,6 +990,7 @@ body {
 .chair-card    { border-color: rgba(59,130,246,.35); }
 .frame-card    { border-color: rgba(139,92,246,.4); }
 .redteam-card  { border-color: rgba(239,68,68,.4); }
+.framing-redteam-card { border-color: rgba(251,146,60,.55); background: linear-gradient(180deg, rgba(251,146,60,.05), var(--bg-3) 40%); }
 .research-card.err { border-color: rgba(239,68,68,.3); }
 
 .wide-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -1001,6 +1002,7 @@ body {
 .research-card .wide-icon { border-color: rgba(34,197,94,.4); }
 .frame-card .wide-icon    { border-color: rgba(139,92,246,.5); }
 .redteam-card .wide-icon  { border-color: rgba(239,68,68,.5); }
+.framing-redteam-card .wide-icon { border-color: rgba(251,146,60,.7); }
 .chair-card .wide-icon    { background: var(--accent); box-shadow: 0 2px 8px rgba(59,130,246,.3); }
 .wide-name { font-size: 14px; font-weight: 600; }
 .wide-sub  { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .8px; margin-top: 1px; }
@@ -1016,6 +1018,10 @@ body {
   background: rgba(59,130,246,.12); color: #93c5fd;
   border-color: rgba(59,130,246,.3); font-weight: 600;
 }
+.qchip.verdict { font-weight: 700; }
+.qchip.verdict.good { background: rgba(34,197,94,.14); color: #86efac; border-color: rgba(34,197,94,.35); }
+.qchip.verdict.warn { background: rgba(251,146,60,.14); color: #fdba74; border-color: rgba(251,146,60,.4); }
+.qchip.verdict.bad  { background: rgba(239,68,68,.14); color: #fca5a5; border-color: rgba(239,68,68,.4); }
 .srcs { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 13px; }
 .srcs-h {
   font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
@@ -1542,7 +1548,21 @@ function frameCard(a) {
 }
 
 function redteamCard(a) {
-  return wideCard('redteam-card', '🛡', 'Red Team — โจมตีการตั้งกรอบ ไม่ใช่คำตอบ', 'RED TEAM', a);
+  return wideCard('redteam-card', '🛡', 'Evidence Red Team — โจมตีคุณภาพหลักฐาน', 'EVIDENCE RED TEAM', a);
+}
+
+// Framing red team runs BEFORE research — cheap early challenge to the moderator's
+// framing so the board doesn't burn four stages inside the wrong question.
+function framingRedteamCard(a) {
+  const v = a.verdict || 'OK';
+  const cls = v === 'BLOCK' ? 'bad' : v === 'CONCERN' ? 'warn' : 'good';
+  const label = v === 'BLOCK' ? 'อย่าเดินหน้า — reframe ก่อน'
+              : v === 'CONCERN' ? 'มีข้อกังวล — CEO ตัดสินว่าจะรับความเสี่ยงไหม'
+              : 'กรอบใช้ได้ — เดินหน้าค้นหลักฐาน';
+  const chip = `<div class="qchips"><span class="qchip verdict ${cls}">${v} · ${label}</span></div>`;
+  return wideCard('framing-redteam-card', '🚧',
+                  'Framing Red Team — โจมตีการตั้งกรอบ ก่อนเผา token',
+                  'FRAMING RED TEAM · STAGE 1.5', a, chip);
 }
 
 function chairCard(a) {
@@ -1561,6 +1581,8 @@ function stepBlock(s) {
   let body;
   if (s.key === 'frame') {
     body = frameCard(s.results.framer || { text:'(ไม่มีกรอบ)', provider:'-', ok:false });
+  } else if (s.key === 'framing_redteam') {
+    body = framingRedteamCard(s.results.framing_redteam || { text:'(ยังไม่ทำงาน)', provider:'-', ok:false });
   } else if (s.key === 'research') {
     body = researchBlock(s);
   } else if (s.key === 'redteam') {

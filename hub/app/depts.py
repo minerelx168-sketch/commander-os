@@ -40,13 +40,14 @@ from . import config, docs, llm, memory, research, store
 
 log = logging.getLogger("hub.depts")
 
-STEPS = ["frame", "research", "positions", "debate", "redteam", "brief"]
+STEPS = ["frame", "framing_redteam", "research", "positions", "debate", "redteam", "brief"]
 STEP_LABELS = {
     "frame": "Stage 1 — Frame: ตั้งกรอบและเลือกมุมมองที่ต้องใช้",
+    "framing_redteam": "Stage 1.5 — Framing Red Team: โจมตีกรอบทันที ก่อนเผา token",
     "research": "Stage 2 — Independent Research: แต่ละมุมมองหาหลักฐานเอง",
     "positions": "Stage 3 — Opening Positions: จุดยืนตั้งต้นของแต่ละฝ่าย",
     "debate": "Stage 4 — The Debate: ท้าทายหลักฐานกันและกัน",
-    "redteam": "Stage 5 — Red-team & Converge: หาจุดอ่อนที่เหลือ + วัดความมั่นใจ",
+    "redteam": "Stage 5 — Evidence Red Team & Converge: หาจุดอ่อนของหลักฐาน + วัดความมั่นใจ",
     "brief": "Stage 6 — Defensible Brief: ข้อเสนอ + แหล่งอ้างอิง + เสียงค้าน",
 }
 
@@ -161,21 +162,52 @@ REDTEAM_SEAT_SYSTEM = (
     "เหตุผลของระดับความมั่นใจ: (1 บรรทัด อ้างว่าหลักฐานพอหรือไม่พอตรงไหน)"
 )
 
+FRAMING_REDTEAM_SYSTEM = (
+    "คุณคือ Red Team อิสระที่ถูกเรียกมาโจมตี 'การตั้งกรอบ' ของ moderator "
+    "**ก่อนบอร์ดเริ่มค้นหลักฐาน** — จังหวะเดียวที่คุณจะช่วยได้จริง\n"
+    "เหตุผลที่คุณอยู่ตรงนี้: การถกเถียงคุณภาพสูงในคำถามที่ผิดข้อคือของเสียของทั้งการประชุม "
+    "ถ้ากรอบผิดตอนนี้ บอร์ดจะเผา 4 stage ถัดไปกับสิ่งที่ไม่ควรทำ\n"
+    "หน้าที่คุณคือ **ท้าทาย 4 อย่าง** ให้ตรงประเด็น กระชับ ไม่เกิน 8 บรรทัด "
+    "ถ้ากรอบใช้ได้จริงต้องบอกว่าใช้ได้ อย่าหาเรื่องเพื่อดูขยัน:\n"
+    "- คำถามที่ moderator ตั้งขึ้น เป็นคำถามที่ควรตัดสินใจจริงหรือไม่ "
+    "หรือควรเป็นคำถามอื่นก่อน (เช่น 'ควรเปิดสาขาไหม' อาจต้องถามก่อนว่า 'ทำไมสาขาเดิมยอดตก')\n"
+    "- ที่นั่งที่ถูกเรียก ครอบคลุมพอไหม ที่นั่งไหนไม่จำเป็น "
+    "และมุมมองอะไรที่หายไปโดยที่ moderator มองไม่เห็น (ลูกค้า พนักงาน กฎหมาย ครอบครัว …)\n"
+    "- สมมติฐานฝังในการ reframe ที่ moderator ไม่รู้ตัว\n"
+    "- 'หลักฐานที่จะเปลี่ยนคำตอบ' ที่ moderator เขียน — พอจะเปลี่ยนคำตอบได้จริง "
+    "หรือถูกเลือกให้ยืนยันคำตอบเดิม\n"
+    "ตอบเป็น JSON ล้วน:\n"
+    "{\n"
+    '  "verdict": "OK|CONCERN|BLOCK",\n'
+    '  "reframe_suggestion": "คำถามที่ควรตัดสินใจแทน (เว้นว่างถ้ากรอบใช้ได้)",\n'
+    '  "unchallenged_assumptions": ["สมมติฐานที่ moderator ยึดโดยไม่ตรวจ"],\n'
+    '  "missing_seats": [{"seat": "key หรือชื่อที่ไม่มีในโครงสร้าง เช่น customer, legal",\n'
+    '                     "why_missing": "จะพลาดอะไรถ้าไม่มีคนนี้"}],\n'
+    '  "evidence_bar_too_low": "หลักฐานที่ moderator ระบุ พอจะพลิกคำตอบได้จริงไหม",\n'
+    '  "one_line_summary": "สรุปข้อกังวลใหญ่สุด 1 ประโยค"\n'
+    "}\n"
+    "verdict:\n"
+    "  OK      = กรอบใช้ได้ ให้เดินหน้าค้นหลักฐาน\n"
+    "  CONCERN = ควรปรับกรอบ แต่ CEO เดินต่อได้ถ้ารับความเสี่ยง\n"
+    "  BLOCK   = อย่าเพิ่งเผา token — reframe หรือขยายที่นั่งก่อน"
+)
+
 REDTEAM_SYSTEM = (
-    "คุณคือ Red Team อิสระ ไม่ได้นั่งอยู่ในบอร์ด และไม่มีหน้าที่ทำให้ใครพอใจ\n"
-    "หน้าที่คุณคือโจมตี **การตั้งกรอบ** ของการประชุมนี้ ไม่ใช่โจมตีคำตอบ — "
-    "ความล้มเหลวที่การถกเถียงจับไม่ได้คือ ทุกคนเถียงกันอย่างดีในคำถามที่ผิดข้อ\n"
-    "สิ่งที่ต้องหา:\n"
-    "- บอร์ดกำลังตอบคำถามผิดข้อหรือไม่ ถ้าใช่ คำถามที่ถูกคืออะไร\n"
-    "- ทุกคนกำลังยึดสมมติฐานร่วมอันไหนโดยไม่มีใครตรวจสอบ\n"
-    "- มุมมองไหนที่ 'ไม่ได้ถูกเรียกเข้าประชุม' แล้วทำให้พลาดจุดสำคัญ (เช่น ลูกค้า กฎหมาย พนักงาน)\n"
-    "- หลักฐานทั้งหมดมาจากแหล่งประเภทเดียวกันหรือไม่ (ถ้าใช่ ความมั่นใจของบอร์ดสูงเกินจริง)\n"
+    "คุณคือ Evidence Red Team ที่ถูกเรียกหลัง Stage 4 — หลังบอร์ดถกเถียงบนหลักฐานจริงแล้ว\n"
+    "**Framing Red Team ทำงานตั้งแต่ Stage 1.5 ไปแล้ว** — ถ้ากรอบผ่านมาถึงตรงนี้ "
+    "แปลว่าเคยถูกท้าทายมาแล้ว ให้เคารพส่วนนั้น อย่าถกซ้ำเรื่องกรอบ\n"
+    "หน้าที่คุณคือโจมตี **คุณภาพหลักฐานและตรรกะ** ที่ถูกใช้จริงในการประชุมนี้:\n"
+    "- หลักฐานที่บอร์ดใช้ตัดสิน มีจุดอ่อนอะไร (มาจากแหล่งประเภทเดียวกัน / เก่าเกินไป / เชอร์รี่พิก / โฆษณา)\n"
+    "- ตรรกะจากหลักฐาน → ข้อสรุปมีช่องโหว่ตรงไหน (สรุปเกินสิ่งที่หลักฐานรองรับหรือไม่)\n"
+    "- ข้อมูลที่ **มีอยู่แล้ว** แต่ไม่มีใครหยิบมาชนกับข้อสรุป\n"
+    "- ระดับความมั่นใจสอดคล้องกับคุณภาพหลักฐานจริงไหม (คน confident เท่ากับ 90% "
+    "โดยที่หลักฐานเป็นบทความเดียวจากปี 2022 คือของปลอม)\n"
     "ตอบภาษาไทย ไม่เกิน 10 บรรทัด ใช้โครงสร้างนี้:\n"
-    "กรอบผิดตรงไหน: (ถ้ากรอบถูกแล้วให้เขียนว่า กรอบใช้ได้ พร้อมเหตุผล 1 บรรทัด)\n"
-    "สมมติฐานร่วมที่ไม่มีใครตรวจ: (bullet)\n"
-    "มุมมองที่หายไป: (bullet — ใครไม่ได้ถูกเรียกและจะพลาดอะไร)\n"
-    "คุณภาพหลักฐานโดยรวม: (แข็ง/พอใช้/บาง — พร้อมเหตุผล)\n"
-    "ถ้าจะล้มข้อสรุปนี้ ต้องหาอะไรมา: (1-2 ข้อ ที่ทำได้จริง)"
+    "หลักฐานที่อ่อนที่สุด: (ระบุแหล่ง [n] หรือคำอ้างของใคร พร้อมเหตุผล)\n"
+    "ตรรกะที่ข้ามขั้น: (จากหลักฐาน A ไปสรุป B โดยที่ยังต้องพิสูจน์อะไรก่อน)\n"
+    "ข้อมูลที่มีอยู่แต่ยังไม่ถูกชน: (ถ้าไม่มีให้เขียนว่า ไม่พบ)\n"
+    "ความมั่นใจของบอร์ดสอดคล้องกับหลักฐานไหม: (เต็ม/สูงเกินไป/ต่ำเกินไป พร้อมเหตุผล 1 บรรทัด)\n"
+    "ถ้าจะล้มข้อสรุปนี้ ต้องหาอะไรเพิ่ม: (1-2 ข้อ ที่ทำได้จริง)"
 )
 
 BRIEF_SYSTEM = (
@@ -376,6 +408,12 @@ def next_step(session: dict) -> str | None:
     if done & LEGACY_STEPS or "brief" in done:
         return None
     skip = set() if session.get("web_research", True) else {"research"}
+    # No frame → nothing for the framing red team to attack. The board keeps
+    # moving (that's the whole point of fail-open framing) but the 1.5 pass
+    # would be spending a call on an empty payload.
+    framer = _results_of(session, "frame").get("framer") or {}
+    if "frame" in done and not framer.get("ok"):
+        skip.add("framing_redteam")
     return next((s for s in STEPS if s not in done and s not in skip), None)
 
 
@@ -445,6 +483,15 @@ def _frame_context(session: dict) -> str:
                      + "; ".join(framer["what_would_change_the_answer"][:4]))
     if framer.get("carry_forward"):
         parts.append("ข้อผูกมัดจากมติเก่าที่ต้องเคารพ: " + "; ".join(framer["carry_forward"][:4]))
+    # If the Framing Red Team objected and the CEO chose to press on, every
+    # seat downstream should know what they were told to ignore. A concern that
+    # is not passed along is a concern that was quietly deleted.
+    fr = _results_of(session, "framing_redteam").get("framing_redteam") or {}
+    if fr.get("ok") and fr.get("verdict") in ("CONCERN", "BLOCK"):
+        parts.append(f"[Framing Red Team ({fr['verdict']})] " + (fr.get("summary") or ""))
+        if fr.get("unchallenged_assumptions"):
+            parts.append("สมมติฐานที่ยังไม่ถูกตรวจ: "
+                         + "; ".join(fr["unchallenged_assumptions"][:3]))
     return "\n".join(parts)
 
 
@@ -474,6 +521,9 @@ def run_step(session: dict, step: str, directive: str | None = None) -> dict:
 
     if step == "frame":
         return {"framer": _frame(session, directive, tail)}
+
+    if step == "framing_redteam":
+        return {"framing_redteam": _framing_redteam(session, tail)}
 
     if step == "research":
         return _independent_research(session, tail)
@@ -584,6 +634,85 @@ def _frame(session: dict, directive: str | None, tail: str) -> dict:
             "carry_forward": conflict["carry_forward"],
             "memory_checked": conflict["checked"],
             "diversity": model_diversity({"seats": chosen})}
+
+
+# ── stage 1.5: framing red team ──
+
+def _framing_redteam(session: dict, tail: str) -> dict:
+    """Attack the framing BEFORE the board burns four stages arguing inside it.
+
+    Cheap: one LLM call, small payload, no research or seat fan-out. This is the
+    exact failure the docstring flagged — "everyone arguing the wrong question
+    well" — and Stage 5 could not catch it because token was already spent by
+    the time it ran. Structured output so the UI can flag CONCERN/BLOCK, and
+    the fields flow into every seat's grounding context.
+    """
+    framer = _results_of(session, "frame").get("framer") or {}
+    if not framer.get("ok"):
+        # No frame to attack — skip cleanly, keep the pipeline moving.
+        return {"text": "ข้าม — Stage 1 ตั้งกรอบไม่สำเร็จ ไม่มีกรอบให้ท้าทาย",
+                "provider": "-", "ok": False, "verdict": "OK"}
+
+    provider = _chair_provider()
+    seat_roster = ", ".join(f"{k} ({config.DEPTS[k]['name']})" for k in config.DEPTS)
+    convened = ", ".join(config.DEPTS.get(k, {}).get("name", k)
+                         for k in framer.get("seats", []))
+    excluded_note = ""
+    if framer.get("excluded"):
+        excluded_note = "\nที่นั่งที่ moderator ตัดสินใจไม่เรียก + เหตุผล:\n" + "\n".join(
+            f"  - {config.DEPTS.get(k, {}).get('name', k)}: {v}"
+            for k, v in framer["excluded"].items())
+
+    ctx = (
+        f"คำถามเดิมของ CEO: {session['question']}\n"
+        f"โปรเจค/ธุรกิจ: {session.get('project') or '(ไม่ระบุ)'}\n\n"
+        f"[กรอบที่ moderator ตั้งไว้]\n"
+        f"reframed: {framer.get('reframed', '')}\n"
+        f"ลักษณะการตัดสินใจ: {framer.get('decision_type', '(ไม่ระบุ)')}\n"
+        f"ที่นั่งที่ moderator เรียก: {convened}"
+        + excluded_note
+        + "\nหลักฐานที่ moderator บอกว่าจะเปลี่ยนคำตอบ:\n"
+        + ("\n".join(f"  - {x}" for x in (framer.get("what_would_change_the_answer") or []))
+           or "  (ไม่ได้ระบุ)")
+        + f"\n\nที่นั่งที่ระบบมี ให้ moderator เลือก: {seat_roster}"
+    )
+
+    out = llm.chat(provider, FRAMING_REDTEAM_SYSTEM, ctx + tail,
+                   cancel=lambda: store.is_stopped(session["id"]))
+    data = _parse_json(out["text"]) if out["ok"] else None
+    if data is None:
+        log.warning("framing red team parse failed for consult %s", session.get("id"))
+        return {"text": ("⚠️ Framing Red Team วิเคราะห์ไม่สำเร็จ (provider ไม่พร้อม "
+                         "หรือคืนค่าไม่เป็น JSON) — เดินหน้าตามกรอบเดิม"),
+                "provider": out["provider"], "ok": False, "verdict": "OK"}
+
+    verdict = str(data.get("verdict", "OK")).upper()
+    if verdict not in ("OK", "CONCERN", "BLOCK"):
+        verdict = "CONCERN"
+    lines = [f"คำตัดสิน: {verdict}"]
+    if data.get("one_line_summary"):
+        lines.append(f"สรุป: {data['one_line_summary']}")
+    if data.get("reframe_suggestion"):
+        lines.append(f"เสนอ reframe: {data['reframe_suggestion']}")
+    if data.get("unchallenged_assumptions"):
+        lines.append("สมมติฐานที่ไม่ถูกตรวจ:")
+        lines += [f"  • {x}" for x in data["unchallenged_assumptions"]]
+    if data.get("missing_seats"):
+        lines.append("มุมมองที่หายไป:")
+        for m in data["missing_seats"]:
+            seat = m.get("seat", "")
+            reason = m.get("why_missing", "")
+            lines.append(f"  • {seat} — {reason}" if reason else f"  • {seat}")
+    if data.get("evidence_bar_too_low"):
+        lines.append(f"เกณฑ์หลักฐาน: {data['evidence_bar_too_low']}")
+
+    return {"text": "\n".join(lines), "provider": out["provider"], "ok": True,
+            "verdict": verdict,
+            "summary": data.get("one_line_summary") or "",
+            "reframe_suggestion": data.get("reframe_suggestion") or "",
+            "unchallenged_assumptions": data.get("unchallenged_assumptions") or [],
+            "missing_seats": data.get("missing_seats") or [],
+            "evidence_bar_too_low": data.get("evidence_bar_too_low") or ""}
 
 
 # ── stage 2: independent research, one desk per seat ──
@@ -699,18 +828,26 @@ def _redteam_seats(session: dict, question: str, tail: str) -> dict:
 
 
 def _redteam(session: dict, tail: str) -> dict:
-    """An outside voice attacking the framing, not the answer."""
-    transcript = _transcript(session, ("frame", "positions", "debate"))
+    """Evidence Red Team — attack the quality of the evidence and the logic
+    from evidence to conclusion. The framing was already attacked in Stage 1.5,
+    so this pass should not re-open that ground."""
+    # Feed the earlier framing critique in so this pass doesn't repeat it, but
+    # focus this LLM call on evidence quality — the thing that only exists after
+    # research and the debate have both happened.
+    transcript = _transcript(session, ("positions", "debate"))
     evidence = _shared_evidence(session)
-    convened = ", ".join(config.DEPTS[k]["name"] for k in seats(session))
-    missing = ", ".join(config.DEPTS[k]["name"] for k in config.DEPTS if k not in seats(session))
     div = model_diversity(session)
+    framing = _results_of(session, "framing_redteam").get("framing_redteam") or {}
+    framing_note = (
+        f"[Framing Red Team ตัดสินว่า {framing['verdict']} ตอน Stage 1.5]\n"
+        + (framing.get("text", "")[:600] if framing.get("ok") else "(ข้ามหรือล้มเหลว)")
+    ) if framing else "(Framing Red Team ยังไม่ได้ทำงาน)"
+
     out = llm.chat(_chair_provider(), REDTEAM_SYSTEM,
                    f"คำถามของ CEO: {session['question']}\n"
-                   f"ที่นั่งที่ถูกเรียก: {convened}\n"
-                   f"ที่นั่งที่ไม่ถูกเรียก: {missing or '(เรียกครบทุกที่นั่ง)'}\n"
-                   f"จำนวน provider ที่ต่างกันจริง: {div['distinct']} จาก {div['live']} ที่นั่งที่ใช้งานได้\n\n"
-                   f"บันทึกการประชุม:\n{transcript}"
+                   f"จำนวน vendor ที่ต่างกันจริง: {div['distinct']} จาก {div['live']} ที่นั่งที่ใช้งานได้\n\n"
+                   f"{framing_note}\n\n"
+                   f"บันทึกการถกเถียง (positions + debate):\n{transcript}"
                    + (f"\n\nหลักฐานทั้งหมดที่บอร์ดใช้:\n{evidence}" if evidence else "")
                    + tail)
     return {"text": out["text"], "provider": out["provider"], "ok": out["ok"],
@@ -729,7 +866,8 @@ def _transcript(session: dict, keys: tuple) -> str:
         for k, v in results.items():
             if not v.get("ok"):
                 continue
-            name = ({"framer": "Moderator", "redteam": "Red Team",
+            name = ({"framer": "Moderator", "redteam": "Evidence Red Team",
+                     "framing_redteam": "Framing Red Team",
                      "analyst": "ดัชนีหลักฐานรวม", "chair": "ประธานบอร์ด"}.get(k)
                     or config.DEPTS.get(k, {}).get("name", k))
             parts.append(f"[{name}] {v['text']}")
@@ -748,7 +886,8 @@ def confidence_summary(session: dict) -> dict:
 def _brief(session: dict, tail: str) -> dict:
     """Fold the whole session into one ruling the CEO can act on — and file it
     to memory so the next session can be checked against it."""
-    transcript = _transcript(session, ("frame", "positions", "debate", "redteam"))
+    transcript = _transcript(session, ("frame", "framing_redteam", "positions",
+                                       "debate", "redteam"))
     grounding = _library(session)
     evidence = _shared_evidence(session)
     conf = confidence_summary(session)
