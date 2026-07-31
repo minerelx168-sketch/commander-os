@@ -415,6 +415,30 @@ def test_a_keyed_backend_does_not_fall_through_to_the_keyless_engines(client, mo
     assert out["error"].startswith("tavily:")
 
 
+def test_tavily_authenticates_by_header_and_asks_for_page_bodies(client, monkeypatch):
+    """Tavily's documented auth is a Bearer header, and raw_content is opt-in —
+    without it every source came back empty and had to be re-fetched by hand."""
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "tvly-test")
+    payload = {"results": [{"title": "t", "url": "https://example.com/a",
+                            "content": "snippet", "raw_content": "หน้าเต็ม"}]}
+
+    class _Resp:
+        def json(self):
+            return payload
+
+        def raise_for_status(self):
+            pass
+
+    with patch("httpx.post", return_value=_Resp()) as post:
+        out = research._tavily("q", 3)
+    kwargs = post.call_args.kwargs
+    assert kwargs["headers"]["Authorization"] == "Bearer tvly-test"
+    assert kwargs["json"]["include_raw_content"] is True
+    assert "api_key" not in kwargs["json"]          # the key never rides in the body
+    assert out[0]["content"] == "หน้าเต็ม"           # body arrives without a second fetch
+
+
 def test_gather_hands_the_reason_back_to_the_caller(client):
     from app import research
     with patch("app.research.search_detail",
@@ -437,6 +461,11 @@ def test_a_seat_that_was_blocked_says_so_instead_of_no_evidence(client):
     # the merged index warns that the board's conclusion rests on thin evidence
     index = s["steps"][-1]["results"]["analyst"]
     assert index["blocked_seats"] and "ค้นเว็บไม่ได้เลย" in index["text"]
+    # and the UI must still render that index with zero sources — hiding it when
+    # nothing was found buries the warning in the one case it exists for
+    html = client.get("/").text
+    assert "const blockedSeats = (merged.blocked_seats || []).length;" in html
+    assert "const index = (found || blockedSeats)" in html
 
 
 def test_a_search_that_ran_but_found_nothing_is_not_blamed_on_blocking(client):

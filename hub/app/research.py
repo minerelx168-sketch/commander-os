@@ -45,14 +45,20 @@ def backend_label() -> str:
 # ── search backends: each returns [{title, url, snippet, content?}] ──
 
 def _tavily(query: str, k: int) -> list[dict]:
+    """Tavily authenticates with a Bearer header, and only returns page bodies
+    when asked — without include_raw_content every source came back with an
+    empty body and had to be re-fetched one page at a time, which is the slow
+    path Tavily exists to replace."""
     r = httpx.post("https://api.tavily.com/search",
-                   json={"api_key": config.TAVILY_API_KEY, "query": query,
-                         "max_results": k, "search_depth": "advanced",
-                         "include_answer": False},
+                   headers={"Authorization": f"Bearer {config.TAVILY_API_KEY}",
+                            "Content-Type": "application/json"},
+                   json={"query": query, "max_results": k,
+                         "search_depth": "advanced", "include_answer": False,
+                         "include_raw_content": True},
                    timeout=TIMEOUT)
     r.raise_for_status()
     return [{"title": x.get("title", ""), "url": x.get("url", ""),
-             "snippet": x.get("content", "")[:1200], "content": x.get("raw_content")}
+             "snippet": (x.get("content") or "")[:1200], "content": x.get("raw_content")}
             for x in r.json().get("results", [])]
 
 

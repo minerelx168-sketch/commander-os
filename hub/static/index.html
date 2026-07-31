@@ -1500,18 +1500,24 @@ function researchBlock(s) {
   const merged = s.results.analyst || {};
   const cards = deptKeys().filter(k => s.results[k])
     .map(k => seatResearchCard(k, s.results[k])).join('');
-  const index = merged.sources && merged.sources.length
-    ? `<div class="research-card" style="margin-top:12px;">
-         <div class="wide-head"><div class="wide-icon">🌐</div>
+  const found = (merged.sources || []).length;
+  const blockedSeats = (merged.blocked_seats || []).length;
+  // Show the index whenever there is something to say. Hiding it when nothing
+  // was found buried the warning in exactly the case it exists for: a board
+  // about to rule on evidence it never managed to read.
+  const index = (found || blockedSeats)
+    ? `<div class="research-card ${found ? '' : 'err'}" style="margin-top:12px;">
+         <div class="wide-head"><div class="wide-icon">${found ? '🌐' : '⚠️'}</div>
            <div><div class="wide-name">ดัชนีหลักฐานรวมของการประชุม</div>
                 <div class="wide-sub">EVIDENCE INDEX · ${esc(merged.provider||'')}</div></div></div>
          <div class="wide-body">${esc(merged.text||'')}</div>
-         <div class="srcs"><div class="srcs-h">รวมทุกที่นั่ง (${merged.sources.length} แหล่ง)</div>
+         ${!found ? '' : `<div class="srcs"><div class="srcs-h">รวมทุกที่นั่ง (${found} แหล่ง)</div>
            ${merged.sources.map((x,i) => `
              <div class="src"><span class="src-n">[${i+1}]</span>
                <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a>
                ${x.found_by ? `<span class="scope-note">— ${deptName(x.found_by)}</span>` : ''}</div>`).join('')}
-         </div></div>`
+         </div>`}
+       </div>`
     : '';
   return `<div class="round-grid">${cards}</div>${index}`;
 }
