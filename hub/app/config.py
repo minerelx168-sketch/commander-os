@@ -71,7 +71,9 @@ ZAI_API_URL = os.getenv("ZAI_API_URL", "https://api.z.ai/api/paas/v4/chat/comple
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/chat/completions")
 
-# --- Web research: first key wins; falls back to keyless DuckDuckGo ---
+# --- Web research: keyed indexes only, tried in priority order. No keyless
+# fallback: scraped engines answer bot checks that parse as zero results, and
+# "no evidence" must mean the web is quiet, not that the scraper was blocked. ---
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")  # serper.dev — cheap Google index

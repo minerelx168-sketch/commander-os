@@ -72,6 +72,16 @@ def set_provider(dept: str, provider: str) -> dict:
         return data["providers"]
 
 
+def reset_providers() -> dict:
+    """Back to the shipped line-up. Consults, decisions and memory are untouched
+    — this resets who answers, not what the board has already concluded."""
+    with _LOCK:
+        data = _load()
+        data["providers"] = {d: config.DEFAULT_PROVIDERS.get(d, "mock") for d in config.DEPTS}
+        _save(data)
+        return data["providers"]
+
+
 # ── consult sessions ──
 
 def create_session(question: str, project: str | None = None,

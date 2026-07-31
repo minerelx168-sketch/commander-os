@@ -98,7 +98,7 @@ def state() -> dict:
                       for k, v in config.PROVIDERS.items()],
         "projects": docs.list_projects(),
         "research": {"backend": research.backend(), "label": research.backend_label(),
-                     "keyed": research.backend() != "duckduckgo",
+                     "keyed": bool(research.configured()),
                      "default_on": config.WEB_RESEARCH_DEFAULT},
         "diversity": depts.model_diversity(),
         "memory_count": len(store.get_memory(limit=500)),
@@ -433,6 +433,17 @@ def set_provider(dept: str, body: ProviderIn) -> dict:
     if body.provider not in config.PROVIDERS:
         raise HTTPException(400, f"unknown provider: {body.provider}")
     return {"providers": store.set_provider(dept, body.provider)}
+
+
+@app.post("/api/agents/reset")
+def reset_agents() -> dict:
+    """Put every seat back on its shipped agent.
+
+    Free choice needs an undo: a CEO who has shuffled five seats while testing
+    has no way back to the diverse default without editing JSON by hand.
+    """
+    return {"providers": store.reset_providers(),
+            "diversity": depts.model_diversity()}
 
 
 # ── Documents: LINE / upload / Google Drive -> advisor knowledge ──

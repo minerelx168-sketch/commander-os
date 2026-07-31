@@ -66,16 +66,13 @@ def health() -> dict:
 
 @app.get("/api/status")
 def status() -> dict:
-    backend = research.backend()
+    live = [name for name, _fn, _label in research.configured()]
     return {
-        "backend": backend,
+        "backend": research.backend(),
         "backend_label": research.backend_label(),
-        "keyless_fallback": backend == "duckduckgo",
-        "paid_backends_configured": [
-            name for name, key in (("tavily", config.TAVILY_API_KEY),
-                                   ("brave", config.BRAVE_API_KEY),
-                                   ("serper", config.SERPER_API_KEY)) if key
-        ],
+        "backends": live,
+        "searchable": bool(live),
+        "paid_backends_configured": live,
         "queries_logged": len(_ledger_rows()),
     }
 
@@ -116,14 +113,15 @@ def summary() -> dict:
     state of its own tools instead of assuming search works."""
     rows = _ledger_rows()
     verified = [r for r in rows if r.get("kind") == "verify"]
+    live = [name for name, _fn, _label in research.configured()]
     return {
         "backend": research.backend_label(),
         "queries_run": sum(1 for r in rows if r.get("kind") == "search"),
         "citations_checked": len(verified),
         "citations_broken": sum(1 for r in verified if not r.get("resolved")),
-        "note": ("ค้นข้อมูลได้ตามปกติ" if research.backend() != "duckduckgo"
-                 else "ใช้ DuckDuckGo แบบไม่มี key — ผลค้นอาจตื้นกว่าปกติ "
-                      "ตั้ง TAVILY_API_KEY/BRAVE_API_KEY เพื่อคุณภาพที่ดีขึ้น"),
+        "note": ("ค้นข้อมูลได้ตามปกติ" if live else
+                 "ยังไม่ได้ตั้ง API key สำหรับค้นหา — ค้นเว็บไม่ได้เลย "
+                 "ห้ามเดาข้อมูลตลาดหรือคู่แข่ง ต้องรายงานว่ายังไม่มีหลักฐาน"),
     }
 
 

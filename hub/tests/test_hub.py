@@ -94,8 +94,9 @@ def test_state_shape(client):
     assert set(s["decision_stats"]) == {"total", "scored", "saved", "faster", "neutral", "missed"}
     # department service health is surfaced so the UI can show the online dot
     assert all("online" in d for d in s["depts"])
-    # web research backend is advertised (falls back to keyless duckduckgo)
-    assert s["research"]["backend"] == "duckduckgo" and s["research"]["label"]
+    # web research advertises its state; the suite runs with the keys cleared
+    assert s["research"]["backend"] == "none" and s["research"]["label"]
+    assert s["research"]["keyed"] is False
 
 
 # ── stepwise board flow with decision gates ──
@@ -346,73 +347,98 @@ def test_web_research_can_be_turned_off(client):
     assert s["next_step"] == "positions"      # the research stage is skipped
 
 
-def test_research_backend_selection_follows_the_keys(client, monkeypatch):
+def test_no_key_means_no_search_not_a_quiet_internet(client, monkeypatch):
+    """With no key the board must refuse to search and say so. Returning [] here
+    is what let an unsearchable board hand the CEO an evidence-free brief."""
     from app import config, research
-    assert research.backend() == "duckduckgo"
-    monkeypatch.setattr(config, "BRAVE_API_KEY", "x")
-    assert research.backend() == "brave"
-    monkeypatch.setattr(config, "TAVILY_API_KEY", "y")
-    assert research.backend() == "tavily"   # best available wins
+    for k in ("TAVILY_API_KEY", "SERPAPI_API_KEY", "BRAVE_API_KEY", "SERPER_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    assert research.backend() == "none" and research.configured() == []
+    out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert out["results"] == [] and out["engine"] is None
+    assert "API key" in out["error"], out["error"]
+    assert "TAVILY_API_KEY" in out["error"], "the error must name the fix"
 
 
-def test_search_never_raises_when_the_backend_dies(client):
-    from app import research
-    with patch("app.research._duckduckgo", side_effect=RuntimeError("boom")), \
-         patch("app.research._mojeek", side_effect=RuntimeError("boom")):
+def test_backend_priority_and_label_follow_the_keys(client, monkeypatch):
+    from app import config, research
+    for k in ("TAVILY_API_KEY", "SERPAPI_API_KEY", "BRAVE_API_KEY", "SERPER_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    for env, name in (("SERPER_API_KEY", "serper"), ("BRAVE_API_KEY", "brave"),
+                      ("SERPAPI_API_KEY", "serpapi"), ("TAVILY_API_KEY", "tavily")):
+        monkeypatch.setattr(config, env, "x")
+        assert research.backend() == name, f"{env} should take the top slot"
+    assert "Tavily" in research.backend_label() and "+3" in research.backend_label()
+
+
+def test_search_fails_over_across_keyed_backends(client, monkeypatch):
+    """Tavily rate-limiting for a minute must cost latency, not the evidence."""
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "y")
+    monkeypatch.setattr(config, "BRAVE_API_KEY", "")
+    monkeypatch.setattr(config, "SERPER_API_KEY", "")
+    hits = [{"title": "t", "url": "https://example.com/a", "snippet": "s"}]
+    rate_limited = httpx.HTTPStatusError(
+        "429", request=httpx.Request("POST", "https://api.tavily.com"),
+        response=httpx.Response(429))
+    with patch("app.research._tavily", side_effect=rate_limited), \
+         patch("app.research._serpapi", return_value=hits) as second:
+        out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert second.called, "the next keyed backend must get a turn"
+    assert out["results"] == hits and out["engine"] == "serpapi" and out["error"] is None
+
+
+def test_every_keyed_backend_failing_reports_each_reason(client, monkeypatch):
+    """The bug this guards: a 403 and a genuinely empty index both arrived as an
+    empty list, so the board reported no evidence for a search that never ran."""
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
+    monkeypatch.setattr(config, "SERPAPI_API_KEY", "y")
+    monkeypatch.setattr(config, "BRAVE_API_KEY", "")
+    monkeypatch.setattr(config, "SERPER_API_KEY", "")
+    blocked = httpx.HTTPStatusError(
+        "403", request=httpx.Request("GET", "https://api.tavily.com"),
+        response=httpx.Response(403))
+    with patch("app.research._tavily", side_effect=blocked), \
+         patch("app.research._serpapi", side_effect=RuntimeError("down")):
+        out = research.search_detail("ตลาดบาร์ เอกมัย")
+    assert out["results"] == [] and out["engine"] is None
+    assert "tavily" in out["error"] and "serpapi" in out["error"]
+    assert "403" in out["error"]
+
+
+def test_search_never_raises_when_every_backend_dies(client, monkeypatch):
+    from app import config, research
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
+    for k in ("SERPAPI_API_KEY", "BRAVE_API_KEY", "SERPER_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    with patch("app.research._tavily", side_effect=RuntimeError("boom")):
         assert research.search("อะไรก็ได้") == []
 
 
-# ── telling "the search was blocked" apart from "the web has nothing" ──
-
-def test_a_blocked_search_reports_why_instead_of_looking_empty(client):
-    """The bug this guards: a 403 and a genuinely empty index both arrived as
-    an empty list, so the board said "ไม่พบหลักฐาน" for a search that never ran."""
+def test_the_scraped_engines_are_gone(client):
+    """Keyless scrapers answered bot checks that parsed as zero results. They
+    must not come back through a helper left behind in the module."""
     from app import research
-    blocked = httpx.HTTPStatusError(
-        "403", request=httpx.Request("GET", "https://duckduckgo.com"),
-        response=httpx.Response(403))
-    with patch("app.research._duckduckgo", side_effect=blocked), \
-         patch("app.research._mojeek", side_effect=blocked):
-        out = research.search_detail("ตลาดบาร์ เอกมัย")
-    assert out["results"] == [] and out["engine"] is None
-    assert "403" in out["error"] and "ถูกบล็อก" in out["error"]
-    assert "duckduckgo" in out["error"] and "mojeek" in out["error"]
+    for gone in ("_duckduckgo", "_mojeek", "_parse_ddg", "_unwrap_ddg",
+                 "_DDG_ENDPOINTS", "_DDG_HEADERS", "_KEYLESS_CHAIN", "_BACKENDS"):
+        assert not hasattr(research, gone), f"{gone} is still present"
+    src = (Path(__file__).resolve().parent.parent / "app" / "research.py").read_text("utf-8")
+    body = src.split('"""', 2)[-1]      # past the docstring that explains why they went
+    assert "duckduckgo" not in body.lower() and "mojeek" not in body.lower()
+    assert [n for n, _e, _f, _l in research._PRIORITY] == \
+        ["tavily", "serpapi", "brave", "serper"]
 
 
-def test_an_engine_that_answers_with_a_bot_check_is_not_an_empty_index(client):
-    """HTTP 200 with nothing parseable is a bot wall, not a quiet internet."""
+def test_every_priority_entry_has_a_caller_a_key_and_a_label(client):
+    """A backend that resolves but has no implementation would silently return
+    nothing, which reads as the internet having no data on the subject."""
     from app import research
-
-    class _Resp:
-        text = "<html><body>Please verify you are human</body></html>"
-
-        def raise_for_status(self):
-            pass
-
-    with patch("httpx.get", return_value=_Resp()), patch("httpx.post", return_value=_Resp()):
-        with pytest.raises(research.BlockedError):
-            research._duckduckgo("อะไรก็ได้", 5)
-
-
-def test_the_keyless_path_falls_through_to_a_second_engine(client):
-    """One engine's bot check must not take the board's whole evidence base."""
-    from app import research
-    hits = [{"title": "t", "url": "https://example.com/a", "snippet": "s"}]
-    with patch("app.research._duckduckgo", side_effect=research.BlockedError("bot check")), \
-         patch("app.research._mojeek", return_value=hits) as second:
-        out = research.search_detail("ตลาดบาร์ เอกมัย")
-    assert second.called
-    assert out["results"] == hits and out["engine"] == "mojeek" and out["error"] is None
-
-
-def test_a_keyed_backend_does_not_fall_through_to_the_keyless_engines(client, monkeypatch):
-    from app import config, research
-    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
-    with patch("app.research._tavily", side_effect=RuntimeError("down")), \
-         patch("app.research._mojeek") as keyless:
-        out = research.search_detail("q")
-    assert not keyless.called and out["results"] == []
-    assert out["error"].startswith("tavily:")
+    for name, env, fn, label in research._PRIORITY:
+        assert hasattr(config, env), f"config is missing {env}"
+        assert hasattr(research, fn), f"{name} has no caller"
+        assert label, f"{name} has no label"
 
 
 def test_serpapi_reads_organic_results_and_defaults_to_thai(client, monkeypatch):
@@ -535,83 +561,42 @@ def test_a_search_that_ran_but_found_nothing_is_not_blamed_on_blocking(client):
     assert "TAVILY_API_KEY" not in desk["text"]
 
 
-def test_diagnose_reports_a_working_search(client):
+def test_diagnose_reports_a_working_search(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
     hits = [{"title": "ตลาดร้านอาหาร", "url": "https://example.com/x", "snippet": "s"}]
-    with patch("app.research._duckduckgo", return_value=hits):
+    with patch("app.research._tavily", return_value=hits):
         j = client.get("/api/research/diagnose").json()
-    assert j["ok"] is True and j["found"] == 1 and j["engine"] == "duckduckgo"
+    assert j["ok"] is True and j["found"] == 1 and j["engine"] == "tavily"
     assert j["error"] is None and j["sample"][0]["url"] == "https://example.com/x"
+    assert j["keyed"] is True and j["backends"][0] == "tavily"
 
 
-def test_diagnose_reports_a_blocked_search(client):
-    with patch("app.research._duckduckgo", side_effect=research_blocked()), \
-         patch("app.research._mojeek", side_effect=research_blocked()):
+def test_diagnose_reports_a_blocked_search(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "TAVILY_API_KEY", "x")
+    for k in ("SERPAPI_API_KEY", "BRAVE_API_KEY", "SERPER_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    with patch("app.research._tavily", side_effect=research_blocked()):
         j = client.get("/api/research/diagnose").json()
     assert j["ok"] is False and j["found"] == 0
-    assert "ถูกบล็อก" in j["error"] and j["keyed"] is False
+    assert "ถูกบล็อก" in j["error"] and j["keyed"] is True
+
+
+def test_diagnose_says_so_when_no_key_is_configured(client, monkeypatch):
+    """An unsearchable board must be loud about it — this is the state that used
+    to masquerade as "the web has nothing on this"."""
+    from app import config
+    for k in ("TAVILY_API_KEY", "SERPAPI_API_KEY", "BRAVE_API_KEY", "SERPER_API_KEY"):
+        monkeypatch.setattr(config, k, "")
+    j = client.get("/api/research/diagnose").json()
+    assert j["ok"] is False and j["keyed"] is False and j["backends"] == []
+    assert "API key" in j["error"]
 
 
 def research_blocked():
     return httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"),
                                  response=httpx.Response(403))
-
-
-DDG_LITE = ('<table><tr><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg='
-            'https%3A%2F%2Fexample.com%2Fa&rut=x" class="result-link">หัวข้อ A</a></td></tr>'
-            '<tr><td class="result-snippet">สรุป A 4,200 ล้านบาท</td></tr></table>')
-DDG_HTML = ('<div><a rel="nofollow" class="result__a" href="https://example.com/b">Title B</a>'
-            '<a class="result__snippet">Snippet B</a></div>')
-
-
-@pytest.mark.parametrize(("markup", "url", "title"), [
-    (DDG_LITE, "https://example.com/a", "หัวข้อ A"),   # href before class, link wrapped in /l/?uddg=
-    (DDG_HTML, "https://example.com/b", "Title B"),    # class before href, plain link
-])
-def test_keyless_duckduckgo_parses_both_layouts(client, markup, url, title):
-    from app import research
-
-    class _Resp:
-        text = markup
-
-        def raise_for_status(self):
-            pass
-
-    with patch("httpx.post", return_value=_Resp()):
-        hits = research._duckduckgo("อะไรก็ได้", 5)
-    assert [h["url"] for h in hits] == [url]
-    assert hits[0]["title"] == title and hits[0]["snippet"]
-
-
-def test_duckduckgo_tries_every_shape_before_giving_up(client):
-    """DuckDuckGo blocks automated traffic per method and per endpoint, so the
-    fallback must walk GET/POST across both hosts rather than stop at the first
-    refusal. Patch both verbs — patching only POST used to hide the GET path."""
-    from app import research
-
-    class _Resp:
-        text = DDG_HTML
-
-        def raise_for_status(self):
-            pass
-
-    calls = []
-
-    def _fail(url, **kw):
-        calls.append(("GET" if "params" in kw else "POST", url))
-        raise RuntimeError("blocked")
-
-    # first endpoint refuses both verbs; the second answers on GET
-    with patch("httpx.get", side_effect=[RuntimeError("lite GET down"), _Resp()]), \
-         patch("httpx.post", side_effect=RuntimeError("lite POST down")):
-        hits = research._duckduckgo("อะไรก็ได้", 5)
-    assert hits[0]["url"] == "https://example.com/b"
-
-    # every shape refusing must raise, never report an empty internet
-    with patch("httpx.get", side_effect=_fail), patch("httpx.post", side_effect=_fail), \
-         pytest.raises(Exception):
-        research._duckduckgo("อะไรก็ได้", 5)
-    assert len(calls) == 2 * len(research._DDG_ENDPOINTS), \
-        f"expected GET+POST on every endpoint, got {calls}"
 
 
 # ── PDF reports ──
@@ -863,11 +848,59 @@ def test_the_brief_carries_confidence_into_the_pdf(client):
 
 # ── echo-chamber control: distinct models behind the seats ──
 
-def test_seats_run_on_different_vendors_by_default(client):
-    """Personas on one model is one brain in five hats — the seats must differ."""
+def test_the_default_line_up_is_diverse_but_not_enforced(client):
+    """The shipped default puts every seat on a different agent — personas on one
+    model is one brain in five hats. But it is a *default*, not a rule: the CEO
+    may put two seats on one lab deliberately, and the board's job is to warn,
+    never to refuse. This test guards both halves of that."""
     assigned = set(config.DEFAULT_PROVIDERS.values())
-    assert len(assigned) == len(config.DEFAULT_PROVIDERS), "two seats share an agent"
+    assert len(assigned) == len(config.DEFAULT_PROVIDERS), "the default must not share an agent"
     assert len(assigned) >= 4
+
+    # any seat may take any provider, including one already in use elsewhere
+    for dept in config.DEPTS:
+        for provider in config.PROVIDERS:
+            r = client.put(f"/api/dept/{dept}/provider", json={"provider": provider})
+            assert r.status_code == 200, f"{dept} -> {provider} was refused: {r.text}"
+            assert r.json()["providers"][dept] == provider
+
+    # and the extreme case — one lab everywhere — is allowed but called out
+    for dept in config.DEPTS:
+        client.put(f"/api/dept/{dept}/provider", json={"provider": "anthropic"})
+    state = client.get("/api/state").json()
+    assert state["diversity"]["distinct"] == 1
+    assert state["diversity"]["warning"], "a single-lab board must be flagged"
+
+
+def test_agents_can_be_reset_to_the_shipped_line_up(client):
+    """Free choice needs an undo: after shuffling five seats there must be a way
+    back to the diverse default without hand-editing JSON."""
+    for dept in config.DEPTS:
+        client.put(f"/api/dept/{dept}/provider", json={"provider": "mock"})
+    assert set(client.get("/api/state").json()["depts"][0].values())  # sanity
+
+    r = client.post("/api/agents/reset")
+    assert r.status_code == 200
+    assert r.json()["providers"] == {d: config.DEFAULT_PROVIDERS.get(d, "mock")
+                                     for d in config.DEPTS}
+    assert r.json()["diversity"]["distinct"] >= 1
+
+
+def test_reset_touches_agents_only_not_the_board_s_history(client):
+    """Resetting who answers must not erase what the board already concluded."""
+    s = _finished_consult(client)
+    before = len(client.get("/api/consults").json()["consults"])
+    client.post("/api/agents/reset")
+    after = client.get("/api/consults").json()["consults"]
+    assert len(after) == before
+    assert any(c["id"] == s["id"] for c in after), "the consult survived the reset"
+
+
+def test_an_unknown_seat_or_agent_is_still_refused(client):
+    """Free choice among real agents — not free choice of typos, which would
+    silently leave a seat on a provider that does not exist."""
+    assert client.put("/api/dept/nope/provider", json={"provider": "anthropic"}).status_code == 404
+    assert client.put("/api/dept/cmo/provider", json={"provider": "gpt-9"}).status_code == 400
 
 
 def test_a_single_vendor_board_is_called_out(client, monkeypatch):
@@ -917,38 +950,6 @@ def test_vendor_overlap_is_named_seat_by_seat(client, monkeypatch):
     assert sorted(div["shared_vendors"]["Anthropic"]) == ["cfo", "researcher"]
     # the warning must name the seats, using their display names
     assert "CFO" in div["warning"] and "Researcher" in div["warning"]
-
-
-def test_search_backend_priority_follows_the_keys_present(client, monkeypatch):
-    """Which index the board searches must follow from the keys configured, not
-    from luck. Tavily first (returns extracted content), then SerpApi's Google
-    index, then Brave, then serper, and only then the keyless fallback."""
-    from app import research
-
-    order = [("TAVILY_API_KEY", "tavily"), ("SERPAPI_API_KEY", "serpapi"),
-             ("BRAVE_API_KEY", "brave"), ("SERPER_API_KEY", "serper")]
-    for name, _ in order:
-        monkeypatch.setattr(f"app.config.{name}", "")
-    assert research.backend() == "duckduckgo", "no keys -> keyless fallback"
-
-    # add keys back in reverse priority: each one must take over the top slot
-    for name, expected in reversed(order):
-        monkeypatch.setattr(f"app.config.{name}", "k")
-        assert research.backend() == expected, f"{name} should win, got {research.backend()}"
-        assert expected in research.backend_label().lower() or \
-            research.backend_label(), "the label must name the live backend"
-
-
-def test_every_backend_has_a_caller_and_a_label(client):
-    """A backend that resolves but has no implementation would silently return
-    nothing, which reads as 'the internet has no data on this'."""
-    from app import research
-
-    for key in research._BACKENDS:
-        assert hasattr(research, research._BACKENDS[key]), f"{key} has no caller"
-    for name, _ in [("TAVILY_API_KEY", 0), ("SERPAPI_API_KEY", 0),
-                    ("BRAVE_API_KEY", 0), ("SERPER_API_KEY", 0)]:
-        assert hasattr(config, name), f"config is missing {name}"
 
 
 def test_every_provider_declares_a_vendor(client):

@@ -1319,7 +1319,10 @@ body {
     <div class="card">
       <div class="card-header">
         <span class="card-title">ผูก AI Provider เข้ากับที่ปรึกษา</span>
-        <span style="font-size:12px;color:var(--text-3)">Claude · Gemini · Manus — สลับได้ทันที</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:12px;color:var(--text-3)">เลือกค่ายไหนให้ที่นั่งไหนก็ได้ — สลับได้ทันที</span>
+          <button class="btn btn-alt btn-sm" onclick="resetAgents(this)">↺ คืนค่าเริ่มต้น</button>
+        </div>
       </div>
       <div id="agent-rows">
         <div class="empty-state"><div class="empty-state-text">กำลังโหลด…</div></div>
@@ -1396,7 +1399,7 @@ async function loadState() {
     if (!SEARCH_TESTED) {           // a real diagnose verdict outranks this hint
       document.getElementById('scope-note').textContent =
         `ค้นเว็บผ่าน ${rs.label || '-'}` +
-        (rs.keyed ? '' : ' — ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env เพื่อผลค้นที่แม่นกว่านี้');
+        (rs.keyed ? '' : ' — ยังค้นเว็บไม่ได้ ต้องใส่ TAVILY_API_KEY หรือ SERPAPI_API_KEY ใน hub/.env');
     }
     if (!WEB_TOGGLE_SET) {          // seed once; never fight the CEO's choice
       document.getElementById('ask-web').checked = rs.default_on !== false;
@@ -1817,11 +1820,11 @@ async function testSearch(btn) {
     const j = await (await fetch('/api/research/diagnose')).json();
     if (j.ok) {
       note.innerHTML = `✅ ค้นเว็บได้ปกติ — ${esc(j.label)} (engine: ${esc(j.engine||'-')}) เจอ ${j.found} แหล่ง` +
-        (j.keyed ? '' : ' · ยังใช้แบบไม่มี key อยู่ ถ้าโดนบล็อกบ่อยให้ใส่ TAVILY_API_KEY');
+        ((j.backends||[]).length > 1 ? ` · สำรอง: ${esc((j.backends||[]).slice(1).join(', '))}` : '');
       note.style.color = 'var(--green)';
     } else {
       note.innerHTML = `❌ ค้นเว็บไม่ได้ — ${esc(j.error || 'ไม่ทราบสาเหตุ')}` +
-        (j.keyed ? '' : ' · ใส่ TAVILY_API_KEY, SERPAPI_API_KEY หรือ BRAVE_API_KEY ใน hub/.env แล้วรีสตาร์ท hub');
+        (j.keyed ? ' · ลองใหม่อีกครั้ง หรือเช็คโควตา API' : ' · ใส่ TAVILY_API_KEY หรือ SERPAPI_API_KEY ใน hub/.env แล้วรีสตาร์ท hub');
       note.style.color = 'var(--red)';
     }
   } catch (e) {
@@ -2167,12 +2170,40 @@ function renderAgents() {
         ${d.provider_ready ? '● Key Ready' : '○ No Key'}
       </span>
       <select class="agent-select" onchange="setProvider('${d.key}', this.value)">
-        ${STATE.providers.map(p => `
-          <option value="${p.key}" ${p.key===d.provider?'selected':''}>
-            ${esc(p.label)} — ${esc(p.model)}${p.ready?'':' (no key)'}
-          </option>`).join('')}
+        ${vendorGroups().map(([vendor, ps]) => `
+          <optgroup label="${esc(vendor)}">
+            ${ps.map(p => `
+              <option value="${p.key}" ${p.key===d.provider?'selected':''}>
+                ${esc(p.model)}${p.ready?'':' (no key)'}
+              </option>`).join('')}
+          </optgroup>`).join('')}
       </select>
     </div>`).join('') || `<div class="empty-state"><div class="empty-state-text">กำลังโหลด…</div></div>`);
+}
+
+// Grouped by lab, because the choice that matters is which vendor a seat runs
+// on — two models from one lab share blind spots however different they look.
+function vendorGroups() {
+  const by = new Map();
+  (STATE.providers || []).forEach(p => {
+    const v = p.vendor || '—';
+    if (!by.has(v)) by.set(v, []);
+    by.get(v).push(p);
+  });
+  return [...by.entries()];
+}
+
+async function resetAgents(btn) {
+  const old = btn.innerHTML;
+  btn.disabled = true; btn.innerHTML = '⏳ กำลังคืนค่า…';
+  try {
+    const r = await fetch('/api/agents/reset', { method: 'POST' });
+    if (!r.ok) throw new Error(await r.text());
+    await loadState();
+  } catch (e) {
+    alert('คืนค่าไม่สำเร็จ: ' + e.message);
+  }
+  btn.disabled = false; btn.innerHTML = old;
 }
 
 async function setProvider(dept, provider) {

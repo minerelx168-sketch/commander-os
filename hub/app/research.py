@@ -1,14 +1,19 @@
 """Web research layer — the board is grounded in the open internet, not only
 the CEO's own document library.
 
-Search backend is chosen by whichever key exists, best first, and degrades to
-a keyless DuckDuckGo fallback so the feature works out of the box:
+Search runs on **paid, keyed indexes only**. Every configured backend is tried
+in order, so one API having a bad minute costs latency rather than evidence:
 
     TAVILY_API_KEY  -> Tavily     (LLM-oriented, returns extracted content)
-    BRAVE_API_KEY   -> Brave       (independent index)
-    SERPAPI_API_KEY -> SerpApi     (Google, per-search pricing)
-    SERPER_API_KEY  -> serper.dev  (Google, cheaper)
-    (none)          -> DuckDuckGo lite HTML
+    SERPAPI_API_KEY -> SerpApi    (Google index, Thai locale)
+    BRAVE_API_KEY   -> Brave      (independent index)
+    SERPER_API_KEY  -> serper.dev (Google, cheaper)
+
+There is deliberately no keyless fallback. Scraping DuckDuckGo/Mojeek looked
+free but returned bot-check pages that parsed as zero results, which the board
+then reported as "ไม่พบหลักฐาน" — indistinguishable from a subject the web
+genuinely has nothing on. A board that cannot search must say so loudly, not
+quietly hand the CEO an evidence-free brief.
 
 Raw results are never fed to the advisors directly. `depts.run_research`
 sends them through an analyst pass that screens for relevance, credibility
@@ -27,23 +32,34 @@ log = logging.getLogger("hub.research")
 TIMEOUT = 20.0
 UA = "Mozilla/5.0 (compatible; CommanderHub/1.0; +strategic-advisory)"
 
+# Priority order: Tavily first because it returns extracted page bodies (no
+# per-source re-fetch), then Google indexes, then Brave.
+_PRIORITY = (
+    ("tavily", "TAVILY_API_KEY", "_tavily", "Tavily"),
+    ("serpapi", "SERPAPI_API_KEY", "_serpapi", "SerpApi (Google)"),
+    ("brave", "BRAVE_API_KEY", "_brave", "Brave Search"),
+    ("serper", "SERPER_API_KEY", "_serper", "Serper (Google)"),
+)
+
+
+def configured() -> list[tuple[str, str, str]]:
+    """(name, caller, label) for every backend that actually has a key."""
+    return [(name, fn, label) for name, env, fn, label in _PRIORITY
+            if getattr(config, env, "")]
+
 
 def backend() -> str:
-    if config.TAVILY_API_KEY:
-        return "tavily"
-    if config.SERPAPI_API_KEY:
-        return "serpapi"
-    if config.BRAVE_API_KEY:
-        return "brave"
-    if config.SERPER_API_KEY:
-        return "serper"
-    return "duckduckgo"
+    """The backend a search will try first, or "none" when no key is set."""
+    live = configured()
+    return live[0][0] if live else "none"
 
 
 def backend_label() -> str:
-    return {"tavily": "Tavily", "brave": "Brave Search",
-            "serpapi": "SerpApi (Google)", "serper": "Serper (Google)",
-            "duckduckgo": "DuckDuckGo (ไม่ต้องใช้ key)"}[backend()]
+    live = configured()
+    if not live:
+        return "ยังไม่ได้ตั้งค่า API key สำหรับค้นหา"
+    label = live[0][2]
+    return label if len(live) == 1 else f"{label} (+{len(live) - 1} สำรอง)"
 
 
 # ── search backends: each returns [{title, url, snippet, content?}] ──
@@ -106,124 +122,10 @@ def _serper(query: str, k: int) -> list[dict]:
             for x in r.json().get("organic", [])]
 
 
-# DuckDuckGo serves two different markups; support both so a layout change on
-# one endpoint does not silently kill keyless research.
-_DDG_PATTERNS = (
-    # lite layout: <a rel=… href=… class="result-link">  (href comes before class)
-    re.compile(r'<a(?P<attrs>[^>]*\bclass="result-link"[^>]*)>(?P<title>.*?)</a>'
-               r'.*?class="result-snippet"[^>]*>(?P<snippet>.*?)</td>', re.S),
-    # html layout: <a rel=… class="result__a" href=…>
-    re.compile(r'<a(?P<attrs>[^>]*\bclass="result__a"[^>]*)>(?P<title>.*?)</a>'
-               r'.*?class="result__snippet"[^>]*>(?P<snippet>.*?)</a>', re.S),
-)
-_HREF = re.compile(r'\bhref="([^"]+)"')
-_DDG_ENDPOINTS = ("https://lite.duckduckgo.com/lite/", "https://html.duckduckgo.com/html/")
-_DDG_HEADERS = {
-    "User-Agent": UA,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "th,en-US;q=0.9,en;q=0.8",
-    "Referer": "https://duckduckgo.com/",
-}
-
-
-def _unwrap_ddg(url: str) -> str:
-    """DDG wraps outbound links as //duckduckgo.com/l/?uddg=<encoded>."""
-    url = html.unescape(url)
-    if "uddg=" in url:
-        from urllib.parse import parse_qs, unquote, urlparse
-        target = parse_qs(urlparse(url if url.startswith("http") else "https:" + url).query).get("uddg")
-        if target:
-            return unquote(target[0])
-    return url
-
-
 class BlockedError(RuntimeError):
-    """The engine answered, but with a bot check instead of results."""
+    """The engine answered, but with a bot check or an empty page."""
 
 
-def _parse_ddg(html_text: str, k: int) -> list[dict]:
-    for pattern in _DDG_PATTERNS:
-        out = []
-        for m in pattern.finditer(html_text):
-            href = _HREF.search(m.group("attrs"))
-            if not href:
-                continue
-            out.append({"title": _strip_html(m.group("title")),
-                        "url": _unwrap_ddg(href.group(1)),
-                        "snippet": _strip_html(m.group("snippet"))})
-            if len(out) >= k:
-                break
-        if out:
-            return out
-    return []
-
-
-def _duckduckgo(query: str, k: int) -> list[dict]:
-    """Keyless fallback. DuckDuckGo throttles automated traffic hard, so try
-    GET before POST on both endpoints — a POST-only client is the first thing
-    its bot check rejects."""
-    last_error: Exception | None = None
-    for endpoint in _DDG_ENDPOINTS:
-        for method in ("GET", "POST"):
-            try:
-                if method == "GET":
-                    r = httpx.get(endpoint, params={"q": query}, headers=_DDG_HEADERS,
-                                  timeout=TIMEOUT, follow_redirects=True)
-                else:
-                    r = httpx.post(endpoint, data={"q": query}, headers=_DDG_HEADERS,
-                                   timeout=TIMEOUT, follow_redirects=True)
-                r.raise_for_status()
-            except Exception as e:  # noqa: BLE001 — try the next shape
-                last_error = e
-                continue
-            out = _parse_ddg(r.text, k)
-            if out:
-                return out
-            # 200 with nothing parseable is DuckDuckGo's bot-check page, not an
-            # empty index. Saying "no results" here is what makes a blocked
-            # search look like a subject the internet has nothing on.
-            last_error = BlockedError(
-                "DuckDuckGo ตอบกลับมาแต่ไม่มีผลลัพธ์ที่อ่านได้ (น่าจะโดนหน้าตรวจบอท)")
-    if last_error is not None:
-        raise last_error
-    return []
-
-
-_MOJEEK_ROW = re.compile(
-    r'<a[^>]*\bclass="ob"[^>]*href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>'
-    r'.*?<p class="s">(?P<snippet>.*?)</p>', re.S)
-
-
-def _mojeek(query: str, k: int) -> list[dict]:
-    """A second keyless engine on an independent index. When DuckDuckGo blocks
-    us there is otherwise nothing left, and the board silently loses the web."""
-    r = httpx.get("https://www.mojeek.com/search", params={"q": query},
-                  headers=_DDG_HEADERS, timeout=TIMEOUT, follow_redirects=True)
-    r.raise_for_status()
-    out = []
-    for m in _MOJEEK_ROW.finditer(r.text):
-        url = html.unescape(m.group("url"))
-        if not url.startswith("http"):
-            continue
-        out.append({"title": _strip_html(m.group("title")), "url": url,
-                    "snippet": _strip_html(m.group("snippet"))})
-        if len(out) >= k:
-            break
-    if not out:
-        raise BlockedError("Mojeek ตอบกลับมาแต่ไม่มีผลลัพธ์ที่อ่านได้")
-    return out
-
-
-# Backends are resolved by NAME at call time, not bound at import time: binding
-# the function objects here would freeze them into this dict, so patching
-# app.research._duckduckgo (tests, hot-swaps) would silently keep hitting the
-# real network instead of the replacement.
-_BACKENDS = {"tavily": "_tavily", "brave": "_brave",
-             "serpapi": "_serpapi", "serper": "_serper",
-             "duckduckgo": "_duckduckgo"}
-# Tried in order when no key is configured, so one engine's bot check does not
-# take the whole board's evidence with it.
-_KEYLESS_CHAIN = ("_duckduckgo", "_mojeek")
 
 
 def _reason(exc: Exception) -> str:
@@ -246,25 +148,33 @@ def _reason(exc: Exception) -> str:
 def search_detail(query: str, k: int = 5) -> dict:
     """One search, with the reason it came back empty.
 
+    Every configured backend is tried in priority order, so Tavily rate-limiting
+    for a minute costs a second of latency instead of the board's evidence.
     `search()` used to swallow every failure into an empty list, which made a
     blocked search indistinguishable from a subject the web has nothing on —
     and the board reported "ไม่พบหลักฐาน" for both.
     """
-    name = backend()
-    chain = _KEYLESS_CHAIN if name == "duckduckgo" else (_BACKENDS[name],)
+    live = configured()
+    if not live:
+        return {"results": [], "engine": None,
+                "error": ("ยังไม่ได้ตั้งค่า API key สำหรับค้นหา — ใส่ TAVILY_API_KEY "
+                          "หรือ SERPAPI_API_KEY ใน hub/.env แล้วรีสตาร์ท hub "
+                          "(ระบบไม่ใช้เครื่องมือค้นแบบไม่มี key แล้ว เพราะมันคืนหน้าตรวจบอท "
+                          "ที่อ่านได้เป็น 'ไม่พบข้อมูล')")}
     errors = []
-    for fn in chain:
+    for name, fn, _label in live:
         try:
             results = globals()[fn](query, k)
         except Exception as e:  # noqa: BLE001 — a dead engine must not kill the consult
-            log.warning("search %s failed for %r: %s", fn, query, e)
-            errors.append(f"{fn.lstrip('_')}: {_reason(e)}")
+            log.warning("search %s failed for %r: %s", name, query, e)
+            errors.append(f"{name}: {_reason(e)}")
             continue
         if results:
-            return {"results": results, "error": None, "engine": fn.lstrip("_")}
-        errors.append(f"{fn.lstrip('_')}: ไม่พบผลลัพธ์")
-    return {"results": [], "error": " · ".join(errors) or "ไม่พบผลลัพธ์",
-            "engine": None}
+            if errors:  # a fallback saved the search — worth knowing about
+                log.info("search %s served %r after %s", name, query, "; ".join(errors))
+            return {"results": results, "error": None, "engine": name}
+        errors.append(f"{name}: ไม่พบผลลัพธ์")
+    return {"results": [], "error": " · ".join(errors), "engine": None}
 
 
 def search(query: str, k: int = 5) -> list[dict]:
@@ -277,8 +187,9 @@ def diagnose() -> dict:
     """Run one canary query so the CEO can tell a blocked search from a quiet
     one without reading server logs."""
     out = search_detail("ตลาดร้านอาหาร กรุงเทพ 2026", 3)
+    live = configured()
     return {"backend": backend(), "label": backend_label(),
-            "keyed": backend() != "duckduckgo",
+            "keyed": bool(live), "backends": [n for n, _f, _l in live],
             "ok": bool(out["results"]), "engine": out["engine"],
             "found": len(out["results"]), "error": out["error"],
             "sample": [{"title": s.get("title", ""), "url": s.get("url", "")}
