@@ -56,9 +56,12 @@ class ScoreIn(BaseModel):
 def _view(session: dict) -> dict:
     """Session + what the CEO may do next (drives the decision gate in the UI)."""
     nxt = depts.next_step(session)
+    legacy = bool({s["key"] for s in session.get("steps", [])} & depts.LEGACY_STEPS)
     return {**session, "next_step": nxt,
             "next_label": depts.STEP_LABELS.get(nxt) if nxt else None,
-            "steps_all": depts.STEPS, "step_labels": depts.STEP_LABELS}
+            "steps_all": depts.STEPS, "step_labels": depts.STEP_LABELS,
+            "convened": depts.seats(session), "legacy": legacy,
+            "confidence": depts.confidence_summary(session)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -88,9 +91,24 @@ def state() -> dict:
         "research": {"backend": research.backend(), "label": research.backend_label(),
                      "keyed": research.backend() != "duckduckgo",
                      "default_on": config.WEB_RESEARCH_DEFAULT},
+        "diversity": depts.model_diversity(),
+        "memory_count": len(store.get_memory(limit=500)),
         "consults": store.get_consults(8),
         "decision_stats": store.decision_stats(),
     }
+
+
+@app.get("/api/memory")
+def board_memory(project: str | None = None, limit: int = 40) -> dict:
+    """What the board concluded before — the archive Frame checks against."""
+    return {"memory": store.get_memory(project, limit)}
+
+
+@app.delete("/api/memory/{memory_id}")
+def forget(memory_id: int) -> dict:
+    if not store.forget_memory(memory_id):
+        raise HTTPException(404, "memory not found")
+    return {"forgotten": memory_id}
 
 
 # ── Boardroom: a consult advances one step at a time ──
@@ -187,7 +205,9 @@ def step_report(session_id: int, step: str, refresh: bool = False) -> Response:
     session = store.get_consult(session_id)
     if session is None:
         raise HTTPException(404, "consult not found")
-    if step not in depts.STEPS:
+    # STEP_LABELS also covers the pre-Crucible stage names, so archived sessions
+    # can still be exported instead of 400-ing on their own history.
+    if step not in depts.STEP_LABELS:
         raise HTTPException(400, f"unknown step: {step}")
     if refresh:
         report.methodology(session, step, refresh=True)

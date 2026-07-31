@@ -971,7 +971,7 @@ body {
 /* ============================================================
    RESEARCH + CHAIRMAN CARDS
    ============================================================ */
-.research-card, .chair-card {
+.research-card, .chair-card, .frame-card, .redteam-card {
   background: var(--bg-3);
   border: 1px solid var(--border-2);
   border-radius: var(--radius-lg);
@@ -979,6 +979,8 @@ body {
 }
 .research-card { border-color: rgba(34,197,94,.3); }
 .chair-card    { border-color: rgba(59,130,246,.35); }
+.frame-card    { border-color: rgba(139,92,246,.4); }
+.redteam-card  { border-color: rgba(239,68,68,.4); }
 .research-card.err { border-color: rgba(239,68,68,.3); }
 
 .wide-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -988,6 +990,8 @@ body {
   background: var(--bg-2); border: 1px solid var(--border-2);
 }
 .research-card .wide-icon { border-color: rgba(34,197,94,.4); }
+.frame-card .wide-icon    { border-color: rgba(139,92,246,.5); }
+.redteam-card .wide-icon  { border-color: rgba(239,68,68,.5); }
 .chair-card .wide-icon    { background: var(--accent); box-shadow: 0 2px 8px rgba(59,130,246,.3); }
 .wide-name { font-size: 14px; font-weight: 600; }
 .wide-sub  { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: .8px; margin-top: 1px; }
@@ -998,6 +1002,10 @@ body {
   font-size: 11px; padding: 4px 10px; border-radius: 20px;
   background: rgba(34,197,94,.1); color: var(--green);
   border: 1px solid rgba(34,197,94,.25);
+}
+.qchip.conf {
+  background: rgba(59,130,246,.12); color: #93c5fd;
+  border-color: rgba(59,130,246,.3); font-weight: 600;
 }
 .srcs { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 13px; }
 .srcs-h {
@@ -1144,7 +1152,7 @@ body {
   <div class="topbar" id="topbar">
     <div>
       <div class="page-title" id="page-title">Boardroom</div>
-      <div class="page-subtitle" id="page-subtitle">โยนโจทย์ยากให้บอร์ดถกก่อนคุณตัดสิน</div>
+      <div class="page-subtitle" id="page-subtitle">บอร์ดหลายโมเดลถกกันจนได้ข้อเสนอที่ปกป้องได้ ก่อนคุณตัดสิน</div>
     </div>
     <div class="topbar-actions" id="topbar-actions"></div>
   </div>
@@ -1168,7 +1176,7 @@ body {
       </div>
       <div class="ask-row">
         <textarea class="ask-textarea" id="ask-text" rows="2"
-          placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะสืบข้อมูล → ให้ความเห็น → วิพากษ์กันเอง → คำตัดสิน → บทสรุปประธาน"></textarea>
+          placeholder="พิมพ์ทางแยกสำคัญทางธุรกิจ… บอร์ดจะตั้งกรอบ → หาหลักฐานแยกกัน → เปิดจุดยืน → ถกเถียง → Red-team + วัดความมั่นใจ → Defensible Brief"></textarea>
         <button class="btn btn-primary" id="ask-btn" onclick="askBoard()">
           ⚡ CONSULT
         </button>
@@ -1317,7 +1325,13 @@ const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
 let STATE = { depts:[], providers:[], projects:[], consults:[], decision_stats:{} };
 // Derived from /api/state, never hand-listed — a seat added on the server
 // (e.g. the Researcher) must appear in the board without touching this file.
-const deptKeys = () => STATE.depts.map(d => d.key);
+// Seats in the order the sidebar shows them, narrowed to the ones Frame
+// convened for this session — an uninvited seat has nothing to render.
+const deptKeys = () => {
+  const all = STATE.depts.map(d => d.key);
+  const convened = (SESSION && SESSION.convened) || null;
+  return convened ? all.filter(k => convened.includes(k)) : all;
+};
 let SESSION = null;        // current consult session (carries next_step / status)
 let RUNNING = false;
 let ABORT = null;          // AbortController for the round in flight
@@ -1325,7 +1339,7 @@ let WEB_TOGGLE_SET = false;
 
 /* ---------- page meta ---------- */
 const PAGE_META = {
-  board:     { title:'Boardroom',  sub:'โยนโจทย์ยากให้บอร์ดถกก่อนคุณตัดสิน' },
+  board:     { title:'Boardroom',  sub:'บอร์ดหลายโมเดลถกกันจนได้ข้อเสนอที่ปกป้องได้ ก่อนคุณตัดสิน' },
   decisions: { title:'Decisions',  sub:'วัดผลที่ปรึกษาจากการตัดสินใจจริง' },
   docs:      { title:'เอกสาร',     sub:'คลังความรู้ธุรกิจของคุณ (LINE → Google Drive)' },
   agents:    { title:'Agents',     sub:'เลือก AI ให้แต่ละที่ปรึกษา' },
@@ -1420,6 +1434,7 @@ function opCard(dept, a, cls) {
         <div class="op-card-name">${esc(d.name)}</div>
         <span class="op-card-provider">${esc(a.provider)}</span>
       </div>
+      ${a.confidence != null ? `<div class="qchips"><span class="qchip conf">ความมั่นใจ ${a.confidence}%</span></div>` : ''}
       <div class="op-card-body">${esc(a.text)}</div>
       ${dl ? `<div class="dl-bar">
         <button class="btn btn-alt btn-sm" onclick="getDeliverable('${dept}', this)"
@@ -1443,33 +1458,88 @@ function wideCard(kind, icon, name, sub, a, extra) {
     </div>`;
 }
 
-function researchCard(a) {
-  const chips = (a.queries||[]).length
-    ? `<div class="qchips">${a.queries.map(q => `<span class="qchip">🔍 ${esc(q)}</span>`).join('')}</div>` : '';
+// Each seat's own evidence desk: its queries, its screened brief, its sources.
+function seatResearchCard(dept, a) {
+  const d = STATE.depts.find(x => x.key === dept) || { icon:'🔬', name:dept };
+  const chips = (a.queries||[]).map(q => `<span class="qchip">🔍 ${esc(q)}</span>`).join('');
   const srcs = (a.sources||[]).map((s,i) => `
     <div class="src"><span class="src-n">[${i+1}]</span>
       <a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.url)}</a></div>`).join('');
-  return wideCard('research-card', '🌐', 'ฝ่ายวิจัยข้อมูล — ข้อมูลจากอินเทอร์เน็ตที่ผ่านการคัดกรอง',
-                  'RESEARCH ANALYST', a, chips)
-    + (srcs ? `<div class="research-card" style="margin-top:-1px;border-top:none;border-radius:0 0 var(--radius-lg) var(--radius-lg);padding-top:0;">
-         <div class="srcs"><div class="srcs-h">แหล่งข้อมูลที่ดึงมาคัดกรอง (${(a.sources||[]).length})</div>${srcs}</div></div>` : '');
+  return `
+    <div class="op-card ${a.ok?'':'err'}">
+      <div class="op-card-head">
+        <div class="op-card-icon">${d.icon}</div>
+        <div class="op-card-name">${esc(d.name)}</div>
+        <span class="op-card-provider">${esc(a.provider)}</span>
+      </div>
+      ${chips ? `<div class="qchips">${chips}</div>` : ''}
+      <div class="op-card-body">${esc(a.text)}</div>
+      ${srcs ? `<div class="srcs"><div class="srcs-h">แหล่งของที่นั่งนี้ (${(a.sources||[]).length})</div>${srcs}</div>` : ''}
+    </div>`;
+}
+
+function researchBlock(s) {
+  const merged = s.results.analyst || {};
+  const cards = deptKeys().filter(k => s.results[k])
+    .map(k => seatResearchCard(k, s.results[k])).join('');
+  const index = merged.sources && merged.sources.length
+    ? `<div class="research-card" style="margin-top:12px;">
+         <div class="wide-head"><div class="wide-icon">🌐</div>
+           <div><div class="wide-name">ดัชนีหลักฐานรวมของการประชุม</div>
+                <div class="wide-sub">EVIDENCE INDEX · ${esc(merged.provider||'')}</div></div></div>
+         <div class="wide-body">${esc(merged.text||'')}</div>
+         <div class="srcs"><div class="srcs-h">รวมทุกที่นั่ง (${merged.sources.length} แหล่ง)</div>
+           ${merged.sources.map((x,i) => `
+             <div class="src"><span class="src-n">[${i+1}]</span>
+               <a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title || x.url)}</a>
+               ${x.found_by ? `<span class="scope-note">— ${deptName(x.found_by)}</span>` : ''}</div>`).join('')}
+         </div></div>`
+    : '';
+  return `<div class="round-grid">${cards}</div>${index}`;
+}
+
+function frameCard(a) {
+  const conflicts = (a.conflicts||[]).map(c => `
+    <div class="opt-must" style="margin-top:8px;">⚠️ ขัดกับมติเก่า #${c.memory_id} (${esc(c.severity||'')})<br>
+      <b>เคยสรุปว่า:</b> ${esc(c.past||'')}<br><b>ขัดตรงไหน:</b> ${esc(c.tension||'')}</div>`).join('');
+  const div = a.diversity || {};
+  const divNote = div.warning
+    ? `<div class="opt-must" style="margin-top:8px;">🧠 ${esc(div.warning)}</div>`
+    : `<div class="qchips" style="margin-top:8px;"><span class="qchip">🧠 ${div.distinct||0} provider ต่างกัน จาก ${div.live||0} ที่นั่งที่ใช้งานได้ — ยิ่งต่างยิ่งจับจุดบอดกันได้</span></div>`;
+  const seatChips = (a.seats||[]).map(k => `<span class="qchip">${deptName(k)}</span>`).join('');
+  return wideCard('frame-card', '🎯', 'Moderator — กรอบการตัดสินใจ', 'FRAME', a,
+    (seatChips ? `<div class="qchips">เรียกเข้าประชุม: ${seatChips}</div>` : ''))
+    + divNote + conflicts
+    + (a.memory_checked ? `<div class="scope-note" style="display:block;margin-top:8px;">ตรวจกับมติเก่า ${a.memory_checked} รายการ${(a.conflicts||[]).length ? '' : ' — ไม่พบข้อขัดแย้ง'}</div>` : '');
+}
+
+function redteamCard(a) {
+  return wideCard('redteam-card', '🛡', 'Red Team — โจมตีการตั้งกรอบ ไม่ใช่คำตอบ', 'RED TEAM', a);
 }
 
 function chairCard(a) {
-  return wideCard('chair-card', '⚖️', 'ประธานบอร์ด — บทสรุปเพื่อการตัดสินใจ', 'CHAIRMAN SYNTHESIS', a)
+  const conf = a.confidence != null
+    ? `<div class="qchips"><span class="qchip conf">ความมั่นใจของบอร์ด ${a.confidence}%</span></div>` : '';
+  return wideCard('chair-card', '⚖️', 'Defensible Brief — ข้อเสนอที่ปกป้องได้', 'BRIEF', a, conf)
     + `<div class="exec-bar">
          <button class="btn btn-primary btn-sm" onclick="openPdf('exec', this)">📑 บทสรุปสำหรับผู้บริหาร (.PDF)</button>
          <button class="btn btn-alt btn-sm" onclick="openXlsx(this)">📊 แบบจำลองการเงิน 3 Scenario (.XLSX)</button>
-         <span class="scope-note">PDF = ข้อสรุปรายความเชี่ยวชาญ + ทางเลือกที่บอร์ดแนะนำ · Excel = Forecast 24 เดือน แก้สมมติฐานแล้วคำนวณใหม่ทั้งไฟล์</span>
+         <span class="scope-note">PDF = ข้อเสนอ + ความมั่นใจ + เสียงค้าน + แหล่งอ้างอิง · Excel = Forecast 24 เดือน แก้สมมติฐานแล้วคำนวณใหม่ทั้งไฟล์</span>
        </div>`;
 }
 
 function stepBlock(s) {
   const label = (SESSION.step_labels || {})[s.key] || s.key;
   let body;
-  if (s.key === 'research') {
-    body = researchCard(s.results.analyst || { text:'(ไม่มีผลสืบค้น)', provider:'-', ok:false });
-  } else if (s.key === 'synthesis') {
+  if (s.key === 'frame') {
+    body = frameCard(s.results.framer || { text:'(ไม่มีกรอบ)', provider:'-', ok:false });
+  } else if (s.key === 'research') {
+    body = researchBlock(s);
+  } else if (s.key === 'redteam') {
+    body = `<div class="round-grid">${deptKeys().map(k => s.results[k]
+      ? opCard(k, s.results[k], 'verdict') : '').join('')}</div>`
+      + (s.results.redteam ? `<div style="margin-top:12px;">${redteamCard(s.results.redteam)}</div>` : '');
+  } else if (s.key === 'brief' || s.key === 'synthesis') {
     body = chairCard(s.results.chair || { text:'(ไม่มีบทสรุป)', provider:'-', ok:false });
   } else {
     body = `<div class="round-grid">${deptKeys().map(k => s.results[k]
@@ -1491,7 +1561,7 @@ function stepBlock(s) {
 
 function gateBlock() {
   const label = SESSION.next_label || SESSION.next_step;
-  const isLast = SESSION.next_step === 'synthesis';
+  const isLast = SESSION.next_step === 'brief';
   return `
     <div class="gate">
       <div class="gate-title">🛑 จุดตัดสินใจของ CEO</div>
@@ -1499,7 +1569,7 @@ function gateBlock() {
       <input id="directive" placeholder="สั่งบอร์ดเพิ่มเติมก่อนเข้ารอบนี้ เช่น 'เน้นความเสี่ยงด้านกระแสเงินสดเป็นหลัก' (เว้นว่างได้)">
       <div class="gate-acts">
         <button class="btn btn-primary btn-sm" onclick="advance()">▶ ดำเนินการต่อ — ${esc(label)}</button>
-        ${isLast ? '' : '<button class="btn btn-warn btn-sm" onclick="advance(\'synthesis\')">⏭ ข้ามไปบทสรุปประธานเลย</button>'}
+        ${isLast ? '' : '<button class="btn btn-warn btn-sm" onclick="advance(\'brief\')">⏭ ข้ามไป Defensible Brief เลย</button>'}
         <button class="btn btn-danger btn-sm" onclick="stopBoard()">⏹ จบการประชุมที่นี่</button>
       </div>
     </div>`;

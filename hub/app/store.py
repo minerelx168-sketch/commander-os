@@ -22,6 +22,7 @@ _DEFAULT = {
     "providers": {d: config.DEFAULT_PROVIDERS.get(d, "mock") for d in config.DEPTS},
     "consults": [],                                   # step-by-step board sessions
     "decisions": [],                                  # Proven-by-Decision log
+    "memory": [],                                     # what past sessions concluded
 }
 
 
@@ -76,9 +77,13 @@ def set_provider(dept: str, provider: str) -> dict:
 def create_session(question: str, project: str | None = None,
                    web_research: bool = True,
                    parent_id: int | None = None, branched_from: str | None = None,
-                   steps: list | None = None, history: list | None = None) -> dict:
+                   steps: list | None = None, history: list | None = None,
+                   seats: list | None = None) -> dict:
     entry = {"id": None, "question": question, "project": project,
              "web_research": web_research,
+             # Which seats the Frame stage convened. None until Frame runs; the
+             # pipeline falls back to every seat so a session is never empty.
+             "seats": seats,
              "parent_id": parent_id, "branched_from": branched_from,
              "steps": steps or [], "history": history or [],
              "status": "awaiting", "at": _now()}
@@ -156,6 +161,50 @@ def attach_deliverable(session_id: int, dept: str, data: dict) -> None:
         _save(store)
 
 
+def set_seats(session_id: int, seats: list) -> None:
+    """Record which perspectives the Frame stage convened for this question."""
+    with _LOCK:
+        data = _load()
+        c = _find(data, session_id)
+        if c is None:
+            return
+        c["seats"] = seats
+        _save(data)
+
+
+# ── persistent memory: what past sessions concluded ──
+
+def add_memory(entry: dict) -> dict:
+    """Store one distilled conclusion so later sessions can be checked against it."""
+    with _LOCK:
+        data = _load()
+        entry = {**entry, "id": max((m["id"] for m in data["memory"]), default=0) + 1,
+                 "at": _now()}
+        data["memory"].append(entry)
+        data["memory"] = data["memory"][-200:]
+        _save(data)
+        return entry
+
+
+def get_memory(project: str | None = None, limit: int = 40) -> list:
+    """Past conclusions, newest first. `project` scopes to one business line —
+    a ruling about YourFin should not be waved at a FlowerVending question."""
+    with _LOCK:
+        items = _load()["memory"]
+    if project:
+        items = [m for m in items if m.get("project") == project]
+    return items[-limit:][::-1]
+
+
+def forget_memory(memory_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        before = len(data["memory"])
+        data["memory"] = [m for m in data["memory"] if m["id"] != memory_id]
+        _save(data)
+        return len(data["memory"]) < before
+
+
 def set_status(session_id: int, status: str) -> dict | None:
     with _LOCK:
         data = _load()
@@ -205,7 +254,8 @@ def branch_from(session_id: int, step_key: str) -> dict | None:
                      for s in c["steps"][idx:]]
     return create_session(c["question"], c.get("project"),
                           web_research=c.get("web_research", True), parent_id=session_id,
-                          branched_from=step_key, steps=kept, history=abandoned)
+                          branched_from=step_key, steps=kept, history=abandoned,
+                          seats=c.get("seats"))
 
 
 def get_consults(limit: int = 10) -> list:

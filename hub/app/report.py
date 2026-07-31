@@ -603,11 +603,13 @@ def build_step_pdf(session: dict, step_key: str) -> bytes:
 # ── executive summary (round 4) ──
 
 def build_executive_summary_pdf(session: dict) -> bytes:
-    synth = next((s for s in session["steps"] if s["key"] == "synthesis"), None)
+    # "brief" is the Crucible stage; "synthesis" is what archived sessions called it.
+    synth = next((s for s in session["steps"] if s["key"] in ("brief", "synthesis")), None)
     if synth is None:
-        raise ValueError("ยังไม่มีบทสรุปประธาน — รัน Round 4 ก่อน")
+        raise ValueError("ยังไม่มี Defensible Brief — รัน Stage 6 ก่อน")
     chair = synth["results"].get("chair", {})
     opts = decision_options(session)
+    conf = session.get("confidence") or depts.confidence_summary(session)
 
     pdf = _Doc(f"EXECUTIVE SUMMARY · consult #{session['id']}")
     pdf.set_title(f"บทสรุปผู้บริหาร — consult #{session['id']}")
@@ -625,20 +627,49 @@ def build_executive_summary_pdf(session: dict) -> bytes:
     pdf.multi_cell(0, 8, _txt(session["question"]), align="C",
                    new_x="LMARGIN", new_y="NEXT", wrapmode="CHAR")
     pdf.ln(10)
-    _table(pdf, [["จัดทำเมื่อ", "โปรเจค", "ที่ปรึกษา", "ฐานข้อมูลที่ใช้"],
+    convened = depts.seats(session)
+    _table(pdf, [["จัดทำเมื่อ", "โปรเจค", "ที่นั่งที่ถูกเรียก", "ฐานข้อมูลที่ใช้"],
                  [_stamp(), session.get("project") or "ทุกโปรเจค",
-                  "CMO · CFO · COO · Datalyst + ประธานบอร์ด",
-                  "คลังเอกสาร" + (" + สืบค้นอินเทอร์เน็ต" if session.get("web_research") else "")]],
-           [CONTENT_W * 0.24, CONTENT_W * 0.20, CONTENT_W * 0.30, CONTENT_W * 0.26])
+                  " · ".join(config.DEPTS.get(k, {}).get("name", k) for k in convened),
+                  "คลังเอกสาร" + (" + หลักฐานที่แต่ละที่นั่งค้นเอง"
+                                  if session.get("web_research") else "")]],
+           [CONTENT_W * 0.22, CONTENT_W * 0.18, CONTENT_W * 0.34, CONTENT_W * 0.26])
     _lineage_note(pdf, session)
     pdf.ln(2)
     _small(pdf, "เอกสารนี้สรุปผลการประชุมบอร์ดที่ปรึกษาเพื่อประกอบการตัดสินใจของ CEO "
                 "วิธีคิดของแต่ละรอบดูได้จากรายงานรายรอบ")
 
-    # the chairman's ruling
+    # the ruling, with the confidence it was reached at
     pdf.add_page()
-    _h2(pdf, "มติและข้อเสนอของประธานบอร์ด")
+    _h2(pdf, "ข้อเสนอของบอร์ด")
+    if chair.get("confidence") is not None:
+        _quote(pdf, f"ความมั่นใจของบอร์ด: {chair['confidence']}%"
+                    + (f"   ·   เฉลี่ยจากที่นั่งทั้งหมด: {conf['average']}%"
+                       if conf.get("average") is not None else ""))
     _body(pdf, chair.get("text", ""))
+
+    if conf.get("per_seat"):
+        _h3(pdf, "ความมั่นใจที่แต่ละที่นั่งให้ตัวเอง")
+        _table(pdf, [["ที่นั่ง", "ความมั่นใจ", "รันบนโมเดล"]]
+               + [[config.DEPTS.get(k, {}).get("name", k), f"{v}%",
+                   config.PROVIDERS.get(store.get_providers().get(k, "mock"), {}).get(
+                       "label", store.get_providers().get(k, "mock"))]
+                  for k, v in conf["per_seat"].items()],
+               [CONTENT_W * 0.34, CONTENT_W * 0.22, CONTENT_W * 0.44])
+        if conf.get("lowest"):
+            _small(pdf, "ที่นั่งที่มั่นใจน้อยที่สุดคือ "
+                        f"{config.DEPTS.get(conf['lowest'], {}).get('name', conf['lowest'])} — "
+                        "อ่านเสียงค้านของเขาก่อนตัดสินใจ")
+
+    # the red team's attack on the framing, on the record
+    red = next((s for s in session["steps"] if s["key"] == "redteam"), None)
+    rt = (red or {}).get("results", {}).get("redteam") if red else None
+    if rt and rt.get("ok"):
+        _h2(pdf, "Red Team — สิ่งที่โจมตีการตั้งกรอบของการประชุมนี้")
+        _body(pdf, rt.get("text", ""))
+        div = rt.get("diversity") or {}
+        if div.get("warning"):
+            _small(pdf, f"⚠️ {div['warning']}")
 
     # what each C-level concluded from their own lane
     takeaways = opts.get("advisor_takeaways") or []
@@ -689,15 +720,15 @@ def build_executive_summary_pdf(session: dict) -> bytes:
         _small(pdf, "⚠️ สร้างทางเลือกอัตโนมัติไม่สำเร็จ (provider ไม่พร้อม) — "
                     "เอกสารนี้จึงมีเฉพาะมติของประธานบอร์ดตามที่เกิดขึ้นจริง")
 
-    # full verdicts + how the meeting was run
-    verdicts = next((s for s in session["steps"] if s["key"] == "verdicts"), None)
-    if verdicts:
+    # each seat's final word, in full — the dissent stays on the record
+    final = next((s for s in session["steps"] if s["key"] in ("redteam", "verdicts")), None)
+    if final:
         pdf.add_page()
-        _h2(pdf, "คำตัดสินฉบับเต็มของที่ปรึกษาแต่ละคน")
-        _table(pdf, [["ที่ปรึกษา", "ขอบเขตความเชี่ยวชาญ", "คำตัดสิน"]]
+        _h2(pdf, "จุดยืนสุดท้ายฉบับเต็มของแต่ละที่นั่ง")
+        _table(pdf, [["ที่นั่ง", "ขอบเขตความเชี่ยวชาญ", "จุดยืนหลังถูกวิพากษ์"]]
                + [[config.DEPTS.get(k, {}).get("name", k),
                    config.DEPTS.get(k, {}).get("expertise", ""), v.get("text", "")]
-                  for k, v in verdicts["results"].items()],
+                  for k, v in final["results"].items() if k != "redteam"],
                [CONTENT_W * 0.14, CONTENT_W * 0.28, CONTENT_W * 0.58])
 
     _h2(pdf, "เส้นทางการประชุม")
