@@ -172,5 +172,5 @@ def test_delete_removes_routine_and_its_runs(client):
 def test_ui_exposes_the_routine_page(client):
     html = client.get("/").text
     for marker in ('data-view="routine"', "view-routine", "loadRoutines", "createRoutine",
-                   "rt-seats", "UTC+7", "Routine"):
+                   "rt-seat-menu", "toggleSeatDD", "UTC+7", "Routine"):
         assert marker in html, marker

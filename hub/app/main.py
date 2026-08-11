@@ -11,6 +11,7 @@ Pages (single-page UI in static/index.html):
   5. Agents — pick which AI provider powers each advisor
 """
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
@@ -18,16 +19,19 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from . import (config, deliverable, depts, docs, finmodel, llm, report,
-               research, routines, store, telegram)
+               research, routines, sources, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
-app = FastAPI(title="Commander Hub — C-Suite Advisory")
-STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
-@app.on_event("startup")
-def _start_scheduler() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     routines.start_scheduler()
+    yield
+
+
+app = FastAPI(title="Commander Hub — C-Suite Advisory", lifespan=lifespan)
+STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
 # Sentinel the project picker sends for "ask this without my documents".
@@ -603,3 +607,82 @@ def routine_runs(routine_id: int, limit: int = 30) -> dict:
     if store.get_routine(routine_id) is None:
         raise HTTPException(404, "routine not found")
     return {"runs": store.get_routine_runs(routine_id, limit)}
+
+
+# ── Data sources: per-project POS / back-office API connections ──
+
+class SourceIn(BaseModel):
+    project: str
+    name: str
+    kind: str = "pos_rest"          # pos_rest | sheet_csv | webhook
+    url: str = ""
+    auth: str = "none"              # none | bearer | header | query
+    secret: str = ""
+    header_name: str = ""
+    data_path: str = ""             # dotted path to the row array in the response
+
+
+class SourceToggleIn(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/sources")
+def list_sources(project: str | None = None) -> dict:
+    return {"sources": sources.list_sources(project),
+            "kinds": sources.KINDS, "auths": sources.AUTHS}
+
+
+@app.post("/api/sources")
+def add_source(body: SourceIn) -> dict:
+    if not body.project.strip():
+        raise HTTPException(400, "เลือกโปรเจคก่อน")
+    if not body.name.strip():
+        raise HTTPException(400, "ตั้งชื่อการเชื่อมต่อ")
+    if body.kind not in sources.KINDS:
+        raise HTTPException(400, f"kind must be one of {list(sources.KINDS)}")
+    if body.auth not in sources.AUTHS:
+        raise HTTPException(400, f"auth must be one of {list(sources.AUTHS)}")
+    if body.kind != "webhook" and not body.url.strip().startswith(("http://", "https://")):
+        raise HTTPException(400, "URL ต้องขึ้นต้นด้วย http:// หรือ https://")
+    return sources.add_source(body.project.strip(), body.name.strip(), body.kind,
+                              body.url.strip(), body.auth, body.secret.strip(),
+                              body.header_name.strip(), body.data_path.strip())
+
+
+@app.post("/api/sources/{source_id}/fetch")
+def fetch_source(source_id: int) -> dict:
+    if sources.get_source(source_id) is None:
+        raise HTTPException(404, "source not found")
+    return sources.fetch(source_id)
+
+
+@app.post("/api/sources/{source_id}/toggle")
+def toggle_source(source_id: int, body: SourceToggleIn) -> dict:
+    s = sources.update_source(source_id, enabled=body.enabled)
+    if s is None:
+        raise HTTPException(404, "source not found")
+    return s
+
+
+@app.delete("/api/sources/{source_id}")
+def remove_source(source_id: int) -> dict:
+    if not sources.delete_source(source_id):
+        raise HTTPException(404, "source not found")
+    return {"deleted": source_id}
+
+
+@app.post("/api/sources/{source_id}/webhook")
+async def source_webhook(source_id: int, request: Request) -> dict:
+    """Back-office systems push rows here instead of us polling them."""
+    s = sources.get_source(source_id)
+    if s is None:
+        raise HTTPException(404, "source not found")
+    if s.get("secret") and request.headers.get("X-Source-Key") != s["secret"]:
+        raise HTTPException(401, "bad source key")
+    import json as _json
+    body = await request.body()
+    try:
+        payload = _json.loads(body or b"[]")
+    except ValueError:
+        raise HTTPException(400, "invalid JSON") from None
+    return sources.ingest_webhook(source_id, payload)

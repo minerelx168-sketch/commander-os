@@ -36,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import config, docs, llm, memory, research, store
+from . import config, docs, llm, memory, research, sources, store
 
 log = logging.getLogger("hub.depts")
 
@@ -408,11 +408,17 @@ def _shared_evidence(session: dict, exclude: str | None = None) -> str:
 
 
 def _library(session: dict, max_chars: int = 3500) -> str:
-    """The CEO's documents — unless this is a general question, where dragging
-    in the business library would only bias an answer that is not about it."""
+    """The CEO's documents plus live data pulled from the project's own systems
+    (POS / back-office) — unless this is a general question, where dragging in
+    the business context would only bias an answer that is not about it."""
     if not session.get("use_docs", True):
         return ""
-    return docs.knowledge_context(project=session.get("project"), max_chars=max_chars)
+    project = session.get("project")
+    parts = [docs.knowledge_context(project=project, max_chars=max_chars)]
+    live = sources.live_context(project=project)
+    if live:
+        parts.append(live)
+    return "\n\n".join(p for p in parts if p)
 
 
 def _grounding(session: dict, dept: str | None = None) -> str:

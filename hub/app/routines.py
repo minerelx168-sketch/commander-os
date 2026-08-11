@@ -21,7 +21,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config, docs, llm, store, telegram
+from . import config, docs, llm, sources, store, telegram
 
 log = logging.getLogger("hub.routines")
 
@@ -100,11 +100,14 @@ def run_routine(routine: dict) -> dict:
     CEO's library and in what this same routine said last time."""
     task = routine["task"]
     library = docs.knowledge_context(project=routine.get("project"), max_chars=2500)
+    live = sources.live_context(project=routine.get("project"), max_chars=2500)
     previous = store.last_routine_run(routine["id"])
 
     ctx = [f"งานประจำที่ต้องรายงาน: {task}"]
     if library:
         ctx.append(f"[คลังเอกสารธุรกิจของ CEO]\n{library}")
+    if live:
+        ctx.append(f"[ข้อมูลสดจากระบบ POS / หลังบ้านของโปรเจคนี้]\n{live}")
     if previous:
         for dept, r in (previous.get("results") or {}).items():
             if r.get("ok"):

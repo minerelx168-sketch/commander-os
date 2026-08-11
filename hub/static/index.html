@@ -448,6 +448,15 @@ body {
 .ask-textarea:focus { border-color: var(--accent); }
 .ask-textarea::placeholder { color: var(--text-3); }
 
+/* Routine task box: a standing order is written once and read for months —
+   give it room to be specific instead of forcing a one-line summary. */
+.rt-textarea {
+  width: 100%;
+  min-height: 130px;
+  max-height: 420px;
+  resize: vertical;
+}
+
 /* round layout */
 .round { margin-top: 20px; }
 
@@ -834,6 +843,46 @@ body {
 .seat-chip.on {
   background: rgba(59,130,246,.12); border-color: var(--accent); color: #bfdbfe;
 }
+
+/* Multi-select dropdown (responsible C-levels, and anything else picked in bulk) */
+.dropdown { position: relative; display: inline-block; min-width: 320px; }
+.dropdown-toggle {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; text-align: left; cursor: pointer;
+}
+.dropdown-caret { color: var(--text-3); font-size: 11px; }
+.dropdown-menu {
+  display: none; position: absolute; z-index: 40; top: calc(100% + 6px); left: 0;
+  min-width: 100%; background: var(--bg-2); border: 1px solid var(--border-2);
+  border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  padding: 6px; max-height: 320px; overflow-y: auto;
+}
+.dropdown.open .dropdown-menu { display: block; }
+.dropdown-item {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border-radius: var(--radius); cursor: pointer; font-size: 13px; color: var(--text-2);
+  user-select: none;
+}
+.dropdown-item:hover { background: var(--bg-3); color: var(--text); }
+.dropdown-item.on { color: var(--text); }
+.dropdown-item .tick {
+  width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0;
+  border: 1px solid var(--border-2); display: grid; place-items: center;
+  font-size: 11px; color: transparent;
+}
+.dropdown-item.on .tick {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.dropdown-item .role { margin-left: auto; font-size: 11px; color: var(--text-3); }
+
+/* API Connector — the project picker is the isolation boundary, so it gets
+   its own band rather than being one control among many in a filter row. */
+.conn-scope {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  background: var(--bg-3); border: 1px solid var(--border-2);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.conn-scope-note { flex: 1; min-width: 260px; font-size: 12px; color: var(--text-3); line-height: 1.6; }
 .rt-item {
   background: var(--bg-2); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
@@ -1255,8 +1304,8 @@ body {
         <span style="font-size:12px;color:var(--text-3)">เวลาทั้งหมดเป็น UTC+7 · ส่งผลเข้า Telegram</span>
       </div>
       <div class="card-body">
-        <textarea id="rt-task" rows="2" class="ask-textarea"
-          placeholder="งานที่ให้ทำประจำ… เช่น 'สรุปยอดขายตู้ดอกไม้และชี้จุดที่ผิดปกติ'"></textarea>
+        <textarea id="rt-task" rows="5" class="ask-textarea rt-textarea"
+          placeholder="งานที่ให้ทำประจำ… เช่น 'สรุปยอดขายตู้ดอกไม้และชี้จุดที่ผิดปกติ'&#10;เขียนยาวได้ ระบุสิ่งที่อยากให้ดู ตัวเลขที่ต้องจับตา และเกณฑ์ที่ถือว่าผิดปกติ"></textarea>
 
         <div class="scope-row" style="margin-top:12px;">
           <label class="scope-label">ความถี่</label>
@@ -1277,8 +1326,14 @@ body {
         </div>
 
         <div style="margin-top:14px;">
-          <div class="scope-label" style="margin-bottom:8px;">ผู้รับผิดชอบ (เลือกได้หลายคน)</div>
-          <div id="rt-seats" class="seat-picker"></div>
+          <div class="scope-label" style="margin-bottom:8px;">ผู้รับผิดชอบ routine นี้</div>
+          <div class="dropdown" id="rt-seat-dd">
+            <button type="button" class="select dropdown-toggle" onclick="toggleSeatDD(event)">
+              <span id="rt-seat-summary">เลือก C-level…</span>
+              <span class="dropdown-caret">▾</span>
+            </button>
+            <div class="dropdown-menu" id="rt-seat-menu"></div>
+          </div>
         </div>
 
         <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
@@ -1392,6 +1447,53 @@ body {
           <button class="btn btn-ghost btn-sm" onclick="syncDrive()">⟳ Sync จาก Google Drive</button>
           <span id="sync-status" style="font-size:12px;color:var(--text-3);"></span>
         </div>
+      </div>
+    </div>
+
+    <!-- API Connector — one set of connections per project, never shared -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🔌 API Connector</span>
+        <span style="font-size:12px;color:var(--text-3)">เชื่อม POS / ระบบหลังบ้าน แยกตามโปรเจค · ข้อมูลสดเข้าบอร์ดและ Routine</span>
+      </div>
+      <div class="card-body">
+        <div class="conn-scope">
+          <div>
+            <div class="scope-label" style="margin-bottom:6px;">เชื่อม API ให้โปรเจค</div>
+            <select id="src-project" class="select" style="min-width:260px" onchange="loadSources()">
+              <option value="" data-fixed>— เลือกโปรเจค —</option>
+            </select>
+          </div>
+          <div class="conn-scope-note">
+            🔒 ข้อมูลที่ดึงมาจะถูกผูกกับโปรเจคนี้เท่านั้น — ที่ปรึกษาจะเห็นก็ต่อเมื่อคุณถามหรือตั้ง Routine
+            ในโปรเจคเดียวกัน ไม่ปนกับโปรเจคอื่น
+          </div>
+        </div>
+
+        <div class="scope-row" style="margin-top:16px;">
+          <label class="scope-label">ประเภท</label>
+          <select id="src-kind" class="select" style="min-width:230px" onchange="srcKindChanged()"></select>
+          <input id="src-name" class="select" style="min-width:210px;flex:1" placeholder="ชื่อการเชื่อมต่อ เช่น POS ร้านเอกมัย">
+        </div>
+
+        <div class="scope-row">
+          <input id="src-url" class="select" style="min-width:320px;flex:2" placeholder="https://pos.example.com/api/v1/sales?date=today">
+          <input id="src-path" class="select" style="min-width:190px" placeholder="ที่อยู่ข้อมูล เช่น data.orders">
+        </div>
+
+        <div class="scope-row">
+          <label class="scope-label">ยืนยันตัวตน</label>
+          <select id="src-auth" class="select" style="min-width:200px" onchange="srcAuthChanged()"></select>
+          <input id="src-header" class="select" style="min-width:170px;display:none" placeholder="ชื่อ header เช่น X-API-Key">
+          <input id="src-secret" type="password" class="select" style="min-width:230px;flex:1;display:none" placeholder="API key / token">
+        </div>
+
+        <div style="display:flex;gap:10px;align-items:center;margin-top:6px;">
+          <button class="btn btn-primary btn-sm" onclick="addSource()">+ เพิ่มการเชื่อมต่อ</button>
+          <span id="src-status" style="font-size:12px;color:var(--text-3)"></span>
+        </div>
+
+        <div id="src-list" style="margin-top:16px;"></div>
       </div>
     </div>
 
@@ -2136,6 +2238,8 @@ async function loadDocs() {
     <div class="stat-card"><div class="stat-label">ความรู้ป้อนบอร์ด</div><div class="stat-value">${(j.knowledge_chars/1000).toFixed(1)}k</div><div class="stat-sub">ตัวอักษร</div></div>`;
 
   fillProjects(document.getElementById('up-project'), j.projects);
+  fillProjects(document.getElementById('src-project'), j.projects);
+  loadSources();
   document.getElementById('proj-tags').innerHTML = (j.projects||[]).map(p =>
     `<span class="proj-tag">📁 ${esc(p)}</span>`).join('')
     || '<span style="font-size:12px;color:var(--text-3);">ยังไม่มีโปรเจค — สร้างโปรเจคแรก เช่น YourFin</span>';
@@ -2241,6 +2345,109 @@ async function syncDrive() {
   loadDocs();
 }
 
+/* ---------- data sources (POS / back-office APIs, per project) ---------- */
+let SRC_META = null;
+
+function srcKindChanged() {
+  const webhook = document.getElementById('src-kind').value === 'webhook';
+  document.getElementById('src-url').style.display = webhook ? 'none' : '';
+  document.getElementById('src-path').style.display = webhook ? 'none' : '';
+}
+
+function srcAuthChanged() {
+  const a = document.getElementById('src-auth').value;
+  document.getElementById('src-secret').style.display = a === 'none' ? 'none' : '';
+  document.getElementById('src-header').style.display = (a === 'header' || a === 'query') ? '' : 'none';
+}
+
+async function loadSources() {
+  const proj = document.getElementById('src-project').value;
+  const j = await (await fetch('/api/sources' + (proj ? `?project=${encodeURIComponent(proj)}` : ''))).json();
+
+  if (!SRC_META) {
+    SRC_META = j;
+    document.getElementById('src-kind').innerHTML =
+      Object.entries(j.kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    document.getElementById('src-auth').innerHTML =
+      Object.entries(j.auths).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    srcKindChanged(); srcAuthChanged();
+  }
+
+  document.getElementById('src-list').innerHTML = j.sources.length ? j.sources.map(s => {
+    const ok = s.last_status === 'ok' || s.last_status === 'pushed';
+    const badge = !s.last_status ? '<span class="badge badge-muted">ยังไม่ได้ดึง</span>'
+      : ok ? `<span class="badge badge-green">${s.rows} แถว</span>`
+           : `<span class="badge badge-red">${esc((s.last_status||'').substring(0,60))}</span>`;
+    return `
+    <div class="rt-item ${s.enabled ? '' : 'off'}">
+      <div class="rt-task">🔌 ${esc(s.name)} ${badge}</div>
+      <div class="rt-meta">
+        #${s.id} · 📁 ${esc(s.project)} · ${esc(SRC_META.kinds[s.kind] || s.kind)}
+        ${s.url ? ` · ${esc(s.url.substring(0,60))}` : ''}
+        ${s.has_secret ? ' · 🔑 มี key' : ''}
+        ${s.last_sync ? ` · ดึงล่าสุด ${s.last_sync.substring(0,16).replace('T',' ')}` : ''}
+      </div>
+      <div class="rt-actions">
+        ${s.kind === 'webhook'
+          ? `<button class="btn btn-sm btn-ghost" onclick="copyHook(${s.id})">📋 คัดลอก webhook URL</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="fetchSource(${s.id})">⟳ ดึงข้อมูลตอนนี้</button>`}
+        <button class="btn btn-sm btn-ghost" onclick="toggleSource(${s.id}, ${!s.enabled})">${s.enabled ? '⏸ พัก' : '▶ เปิด'}</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteSource(${s.id})">ลบ</button>
+      </div>
+    </div>`;
+  }).join('') : `<div class="empty-state"><div class="empty-state-icon">🔌</div><div class="empty-state-text">${
+      proj ? `โปรเจค ${esc(proj)} ยังไม่ได้เชื่อมระบบไหน` : 'สร้างโปรเจคก่อน แล้วเลือกโปรเจคเพื่อเชื่อม API'}</div></div>`;
+}
+
+async function addSource() {
+  const st = document.getElementById('src-status');
+  const project = document.getElementById('src-project').value;
+  if (!project) { st.textContent = '⚠️ เลือกโปรเจคที่จะเชื่อม API ก่อน'; return; }
+  const body = {
+    project,
+    name: document.getElementById('src-name').value.trim(),
+    kind: document.getElementById('src-kind').value,
+    url: document.getElementById('src-url').value.trim(),
+    auth: document.getElementById('src-auth').value,
+    secret: document.getElementById('src-secret').value,
+    header_name: document.getElementById('src-header').value.trim(),
+    data_path: document.getElementById('src-path').value.trim(),
+  };
+  st.textContent = '⏳ กำลังบันทึก…';
+  const r = await fetch('/api/sources', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) { st.textContent = '⚠️ ' + ((await r.json()).detail || 'บันทึกไม่สำเร็จ'); return; }
+  st.textContent = `✅ เพิ่มเข้าโปรเจค ${project} แล้ว — กด "ดึงข้อมูลตอนนี้" เพื่อทดสอบ`;
+  ['src-name','src-url','src-secret','src-header','src-path'].forEach(id => document.getElementById(id).value = '');
+  loadSources();
+}
+
+async function fetchSource(id) {
+  const st = document.getElementById('src-status');
+  st.textContent = '⏳ กำลังดึงข้อมูลจากระบบ…';
+  const j = await (await fetch(`/api/sources/${id}/fetch`, {method:'POST'})).json();
+  st.textContent = j.ok ? `✅ ดึงได้ ${j.rows} แถว — ที่ปรึกษาเห็นข้อมูลนี้แล้ว` : `⚠️ ${j.error}`;
+  loadSources();
+}
+
+function copyHook(id) {
+  const url = `${location.origin}/api/sources/${id}/webhook`;
+  navigator.clipboard?.writeText(url);
+  document.getElementById('src-status').textContent = `📋 คัดลอกแล้ว: ${url} (ส่ง POST JSON พร้อม header X-Source-Key)`;
+}
+
+async function toggleSource(id, enabled) {
+  await fetch(`/api/sources/${id}/toggle`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled})});
+  loadSources();
+}
+
+async function deleteSource(id) {
+  if (!confirm('ลบการเชื่อมต่อนี้?')) return;
+  await fetch(`/api/sources/${id}`, {method:'DELETE'});
+  loadSources();
+}
+
 /* ---------- routines ---------- */
 const FREQ_TH = { daily:'รายวัน', weekly:'รายสัปดาห์', monthly:'รายเดือน' };
 const DOW_TH = ['จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์','อาทิตย์'];
@@ -2266,14 +2473,17 @@ async function loadRoutines() {
     <div class="stat-card"><div class="stat-label">Telegram</div><div class="stat-value ${j.telegram_ready?'c-green':'c-red'}" style="font-size:15px">${j.telegram_ready?'● พร้อม':'○ ยังไม่ตั้ง'}</div></div>
     <div class="stat-card"><div class="stat-label">เวลาตอนนี้ (UTC+7)</div><div class="stat-value" style="font-size:15px">${j.now_local}</div></div>`;
 
-  // seat picker (first load only, so the CEO's ticks survive a refresh)
-  const picker = document.getElementById('rt-seats');
-  if (!picker.dataset.built) {
-    picker.innerHTML = j.seats.map(s => `
-      <div class="seat-chip" data-seat="${s.key}" onclick="toggleSeat('${s.key}', this)">
-        ${s.icon} ${esc(s.name)}
+  // seat dropdown (first load only, so the CEO's ticks survive a refresh)
+  const menu = document.getElementById('rt-seat-menu');
+  if (!menu.dataset.built) {
+    menu.innerHTML = j.seats.map(s => `
+      <div class="dropdown-item" data-seat="${s.key}" onclick="toggleSeat('${s.key}', this)">
+        <span class="tick">✓</span>
+        <span>${s.icon} ${esc(s.name)}</span>
+        <span class="role">${esc(s.role)}</span>
       </div>`).join('');
-    picker.dataset.built = '1';
+    menu.dataset.built = '1';
+    renderSeatSummary();
   }
 
   const proj = document.getElementById('rt-project');
@@ -2324,9 +2534,31 @@ async function loadRoutines() {
   }).join('') : '<div class="empty-state"><div class="empty-state-text">ยังไม่มีผลรัน</div></div>';
 }
 
+function toggleSeatDD(ev) {
+  ev.stopPropagation();
+  document.getElementById('rt-seat-dd').classList.toggle('open');
+}
+
+document.addEventListener('click', e => {
+  const dd = document.getElementById('rt-seat-dd');
+  if (dd && !dd.contains(e.target)) dd.classList.remove('open');
+});
+
+function renderSeatSummary() {
+  const el = document.getElementById('rt-seat-summary');
+  if (!RT_SEATS.size) { el.textContent = 'เลือก C-level…'; return; }
+  const names = [...RT_SEATS].map(k => {
+    const d = (STATE.depts || []).find(x => x.key === k);
+    return d ? `${d.icon} ${d.name}` : k;
+  });
+  el.textContent = names.length <= 2 ? names.join(' · ')
+                                     : `${names.slice(0,2).join(' · ')} +${names.length-2}`;
+}
+
 function toggleSeat(key, el) {
   RT_SEATS.has(key) ? RT_SEATS.delete(key) : RT_SEATS.add(key);
   el.classList.toggle('on');
+  renderSeatSummary();
 }
 
 async function createRoutine() {
