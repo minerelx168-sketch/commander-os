@@ -40,7 +40,7 @@ RestartSec=3
 [Install]
 WantedBy=multi-user.target
 UNIT
-sudo systemctl daemon-reload && sudo systemctl enable --now commander-hub && sleep 4 && systemctl is-active commander-hub"
+sudo systemctl daemon-reload && sudo systemctl enable commander-hub && sudo systemctl restart commander-hub && sleep 5 && systemctl is-active commander-hub"
 
 echo "== 6) nginx reverse proxy on :80 =="
 ssh "$HOST" "sudo tee /etc/nginx/sites-available/commander-hub >/dev/null <<'NGX'
