@@ -1,25 +1,20 @@
 #!/bin/bash
-# Generate an SSH keypair for the Commander OS cloud host (GCP, ubuntu@34.75.96.28)
+# Generate the hermes_cloud3 keypair for ubuntu@34.75.96.28 and print the public key
 set -e
-KEY="$HOME/.ssh/commander_cloud"
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
-if [ -f "$KEY" ]; then
-  echo "key already exists: $KEY"
-else
-  ssh-keygen -t ed25519 -f "$KEY" -N "" -C "commander-os@hermes"
-fi
+KEY="$HOME/.ssh/hermes_cloud3"
+mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+[ -f "$KEY" ] || ssh-keygen -t ed25519 -f "$KEY" -N "" -C "hermes-to-cloud3"
 chmod 600 "$KEY"
-cat >> "$HOME/.ssh/config" <<'CFG'
+grep -q 'Host commander-cloud3' "$HOME/.ssh/config" 2>/dev/null || cat >> "$HOME/.ssh/config" <<'CFG'
 
-Host commander-cloud
+Host commander-cloud3
   HostName 34.75.96.28
   User ubuntu
   Port 22
-  IdentityFile ~/.ssh/commander_cloud
+  IdentityFile ~/.ssh/hermes_cloud3
   StrictHostKeyChecking accept-new
   ServerAliveInterval 30
 CFG
 chmod 600 "$HOME/.ssh/config"
-echo "--- PUBLIC KEY (add this to the server) ---"
+echo "--- PUBLIC KEY hermes_cloud3 ---"
 cat "$KEY.pub"
