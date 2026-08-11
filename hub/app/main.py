@@ -4,9 +4,11 @@ Pages (single-page UI in static/index.html):
   1. Boardroom — ask a hard question scoped to a project; the board advances
      one round at a time and stops at a decision gate before each round, so
      the CEO can steer, skip, stop, rewind (reset) or branch the debate
-  2. Decisions — Proven-by-Decision log: record what you decided, score the advice
-  3. เอกสาร — LINE / upload / Drive knowledge library feeding the board
-  4. Agents — pick which AI provider powers each advisor
+  2. Routine — standing orders: a task the assigned seats report on daily /
+     weekly / monthly (UTC+7) straight to Telegram, filed into the library
+  3. Decisions — Proven-by-Decision log: record what you decided, score the advice
+  4. เอกสาร — LINE / upload / Drive knowledge library feeding the board
+  5. Agents — pick which AI provider powers each advisor
 """
 import logging
 from pathlib import Path
@@ -16,11 +18,16 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from . import (config, deliverable, depts, docs, finmodel, llm, report,
-               research, store)
+               research, routines, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI(title="Commander Hub — C-Suite Advisory")
 STATIC = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.on_event("startup")
+def _start_scheduler() -> None:
+    routines.start_scheduler()
 
 
 # Sentinel the project picker sends for "ask this without my documents".
@@ -514,3 +521,85 @@ async def line_webhook(request: Request) -> dict:
     import json as _json
     saved = docs.handle_line_events(_json.loads(body or b"{}"))
     return {"saved": len(saved)}
+
+
+# ── Routines: standing orders on a UTC+7 schedule, delivered to Telegram ──
+
+class RoutineIn(BaseModel):
+    task: str
+    frequency: str                 # daily | weekly | monthly
+    time: str                      # "HH:MM" in UTC+7
+    day: int | None = None         # weekly 0=Mon..6=Sun; monthly 1..31
+    seats: list[str] = []          # which advisors are responsible
+    project: str | None = None     # scope its knowledge to one project
+
+
+class RoutineToggleIn(BaseModel):
+    enabled: bool
+
+
+def _valid_routine(body: RoutineIn) -> tuple[str, list[str]]:
+    if not body.task.strip():
+        raise HTTPException(400, "task is required")
+    if body.frequency not in routines.FREQUENCIES:
+        raise HTTPException(400, f"frequency must be one of {routines.FREQUENCIES}")
+    try:
+        hh, mm = (int(x) for x in body.time.split(":"))
+        assert 0 <= hh < 24 and 0 <= mm < 60
+    except Exception:
+        raise HTTPException(400, "time must be HH:MM (UTC+7)") from None
+    seats = [s for s in body.seats if s in config.DEPTS]
+    if not seats:
+        raise HTTPException(400, "เลือกผู้รับผิดชอบอย่างน้อย 1 คน")
+    return body.task.strip(), seats
+
+
+@app.get("/api/routines")
+def list_routines() -> dict:
+    return {
+        "routines": store.get_routines(),
+        "runs": store.get_routine_runs(limit=20),
+        "seats": [{"key": k, **v} for k, v in config.DEPTS.items()],
+        "telegram_ready": telegram.ready(),
+        "scheduler_alive": routines.scheduler_alive(),
+        "now_local": routines.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+@app.post("/api/routines")
+def create_routine(body: RoutineIn) -> dict:
+    task, seats = _valid_routine(body)
+    nxt = routines.next_run(body.frequency, body.time, body.day, routines.now())
+    project = None if body.project in (None, "", NO_PROJECT) else body.project
+    return store.add_routine(task, body.frequency, body.time, body.day,
+                             seats, project, nxt.isoformat())
+
+
+@app.post("/api/routines/{routine_id}/run")
+def run_routine_now(routine_id: int) -> dict:
+    r = store.get_routine(routine_id)
+    if r is None:
+        raise HTTPException(404, "routine not found")
+    return routines.run_routine(r)
+
+
+@app.post("/api/routines/{routine_id}/toggle")
+def toggle_routine(routine_id: int, body: RoutineToggleIn) -> dict:
+    r = store.update_routine(routine_id, enabled=body.enabled)
+    if r is None:
+        raise HTTPException(404, "routine not found")
+    return r
+
+
+@app.delete("/api/routines/{routine_id}")
+def remove_routine(routine_id: int) -> dict:
+    if not store.delete_routine(routine_id):
+        raise HTTPException(404, "routine not found")
+    return {"deleted": routine_id}
+
+
+@app.get("/api/routines/{routine_id}/runs")
+def routine_runs(routine_id: int, limit: int = 30) -> dict:
+    if store.get_routine(routine_id) is None:
+        raise HTTPException(404, "routine not found")
+    return {"runs": store.get_routine_runs(routine_id, limit)}

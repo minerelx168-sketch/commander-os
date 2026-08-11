@@ -23,6 +23,8 @@ _DEFAULT = {
     "consults": [],                                   # step-by-step board sessions
     "decisions": [],                                  # Proven-by-Decision log
     "memory": [],                                     # what past sessions concluded
+    "routines": [],                                   # standing orders on a schedule
+    "routine_runs": [],                               # every execution, newest last
 }
 
 
@@ -377,3 +379,96 @@ def decision_stats() -> dict:
         "neutral": sum(1 for d in scored if d["verdict"] == "neutral"),
         "missed": sum(1 for d in scored if d["verdict"] == "missed"),
     }
+
+
+# ── Routines: standing orders the board runs on a schedule ──
+
+def add_routine(task: str, frequency: str, time_hhmm: str, day: int | None,
+                seats: list, project: str | None, next_at: str) -> dict:
+    entry = {"id": None, "task": task, "frequency": frequency, "time": time_hhmm,
+             "day": day, "seats": seats, "project": project, "enabled": True,
+             "next_at": next_at, "last_at": None, "created_at": _now()}
+    with _LOCK:
+        data = _load()
+        entry["id"] = max((r["id"] for r in data["routines"]), default=0) + 1
+        data["routines"].append(entry)
+        _save(data)
+    return entry
+
+
+def get_routines() -> list:
+    with _LOCK:
+        return list(_load()["routines"])
+
+
+def get_routine(routine_id: int) -> dict | None:
+    with _LOCK:
+        return next((r for r in _load()["routines"] if r["id"] == routine_id), None)
+
+
+def update_routine(routine_id: int, **fields) -> dict | None:
+    with _LOCK:
+        data = _load()
+        r = next((x for x in data["routines"] if x["id"] == routine_id), None)
+        if r is None:
+            return None
+        r.update({k: v for k, v in fields.items() if v is not None})
+        _save(data)
+        return r
+
+
+def delete_routine(routine_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        before = len(data["routines"])
+        data["routines"] = [r for r in data["routines"] if r["id"] != routine_id]
+        data["routine_runs"] = [x for x in data["routine_runs"] if x["routine_id"] != routine_id]
+        _save(data)
+        return len(data["routines"]) < before
+
+
+def reschedule_routine(routine_id: int, next_at) -> None:
+    with _LOCK:
+        data = _load()
+        r = next((x for x in data["routines"] if x["id"] == routine_id), None)
+        if r is not None:
+            r["next_at"] = next_at.isoformat() if hasattr(next_at, "isoformat") else next_at
+            r["last_at"] = _now()
+            _save(data)
+
+
+def add_routine_run(routine_id: int, results: dict) -> dict:
+    from datetime import timedelta
+    local = datetime.now(timezone(timedelta(hours=7)))
+    entry = {"id": None, "routine_id": routine_id, "results": results,
+             "at": _now(), "at_local": local.strftime("%Y-%m-%d %H:%M"),
+             "delivery": None}
+    with _LOCK:
+        data = _load()
+        entry["id"] = max((x["id"] for x in data["routine_runs"]), default=0) + 1
+        data["routine_runs"].append(entry)
+        data["routine_runs"] = data["routine_runs"][-300:]
+        _save(data)
+    return entry
+
+
+def mark_routine_delivery(routine_id: int, run_id: int, delivery: dict) -> None:
+    with _LOCK:
+        data = _load()
+        run = next((x for x in data["routine_runs"] if x["id"] == run_id), None)
+        if run is not None:
+            run["delivery"] = delivery
+            _save(data)
+
+
+def get_routine_runs(routine_id: int | None = None, limit: int = 30) -> list:
+    with _LOCK:
+        runs = _load()["routine_runs"]
+    if routine_id is not None:
+        runs = [r for r in runs if r["routine_id"] == routine_id]
+    return runs[-limit:][::-1]
+
+
+def last_routine_run(routine_id: int) -> dict | None:
+    runs = get_routine_runs(routine_id, limit=1)
+    return runs[0] if runs else None

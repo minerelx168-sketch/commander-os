@@ -821,6 +821,31 @@ body {
   margin-bottom: 12px;
 }
 
+/* Seat picker — who is responsible for a routine */
+.seat-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.seat-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg-3); border: 1px solid var(--border-2);
+  color: var(--text-2); border-radius: var(--radius);
+  padding: 8px 13px; font-size: 13px; cursor: pointer;
+  user-select: none; transition: all .15s;
+}
+.seat-chip:hover { border-color: var(--border-2); color: var(--text); }
+.seat-chip.on {
+  background: rgba(59,130,246,.12); border-color: var(--accent); color: #bfdbfe;
+}
+.rt-item {
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
+}
+.rt-item.off { opacity: .55; }
+.rt-task { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.rt-meta { font-size: 11px; color: var(--text-3); margin-bottom: 10px; }
+.rt-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.rt-run { border-left: 2px solid var(--border-2); padding-left: 12px; margin-bottom: 12px; }
+.rt-run-head { font-size: 12px; color: var(--text-3); margin-bottom: 6px; }
+.rt-seat-out { font-size: 13px; color: var(--text-2); white-space: pre-wrap; margin-bottom: 8px; line-height: 1.6; }
+
 .select {
   background: var(--bg-3);
   border: 1px solid var(--border-2);
@@ -1132,6 +1157,9 @@ body {
     <button class="nav-item active" data-view="board">
       <span class="nav-icon">🏛</span> Boardroom
     </button>
+    <button class="nav-item" data-view="routine">
+      <span class="nav-icon">🔁</span> Routine
+    </button>
     <button class="nav-item" data-view="decisions">
       <span class="nav-icon">⚖️</span> Decisions
     </button>
@@ -1215,7 +1243,78 @@ body {
   </div>
 
   <!-- ============================================================
-       VIEW 2: DECISIONS
+       VIEW 2: ROUTINE — standing orders on a UTC+7 schedule
+       ============================================================ -->
+  <div class="view" id="view-routine">
+
+    <div class="stats-grid" id="rt-stats" style="grid-template-columns:repeat(4,1fr);"></div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🔁 ตั้งงานประจำใหม่</span>
+        <span style="font-size:12px;color:var(--text-3)">เวลาทั้งหมดเป็น UTC+7 · ส่งผลเข้า Telegram</span>
+      </div>
+      <div class="card-body">
+        <textarea id="rt-task" rows="2" class="ask-textarea"
+          placeholder="งานที่ให้ทำประจำ… เช่น 'สรุปยอดขายตู้ดอกไม้และชี้จุดที่ผิดปกติ'"></textarea>
+
+        <div class="scope-row" style="margin-top:12px;">
+          <label class="scope-label">ความถี่</label>
+          <select id="rt-freq" class="select" style="min-width:150px" onchange="rtFreqChanged()">
+            <option value="daily">รายวัน</option>
+            <option value="weekly">รายสัปดาห์</option>
+            <option value="monthly">รายเดือน</option>
+          </select>
+
+          <label class="scope-label" id="rt-day-label" style="display:none">วัน</label>
+          <select id="rt-day" class="select" style="min-width:150px;display:none"></select>
+
+          <label class="scope-label">เวลา (UTC+7)</label>
+          <input id="rt-time" type="time" value="09:00" class="select" style="min-width:120px">
+
+          <label class="scope-label">โปรเจค</label>
+          <select id="rt-project" class="select" style="min-width:170px"></select>
+        </div>
+
+        <div style="margin-top:14px;">
+          <div class="scope-label" style="margin-bottom:8px;">ผู้รับผิดชอบ (เลือกได้หลายคน)</div>
+          <div id="rt-seats" class="seat-picker"></div>
+        </div>
+
+        <div style="margin-top:14px;display:flex;gap:10px;align-items:center;">
+          <button class="btn btn-primary" onclick="createRoutine()">＋ สร้าง Routine</button>
+          <span id="rt-status" style="font-size:12px;color:var(--text-3)"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📋 Routine ทั้งหมด</span>
+        <span style="font-size:12px;color:var(--text-3)">ผลทุกครั้งถูกเก็บเป็นเอกสารให้ Boardroom ใช้ต่อ</span>
+      </div>
+      <div class="card-body">
+        <div id="rt-list">
+          <div class="empty-state">
+            <div class="empty-state-icon">🔁</div>
+            <div class="empty-state-text">ยังไม่มี — ตั้งงานประจำอันแรกด้านบน</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🕘 ผลล่าสุด</span>
+      </div>
+      <div class="card-body">
+        <div id="rt-runs"><div class="empty-state"><div class="empty-state-text">ยังไม่มีผลรัน</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       VIEW 3: DECISIONS
        ============================================================ -->
   <div class="view" id="view-decisions">
 
@@ -1356,6 +1455,7 @@ let SEARCH_TESTED = false;   // a diagnose verdict outranks the idle hint
 /* ---------- page meta ---------- */
 const PAGE_META = {
   board:     { title:'Boardroom',  sub:'บอร์ดหลายโมเดลถกกันจนได้ข้อเสนอที่ปกป้องได้ ก่อนคุณตัดสิน' },
+  routine:   { title:'Routine',    sub:'งานประจำที่บอร์ดรายงานตามรอบเวลา (UTC+7) เข้า Telegram' },
   decisions: { title:'Decisions',  sub:'วัดผลที่ปรึกษาจากการตัดสินใจจริง' },
   docs:      { title:'เอกสาร',     sub:'คลังความรู้ธุรกิจของคุณ (LINE → Google Drive)' },
   agents:    { title:'Agents',     sub:'เลือก AI ให้แต่ละที่ปรึกษา' },
@@ -1373,6 +1473,7 @@ document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click'
   document.getElementById('page-subtitle').textContent = m.sub;
   if (v === 'decisions') loadDecisions();
   if (v === 'docs') loadDocs();
+  if (v === 'routine') loadRoutines();
 }));
 
 /* ---------- state ---------- */
@@ -2138,6 +2239,138 @@ async function syncDrive() {
   const j = await (await fetch('/api/docs/sync', {method:'POST'})).json();
   el.textContent = j.error ? `⚠️ ${j.error}` : `✅ ดึงมาใหม่ ${j.synced} ไฟล์ (รวม ${j.total})`;
   loadDocs();
+}
+
+/* ---------- routines ---------- */
+const FREQ_TH = { daily:'รายวัน', weekly:'รายสัปดาห์', monthly:'รายเดือน' };
+const DOW_TH = ['จันทร์','อังคาร','พุธ','พฤหัสบดี','ศุกร์','เสาร์','อาทิตย์'];
+let RT_SEATS = new Set();
+
+function rtFreqChanged() {
+  const f = document.getElementById('rt-freq').value;
+  const lbl = document.getElementById('rt-day-label');
+  const sel = document.getElementById('rt-day');
+  if (f === 'daily') { lbl.style.display = sel.style.display = 'none'; return; }
+  lbl.style.display = ''; sel.style.display = '';
+  sel.innerHTML = f === 'weekly'
+    ? DOW_TH.map((d, i) => `<option value="${i}">${d}</option>`).join('')
+    : Array.from({length: 31}, (_, i) => `<option value="${i+1}">วันที่ ${i+1}</option>`).join('');
+}
+
+async function loadRoutines() {
+  const j = await (await fetch('/api/routines')).json();
+
+  document.getElementById('rt-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Routine ทั้งหมด</div><div class="stat-value c-blue">${j.routines.length}</div></div>
+    <div class="stat-card"><div class="stat-label">กำลังทำงาน</div><div class="stat-value c-green">${j.routines.filter(r=>r.enabled).length}</div></div>
+    <div class="stat-card"><div class="stat-label">Telegram</div><div class="stat-value ${j.telegram_ready?'c-green':'c-red'}" style="font-size:15px">${j.telegram_ready?'● พร้อม':'○ ยังไม่ตั้ง'}</div></div>
+    <div class="stat-card"><div class="stat-label">เวลาตอนนี้ (UTC+7)</div><div class="stat-value" style="font-size:15px">${j.now_local}</div></div>`;
+
+  // seat picker (first load only, so the CEO's ticks survive a refresh)
+  const picker = document.getElementById('rt-seats');
+  if (!picker.dataset.built) {
+    picker.innerHTML = j.seats.map(s => `
+      <div class="seat-chip" data-seat="${s.key}" onclick="toggleSeat('${s.key}', this)">
+        ${s.icon} ${esc(s.name)}
+      </div>`).join('');
+    picker.dataset.built = '1';
+  }
+
+  const proj = document.getElementById('rt-project');
+  if (!proj.dataset.built) {
+    const dj = await (await fetch('/api/docs')).json();
+    proj.innerHTML = '<option value="">ทุกโปรเจค</option>' +
+      (dj.projects || []).map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    proj.dataset.built = '1';
+  }
+
+  document.getElementById('rt-list').innerHTML = j.routines.length ? j.routines.map(r => {
+    const when = r.frequency === 'daily' ? `ทุกวัน ${r.time}`
+      : r.frequency === 'weekly' ? `ทุกวัน${DOW_TH[r.day ?? 0]} ${r.time}`
+      : `ทุกวันที่ ${r.day ?? 1} ของเดือน ${r.time}`;
+    const seats = r.seats.map(s => (STATE.depts.find(d => d.key === s) || {}).name || s).join(' · ');
+    return `
+    <div class="rt-item ${r.enabled ? '' : 'off'}">
+      <div class="rt-task">🔁 ${esc(r.task)}</div>
+      <div class="rt-meta">
+        #${r.id} · ${when} (UTC+7) · ${esc(seats)}
+        ${r.project ? ` · 📁 ${esc(r.project)}` : ''}
+        ${r.next_at ? ` · รอบถัดไป ${r.next_at.substring(0,16).replace('T',' ')}` : ''}
+      </div>
+      <div class="rt-actions">
+        <button class="btn btn-sm btn-primary" onclick="runRoutine(${r.id})">▶ รันเดี๋ยวนี้</button>
+        <button class="btn btn-sm btn-ghost" onclick="toggleRoutine(${r.id}, ${!r.enabled})">${r.enabled ? '⏸ พัก' : '▶ เปิด'}</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteRoutine(${r.id})">ลบ</button>
+      </div>
+    </div>`;
+  }).join('') : '<div class="empty-state"><div class="empty-state-icon">🔁</div><div class="empty-state-text">ยังไม่มี — ตั้งงานประจำอันแรกด้านบน</div></div>';
+
+  document.getElementById('rt-runs').innerHTML = (j.runs || []).length ? j.runs.map(run => {
+    const r = j.routines.find(x => x.id === run.routine_id);
+    const seats = Object.entries(run.results || {}).map(([k, v]) => {
+      const d = STATE.depts.find(x => x.key === k);
+      return `<div class="rt-seat-out"><b>${d ? d.icon + ' ' + esc(d.name) : esc(k)}</b> [${esc(v.provider)}]\n${esc(v.text)}</div>`;
+    }).join('');
+    const dl = run.delivery;
+    return `
+    <div class="rt-run">
+      <div class="rt-run-head">
+        ${run.at_local} · ${r ? esc(r.task.substring(0,60)) : 'routine #' + run.routine_id}
+        ${dl ? (dl.ok ? '<span class="badge badge-green">ส่ง Telegram แล้ว</span>'
+                      : `<span class="badge badge-red">ส่งไม่สำเร็จ: ${esc(dl.error||'')}</span>`) : ''}
+      </div>
+      ${seats}
+    </div>`;
+  }).join('') : '<div class="empty-state"><div class="empty-state-text">ยังไม่มีผลรัน</div></div>';
+}
+
+function toggleSeat(key, el) {
+  RT_SEATS.has(key) ? RT_SEATS.delete(key) : RT_SEATS.add(key);
+  el.classList.toggle('on');
+}
+
+async function createRoutine() {
+  const st = document.getElementById('rt-status');
+  const task = document.getElementById('rt-task').value.trim();
+  if (!task) { st.textContent = '⚠️ พิมพ์งานที่ต้องการก่อน'; return; }
+  if (!RT_SEATS.size) { st.textContent = '⚠️ เลือกผู้รับผิดชอบอย่างน้อย 1 คน'; return; }
+  const freq = document.getElementById('rt-freq').value;
+  const body = {
+    task, frequency: freq,
+    time: document.getElementById('rt-time').value || '09:00',
+    day: freq === 'daily' ? null : Number(document.getElementById('rt-day').value),
+    seats: [...RT_SEATS],
+    project: document.getElementById('rt-project').value || null,
+  };
+  st.textContent = '⏳ กำลังสร้าง…';
+  const r = await fetch('/api/routines', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (!r.ok) { st.textContent = '⚠️ ' + ((await r.json()).detail || 'สร้างไม่สำเร็จ'); return; }
+  const j = await r.json();
+  st.textContent = `✅ สร้างแล้ว — รอบแรก ${(j.next_at||'').substring(0,16).replace('T',' ')} (UTC+7)`;
+  document.getElementById('rt-task').value = '';
+  loadRoutines();
+}
+
+async function runRoutine(id) {
+  const st = document.getElementById('rt-status');
+  st.textContent = '⏳ กำลังรัน routine — ที่ปรึกษากำลังทำงาน…';
+  const r = await fetch(`/api/routines/${id}/run`, {method:'POST'});
+  st.textContent = r.ok ? '✅ รันเสร็จ — ดูผลด้านล่าง / เช็ค Telegram' : '⚠️ รันไม่สำเร็จ';
+  loadRoutines();
+}
+
+async function toggleRoutine(id, enabled) {
+  await fetch(`/api/routines/${id}/toggle`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({enabled})});
+  loadRoutines();
+}
+
+async function deleteRoutine(id) {
+  if (!confirm('ลบ routine นี้และประวัติการรันทั้งหมด?')) return;
+  await fetch(`/api/routines/${id}`, {method:'DELETE'});
+  loadRoutines();
 }
 
 /* ---------- agents ---------- */
