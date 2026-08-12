@@ -95,10 +95,19 @@ def handle_update(update: dict) -> dict:
         return {"handled": False, "reason": "not the owner"}
 
     run, routine = store.find_run_by_message(msg["reply_to"]) if msg["reply_to"] else (None, None)
+    linked = run is not None
+    if run is None:
+        # Either he replied to a report sent before ids were recorded, or he
+        # messaged the bot directly. Either way the subject is almost certainly
+        # the latest report — answering from a blank slate would be worse.
+        run, routine = store.latest_run()
+
     res = answer(msg["text"], run, routine)
 
     d = config.DEPTS.get(res["dept"], {})
     header = f"{d.get('icon', '💬')} {d.get('name', res['dept'])} ตอบกลับ"
+    if not linked and run:
+        header += f" (อ้างอิงรายงานล่าสุด {run.get('at_local', '')})"
     if not res["ok"]:
         header += " ⚠️"
     delivery = telegram.send(f"{header}\n\n{res['text']}", reply_to=msg["message_id"])
@@ -107,4 +116,5 @@ def handle_update(update: dict) -> dict:
                        routine_id=(routine or {}).get("id"),
                        run_id=(run or {}).get("id"), ok=res["ok"])
     return {"handled": True, "dept": res["dept"], "ok": res["ok"],
-            "linked_run": (run or {}).get("id"), "delivery": delivery}
+            "linked_run": (run or {}).get("id"), "exact_reply": linked,
+            "delivery": delivery}

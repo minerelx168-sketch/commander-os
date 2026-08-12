@@ -148,6 +148,53 @@ def test_the_report_invites_a_reply(client):
     assert "Reply" in tg.call_args.args[0]
 
 
+def test_replying_to_an_old_report_still_answers_about_the_latest(client):
+    """Before ids were recorded — and for any message we did not send — the
+    subject is almost certainly the newest report, not a blank slate."""
+    _run_a_routine(client, seats=("cfo",), message_id=77)
+    seen = {}
+
+    def capture(provider, system, user, **kw):
+        seen["user"] = user
+        return {"text": "ตอบจากรายงานล่าสุด", "provider": provider, "model": "m", "ok": True}
+
+    with patch("app.llm.chat", side_effect=capture), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1, "message_ids": [80]}) as tg:
+        r = client.post("/api/telegram/webhook",
+                        json=_update("แล้วต้องทำอะไรก่อน", reply_to=99999))  # unknown id
+
+    body = r.json()
+    assert body["handled"] and body["exact_reply"] is False
+    assert body["linked_run"], "should fall back to the latest run"
+    assert "NPL อยู่ที่ 8.1%" in seen["user"], "context of the latest report is missing"
+    assert "อ้างอิงรายงานล่าสุด" in tg.call_args.args[0]
+
+
+def test_an_exact_reply_is_marked_as_such(client):
+    _run_a_routine(client, seats=("cfo",), message_id=77)
+    with patch("app.llm.chat", return_value={"text": "ok", "provider": "p",
+                                             "model": "m", "ok": True}), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1, "message_ids": [80]}) as tg:
+        r = client.post("/api/telegram/webhook", json=_update("ถามตรงนี้", reply_to=77))
+    assert r.json()["exact_reply"] is True
+    assert "อ้างอิงรายงานล่าสุด" not in tg.call_args.args[0]
+
+
+def test_every_chunk_of_a_long_report_can_be_replied_to(client):
+    """A long report is split across messages; replying to any part must work."""
+    from app import store
+    r = client.post("/api/routines", json={"task": "ยาว", "frequency": "daily",
+                                           "time": "09:00", "seats": ["cfo"]}).json()
+    with patch("app.llm.chat", return_value={"text": "ok", "provider": "p",
+                                             "model": "m", "ok": True}), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 3,
+                                                  "message_ids": [11, 12, 13]}):
+        client.post(f"/api/routines/{r['id']}/run")
+    for mid in (11, 12, 13):
+        run, routine = store.find_run_by_message(mid)
+        assert run and routine, mid
+
+
 def test_message_ids_are_recorded_so_replies_can_land(client):
     from app import store
     _run_a_routine(client, message_id=4242)

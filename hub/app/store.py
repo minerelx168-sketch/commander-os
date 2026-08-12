@@ -479,6 +479,17 @@ def find_run_by_message(message_id: int | None) -> tuple[dict | None, dict | Non
     return run, routine
 
 
+def latest_run() -> tuple[dict | None, dict | None]:
+    """The most recent routine run and the routine behind it."""
+    with _LOCK:
+        data = _load()
+    if not data["routine_runs"]:
+        return None, None
+    run = data["routine_runs"][-1]
+    routine = next((x for x in data["routines"] if x["id"] == run["routine_id"]), None)
+    return run, routine
+
+
 def add_followup(question: str, dept: str, answer: str, routine_id: int | None,
                  run_id: int | None, ok: bool) -> dict:
     """One-shot Q&A from Telegram. Kept for the record, never re-run."""
