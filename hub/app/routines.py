@@ -161,7 +161,7 @@ def _deliver(routine: dict, run: dict) -> None:
         lines.append(f"{d.get('icon', '•')} {d.get('name', dept)} [{r['provider']}]{flag}")
         lines.append(r["text"].strip() or "(ไม่มีคำตอบกลับมา)")
         lines.append("")
-    lines.append("— นำผลสะสมไปให้ Boardroom ถกต่อได้จากหน้า เอกสาร")
+    lines.append("— ตอบกลับข้อความนี้ (Reply) เพื่อถามที่ปรึกษาต่อได้ทันที")
     res = telegram.send("\n".join(lines))
     store.mark_routine_delivery(routine["id"], run["id"], res)
 

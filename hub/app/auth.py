@@ -28,8 +28,9 @@ from . import config
 
 COOKIE = "hermes_key"
 OPEN_PATHS = {"/", "/health", "/favicon.ico", "/docs", "/openapi.json", "/redoc",
-              "/api/ingest",   # authenticates with its own per-connector key
-              "/api/unlock"}   # how a browser obtains the cookie in the first place
+              "/api/ingest",             # authenticates with its own per-connector key
+              "/api/unlock",             # how a browser obtains the cookie in the first place
+              "/api/telegram/webhook"}   # Telegram carries its own secret, not ours
 OPEN_SUFFIXES = ("/webhook",)          # inbound pushes authenticate their own way
 
 

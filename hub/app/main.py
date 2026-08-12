@@ -18,8 +18,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from . import (auth, config, deliverable, depts, docs, finmodel, llm, report,
-               research, routines, sources, store, telegram)
+from . import (auth, config, deliverable, depts, docs, finmodel, followup, llm,
+               report, research, routines, sources, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -767,6 +767,43 @@ async def ingest(request: Request) -> dict:
         raise HTTPException(400, "invalid JSON") from None
     result = sources.ingest_webhook(s["id"], payload)
     return {**result, "project": s["project"], "source": s["name"], "source_id": s["id"]}
+
+
+# ── Telegram: the CEO replies to a report and asks a follow-up ──
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(request: Request) -> dict:
+    """Telegram posts every message here. Open by necessity (Telegram cannot
+    send our key) but guarded by the registered secret plus an owner check."""
+    if not telegram.valid_secret(request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")):
+        raise HTTPException(401, "bad telegram secret")
+    import json as _json
+    body = await request.body()
+    try:
+        update = _json.loads(body or b"{}")
+    except ValueError:
+        raise HTTPException(400, "invalid JSON") from None
+    return followup.handle_update(update)
+
+
+@app.get("/api/telegram/status")
+def telegram_status() -> dict:
+    return {"ready": telegram.ready(), "webhook": telegram.webhook_info(),
+            "bot": telegram.token_fingerprint()}
+
+
+class WebhookIn(BaseModel):
+    url: str
+
+
+@app.post("/api/telegram/webhook/register")
+def register_webhook(body: WebhookIn) -> dict:
+    return telegram.set_webhook(body.url.rstrip("/"))
+
+
+@app.get("/api/followups")
+def followups(limit: int = 30) -> dict:
+    return {"followups": store.get_followups(limit)}
 
 
 @app.post("/api/sources/{source_id}/clear")

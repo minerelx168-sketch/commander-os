@@ -25,6 +25,7 @@ _DEFAULT = {
     "memory": [],                                     # what past sessions concluded
     "routines": [],                                   # standing orders on a schedule
     "routine_runs": [],                               # every execution, newest last
+    "followups": [],                                  # one-shot Q&A from Telegram
 }
 
 
@@ -458,7 +459,44 @@ def mark_routine_delivery(routine_id: int, run_id: int, delivery: dict) -> None:
         run = next((x for x in data["routine_runs"] if x["id"] == run_id), None)
         if run is not None:
             run["delivery"] = delivery
+            # Telegram message ids are how an inbound reply finds its way back
+            # to the run it answers.
+            run["message_ids"] = delivery.get("message_ids") or []
             _save(data)
+
+
+def find_run_by_message(message_id: int | None) -> tuple[dict | None, dict | None]:
+    """Which run produced this Telegram message, and from which routine."""
+    if not message_id:
+        return None, None
+    with _LOCK:
+        data = _load()
+    run = next((r for r in reversed(data["routine_runs"])
+                if message_id in (r.get("message_ids") or [])), None)
+    if run is None:
+        return None, None
+    routine = next((x for x in data["routines"] if x["id"] == run["routine_id"]), None)
+    return run, routine
+
+
+def add_followup(question: str, dept: str, answer: str, routine_id: int | None,
+                 run_id: int | None, ok: bool) -> dict:
+    """One-shot Q&A from Telegram. Kept for the record, never re-run."""
+    entry = {"id": None, "question": question, "dept": dept, "answer": answer,
+             "routine_id": routine_id, "run_id": run_id, "ok": ok, "at": _now()}
+    with _LOCK:
+        data = _load()
+        data.setdefault("followups", [])
+        entry["id"] = max((f["id"] for f in data["followups"]), default=0) + 1
+        data["followups"].append(entry)
+        data["followups"] = data["followups"][-200:]
+        _save(data)
+    return entry
+
+
+def get_followups(limit: int = 30) -> list:
+    with _LOCK:
+        return _load().get("followups", [])[-limit:][::-1]
 
 
 def get_routine_runs(routine_id: int | None = None, limit: int = 30) -> list:

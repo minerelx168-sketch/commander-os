@@ -61,5 +61,47 @@
   "rows": 1,
   "sample": "[{\"sales\": 1200}]",
   "created_at": "2026-08-12T19:42:08.834380+00:00"
+ },
+ {
+  "id": 4,
+  "project": "FullCo",
+  "projects": [
+   "FullCo"
+  ],
+  "name": "POS",
+  "kind": "pos_rest",
+  "url": "https://pos.example.com/x",
+  "auth": "none",
+  "secret": "",
+  "header_name": "X-API-Key",
+  "data_path": "data.orders",
+  "enabled": true,
+  "ingest_key": "cx_zBGugS8ru-RK1-xB3AaXuFUJJ441DU_Q",
+  "last_sync": "2026-08-12T19:44:54.896241+00:00",
+  "last_status": "ok",
+  "rows": 1,
+  "sample": "[{\"sales\": 1200}]",
+  "created_at": "2026-08-12T19:44:54.893897+00:00"
+ },
+ {
+  "id": 5,
+  "project": "FullCo",
+  "projects": [
+   "FullCo"
+  ],
+  "name": "POS",
+  "kind": "pos_rest",
+  "url": "https://pos.example.com/x",
+  "auth": "none",
+  "secret": "",
+  "header_name": "X-API-Key",
+  "data_path": "data.orders",
+  "enabled": true,
+  "ingest_key": "cx_LWV3MTI8oBOcv5PXEWgmx3A0YGikNeX1",
+  "last_sync": "2026-08-12T20:01:22.401585+00:00",
+  "last_status": "ok",
+  "rows": 1,
+  "sample": "[{\"sales\": 1200}]",
+  "created_at": "2026-08-12T20:01:22.398796+00:00"
  }
 ]
