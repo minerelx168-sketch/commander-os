@@ -323,6 +323,26 @@ def test_listing_by_project_includes_linked_not_only_owned(client):
     assert names == ["shared feed"]
 
 
+def test_clearing_data_keeps_the_connection_but_forgets_the_rows(client):
+    """Test rows are worse than none: an advisor reasoning from them reports
+    on a fiction."""
+    from app import sources
+    s = _add(client, project="Cloudforcashpay").json()
+    with patch("httpx.get", return_value=httpx.Response(
+            200, json={"data": {"orders": [{"tag": "TEST-ROW"}]}},
+            request=httpx.Request("GET", "https://x"))):
+        client.post(f"/api/sources/{s['id']}/fetch")
+    assert "TEST-ROW" in sources.live_context(project="Cloudforcashpay")
+
+    r = client.post(f"/api/sources/{s['id']}/clear")
+    assert r.status_code == 200 and r.json()["rows"] == 0
+    assert sources.live_context(project="Cloudforcashpay") == ""
+    # the connection itself survives — same key, still pushable
+    assert r.json()["ingest_key"] == s["ingest_key"]
+    assert client.post("/api/ingest", json=[{"real": 1}],
+                       headers={"X-Source-Key": s["ingest_key"]}).status_code == 200
+
+
 def test_ui_exposes_connector_and_seat_dropdown(client):
     html = client.get("/").text
     for marker in ("src-project", "src-kind", "addSource", "fetchSource", "copyHook",

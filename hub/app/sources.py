@@ -148,6 +148,15 @@ def add_source(project: str, name: str, kind: str, url: str, auth: str,
     return _public(entry)
 
 
+def clear_data(source_id: int) -> dict | None:
+    """Forget what this connector has collected, keeping the connection itself.
+
+    Test rows are worse than no rows: an advisor that reasons from them reports
+    on a fiction. The CEO must be able to wipe them without re-issuing keys.
+    """
+    return update_source(source_id, sample="", rows=0, last_status="cleared")
+
+
 def rotate_ingest_key(source_id: int) -> dict | None:
     return update_source(source_id, ingest_key=f"cx_{secrets.token_urlsafe(24)}")
 

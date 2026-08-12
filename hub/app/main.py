@@ -769,6 +769,14 @@ async def ingest(request: Request) -> dict:
     return {**result, "project": s["project"], "source": s["name"], "source_id": s["id"]}
 
 
+@app.post("/api/sources/{source_id}/clear")
+def clear_source_data(source_id: int) -> dict:
+    s = sources.clear_data(source_id)
+    if s is None:
+        raise HTTPException(404, "source not found")
+    return s
+
+
 @app.post("/api/sources/{source_id}/rotate-key")
 def rotate_source_key(source_id: int) -> dict:
     s = sources.rotate_ingest_key(source_id)

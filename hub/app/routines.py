@@ -99,11 +99,24 @@ def run_routine(routine: dict) -> dict:
     """Execute one routine now: every assigned seat reports, grounded in the
     CEO's library and in what this same routine said last time."""
     task = routine["task"]
-    library = docs.knowledge_context(project=routine.get("project"), max_chars=2500)
-    live = sources.live_context(project=routine.get("project"), max_chars=2500)
+    project = routine.get("project")
+    library = docs.knowledge_context(project=project, max_chars=2500)
+    live = sources.live_context(project=project, max_chars=2500)
     previous = store.last_routine_run(routine["id"])
 
+    # A routine that asks for numbers nobody sent is the common failure, and
+    # three advisors each rediscovering it wastes a round. Say it once, up top.
+    if not live and not library:
+        note = ("⚠️ ยังไม่มีข้อมูลจากระบบ (API Connector) หรือเอกสารสำหรับ"
+                f"{'โปรเจค ' + project if project else 'ขอบเขตนี้'} — "
+                "ให้รายงานตรงๆ ว่ายังประเมินไม่ได้ ระบุว่าต้องได้ข้อมูลอะไรบ้าง "
+                "และห้ามเดาตัวเลขขึ้นมาเอง")
+    else:
+        note = ""
+
     ctx = [f"งานประจำที่ต้องรายงาน: {task}"]
+    if note:
+        ctx.append(note)
     if library:
         ctx.append(f"[คลังเอกสารธุรกิจของ CEO]\n{library}")
     if live:

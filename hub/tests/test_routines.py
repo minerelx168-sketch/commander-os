@@ -169,6 +169,57 @@ def test_delete_removes_routine_and_its_runs(client):
     assert client.post(f"/api/routines/{r['id']}/run").status_code == 404
 
 
+def test_routine_says_so_when_there_is_nothing_to_analyse(client):
+    """Three advisors each rediscovering 'no data' wastes a round — and worse,
+    invites one of them to invent numbers."""
+    from app import docs, routines
+    docs.create_project("EmptyCo")
+    r = client.post("/api/routines", json={"task": "สรุปยอดขาย", "frequency": "daily",
+                                           "time": "09:00", "seats": ["cfo"],
+                                           "project": "EmptyCo"}).json()
+    seen = {}
+
+    def capture(provider, system, user, **kw):
+        seen["user"] = user
+        return {"text": "ยังประเมินไม่ได้", "provider": provider, "model": "m", "ok": True}
+
+    with patch("app.llm.chat", side_effect=capture), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1}):
+        routines.run_routine(r)
+    assert "ยังไม่มีข้อมูลจากระบบ" in seen["user"]
+    assert "ห้ามเดาตัวเลข" in seen["user"]
+
+
+def test_no_such_warning_once_data_exists(client):
+    import httpx
+    from app import docs, routines, sources
+    docs.create_project("FullCo")
+    s = client.post("/api/sources", json={
+        "project": "FullCo", "name": "POS", "kind": "pos_rest",
+        "url": "https://pos.example.com/x", "auth": "none",
+        "data_path": "data.orders"}).json()
+    with patch("httpx.get", return_value=httpx.Response(
+            200, json={"data": {"orders": [{"sales": 1200}]}},
+            request=httpx.Request("GET", "https://x"))):
+        client.post(f"/api/sources/{s['id']}/fetch")
+    assert sources.live_context(project="FullCo")
+
+    r = client.post("/api/routines", json={"task": "สรุปยอดขาย", "frequency": "daily",
+                                           "time": "09:00", "seats": ["cfo"],
+                                           "project": "FullCo"}).json()
+    seen = {}
+
+    def capture(provider, system, user, **kw):
+        seen["user"] = user
+        return {"text": "ok", "provider": provider, "model": "m", "ok": True}
+
+    with patch("app.llm.chat", side_effect=capture), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1}):
+        routines.run_routine(r)
+    assert "ยังไม่มีข้อมูลจากระบบ" not in seen["user"]
+    assert "1200" in seen["user"]
+
+
 def test_ui_exposes_the_routine_page(client):
     html = client.get("/").text
     for marker in ('data-view="routine"', "view-routine", "loadRoutines", "createRoutine",
