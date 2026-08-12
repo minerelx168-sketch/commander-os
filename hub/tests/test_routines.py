@@ -174,3 +174,15 @@ def test_ui_exposes_the_routine_page(client):
     for marker in ('data-view="routine"', "view-routine", "loadRoutines", "createRoutine",
                    "rt-seat-menu", "toggleSeatDD", "UTC+7", "Routine"):
         assert marker in html, marker
+
+
+def test_seat_dropdown_is_not_clipped_by_its_card(client):
+    """`.card { overflow:hidden }` silently cut the pop-out menu off after two
+    rows, so only the top seats were selectable. The card that holds it must
+    opt out, and the menu itself must scroll."""
+    html = client.get("/").text
+    assert ".card.has-dropdown { overflow: visible; }" in html
+    card = html[html.index('<div class="view" id="view-routine"'):html.index("rt-seat-menu")]
+    assert 'class="card has-dropdown"' in card, "routine form card does not opt out of clipping"
+    menu_css = html[html.index(".dropdown-menu {"):html.index(".dropdown.open")]
+    assert "overflow-y: auto" in menu_css and "max-height" in menu_css

@@ -330,6 +330,10 @@ body {
   overflow: hidden;
 }
 
+/* A card holding a pop-out menu must not clip it — overflow:hidden above is
+   only there to keep children inside the rounded corners. */
+.card.has-dropdown { overflow: visible; }
+
 .card-header {
   display: flex;
   align-items: center;
@@ -852,10 +856,11 @@ body {
 }
 .dropdown-caret { color: var(--text-3); font-size: 11px; }
 .dropdown-menu {
-  display: none; position: absolute; z-index: 40; top: calc(100% + 6px); left: 0;
+  display: none; position: absolute; z-index: 60; top: calc(100% + 6px); left: 0;
   min-width: 100%; background: var(--bg-2); border: 1px solid var(--border-2);
   border-radius: var(--radius); box-shadow: 0 12px 32px rgba(0,0,0,.5);
-  padding: 6px; max-height: 320px; overflow-y: auto;
+  padding: 6px; max-height: min(360px, 50vh); overflow-y: auto;
+  overscroll-behavior: contain;   /* scrolling the menu must not scroll the page */
 }
 .dropdown.open .dropdown-menu { display: block; }
 .dropdown-item {
@@ -1298,7 +1303,7 @@ body {
 
     <div class="stats-grid" id="rt-stats" style="grid-template-columns:repeat(4,1fr);"></div>
 
-    <div class="card">
+    <div class="card has-dropdown">
       <div class="card-header">
         <span class="card-title">🔁 ตั้งงานประจำใหม่</span>
         <span style="font-size:12px;color:var(--text-3)">เวลาทั้งหมดเป็น UTC+7 · ส่งผลเข้า Telegram</span>
@@ -2536,7 +2541,16 @@ async function loadRoutines() {
 
 function toggleSeatDD(ev) {
   ev.stopPropagation();
-  document.getElementById('rt-seat-dd').classList.toggle('open');
+  const dd = document.getElementById('rt-seat-dd');
+  dd.classList.toggle('open');
+  if (!dd.classList.contains('open')) return;
+  // On a short window the menu can open past the fold; bring it into view so
+  // the lower seats are reachable without hunting for the scrollbar.
+  const menu = document.getElementById('rt-seat-menu');
+  requestAnimationFrame(() => {
+    const over = menu.getBoundingClientRect().bottom - window.innerHeight + 16;
+    if (over > 0) document.querySelector('.main').scrollBy({top: over, behavior: 'smooth'});
+  });
 }
 
 document.addEventListener('click', e => {
