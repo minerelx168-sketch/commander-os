@@ -879,6 +879,18 @@ body {
   background: var(--accent); border-color: var(--accent); color: #fff;
 }
 .dropdown-item .role { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.dropdown-head {
+  font-size: 11px; color: var(--text-3); padding: 6px 11px 8px;
+  border-bottom: 1px solid var(--border); margin-bottom: 4px;
+}
+
+/* Connector card: name on the left, project link on the right */
+.src-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.src-proj-dd { min-width: 210px; flex-shrink: 0; }
+.src-proj-dd .dropdown-menu { left: auto; right: 0; min-width: 250px; }
+.src-proj-dd .dropdown-toggle { font-size: 12px; padding: 7px 11px; }
+.dropdown-item.owner { color: var(--text); }
+.dropdown-item.owner .tick { border-color: var(--accent); }
 
 /* API Connector — the project picker is the isolation boundary, so it gets
    its own band rather than being one control among many in a filter row. */
@@ -1510,7 +1522,7 @@ body {
     </div>
 
     <!-- API Connector — one set of connections per project, never shared -->
-    <div class="card">
+    <div class="card has-dropdown">
       <div class="card-header">
         <span class="card-title">🔌 API Connector</span>
         <span style="font-size:12px;color:var(--text-3)">เชื่อม POS / ระบบหลังบ้าน แยกตามโปรเจค · ข้อมูลสดเข้าบอร์ดและ Routine</span>
@@ -2432,6 +2444,42 @@ async function syncDrive() {
 /* ---------- data sources (POS / back-office APIs, per project) ---------- */
 let SRC_META = null;
 let SRC_CACHE = [];
+let SRC_PROJECTS = [];
+
+function toggleProjDD(ev, id) {
+  ev.stopPropagation();
+  const dd = document.getElementById('src-proj-dd-' + id);
+  document.querySelectorAll('.src-proj-dd.open').forEach(x => { if (x !== dd) x.classList.remove('open'); });
+  dd.classList.toggle('open');
+}
+
+document.addEventListener('click', e => {
+  document.querySelectorAll('.src-proj-dd.open').forEach(dd => {
+    if (!dd.contains(e.target)) dd.classList.remove('open');
+  });
+});
+
+async function toggleSourceProject(ev, id, project) {
+  ev.stopPropagation();                       // keep the menu open for more picks
+  const s = SRC_CACHE.find(x => x.id === id);
+  if (!s) return;
+  if (project === s.project) {                // the owner cannot be unlinked
+    document.getElementById('src-status').textContent =
+      `⚠️ ${project} เป็นเจ้าของข้อมูลชุดนี้ ปลดไม่ได้`;
+    return;
+  }
+  const cur = new Set(s.projects && s.projects.length ? s.projects : [s.project]);
+  cur.has(project) ? cur.delete(project) : cur.add(project);
+  const r = await fetch(`/api/sources/${id}/projects`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({projects: [...cur]})});
+  if (!r.ok) { document.getElementById('src-status').textContent = '⚠️ บันทึกไม่สำเร็จ'; return; }
+  const updated = await r.json();
+  document.getElementById('src-status').textContent =
+    `✅ ${s.name} → ${updated.projects.join(' · ')}`;
+  await loadSources();
+  document.getElementById('src-proj-dd-' + id)?.classList.add('open');
+}
 
 function srcKindChanged() {
   const webhook = document.getElementById('src-kind').value === 'webhook';
@@ -2449,6 +2497,7 @@ async function loadSources() {
   const proj = document.getElementById('src-project').value;
   const j = await (await fetch('/api/sources' + (proj ? `?project=${encodeURIComponent(proj)}` : ''))).json();
   SRC_CACHE = j.sources;
+  SRC_PROJECTS = j.projects || [];
 
   if (!SRC_META) {
     SRC_META = j;
@@ -2464,14 +2513,34 @@ async function loadSources() {
     const badge = !s.last_status ? '<span class="badge badge-muted">ยังไม่ได้ดึง</span>'
       : ok ? `<span class="badge badge-green">${s.rows} แถว</span>`
            : `<span class="badge badge-red">${esc((s.last_status||'').substring(0,60))}</span>`;
+    const linked = s.projects && s.projects.length ? s.projects : [s.project];
+    const summary = linked.length <= 2 ? linked.join(' · ') : `${linked.slice(0,2).join(' · ')} +${linked.length-2}`;
     return `
     <div class="rt-item ${s.enabled ? '' : 'off'}">
-      <div class="rt-task">🔌 ${esc(s.name)} ${badge}</div>
-      <div class="rt-meta">
-        #${s.id} · 📁 ${esc(s.project)} · ${esc(SRC_META.kinds[s.kind] || s.kind)}
-        ${s.url ? ` · ${esc(s.url.substring(0,60))}` : ''}
-        ${s.has_secret ? ' · 🔑 มี key' : ''}
-        ${s.last_sync ? ` · ดึงล่าสุด ${s.last_sync.substring(0,16).replace('T',' ')}` : ''}
+      <div class="src-head">
+        <div>
+          <div class="rt-task">🔌 ${esc(s.name)} ${badge}</div>
+          <div class="rt-meta">
+            #${s.id} · ${esc(SRC_META.kinds[s.kind] || s.kind)}
+            ${s.url ? ` · ${esc(s.url.substring(0,50))}` : ''}
+            ${s.has_secret ? ' · 🔑 มี key' : ''}
+            ${s.last_sync ? ` · ดึงล่าสุด ${s.last_sync.substring(0,16).replace('T',' ')}` : ''}
+          </div>
+        </div>
+        <div class="dropdown src-proj-dd" id="src-proj-dd-${s.id}">
+          <button type="button" class="select dropdown-toggle" onclick="toggleProjDD(event, ${s.id})">
+            <span>📁 ${esc(summary)}</span><span class="dropdown-caret">▾</span>
+          </button>
+          <div class="dropdown-menu">
+            <div class="dropdown-head">โปรเจคที่ใช้ข้อมูลชุดนี้ได้</div>
+            ${(SRC_PROJECTS || []).map(p => `
+              <div class="dropdown-item ${linked.includes(p) ? 'on' : ''} ${p === s.project ? 'owner' : ''}"
+                   onclick="toggleSourceProject(event, ${s.id}, '${esc(p)}')">
+                <span class="tick">✓</span><span>${esc(p)}</span>
+                ${p === s.project ? '<span class="role">เจ้าของข้อมูล</span>' : ''}
+              </div>`).join('')}
+          </div>
+        </div>
       </div>
       <div class="rt-actions">
         ${s.kind === 'webhook'

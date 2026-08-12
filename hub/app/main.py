@@ -664,7 +664,24 @@ class SourceToggleIn(BaseModel):
 @app.get("/api/sources")
 def list_sources(project: str | None = None) -> dict:
     return {"sources": sources.list_sources(project),
-            "kinds": sources.KINDS, "auths": sources.AUTHS}
+            "kinds": sources.KINDS, "auths": sources.AUTHS,
+            "projects": docs.list_projects()}
+
+
+class SourceProjectsIn(BaseModel):
+    projects: list[str] = []
+
+
+@app.put("/api/sources/{source_id}/projects")
+def set_source_projects(source_id: int, body: SourceProjectsIn) -> dict:
+    known = set(docs.list_projects())
+    unknown = [p for p in body.projects if p not in known]
+    if unknown:
+        raise HTTPException(400, f"ไม่รู้จักโปรเจค: {', '.join(unknown)}")
+    s = sources.set_projects(source_id, body.projects)
+    if s is None:
+        raise HTTPException(404, "source not found")
+    return s
 
 
 @app.post("/api/sources")

@@ -48,12 +48,19 @@ MAX_CHARS = 2600        # what one source may contribute to a prompt
 def _load() -> list:
     if _FILE.exists():
         rows = json.loads(_FILE.read_text(encoding="utf-8"))
-        # Connectors created before per-project keys existed get one now,
-        # rather than silently staying unattributable.
         changed = False
         for s in rows:
+            # Connectors created before per-project keys existed get one now,
+            # rather than silently staying unattributable.
             if not s.get("ingest_key"):
                 s["ingest_key"] = f"cx_{secrets.token_urlsafe(24)}"
+                changed = True
+            # One feed can legitimately inform several projects (a shared POS,
+            # a group-wide ledger). `project` stays as the attribution owner —
+            # the one an inbound push is filed under — while `projects` is the
+            # set of boards allowed to read it.
+            if not s.get("projects"):
+                s["projects"] = [s["project"]] if s.get("project") else []
                 changed = True
         if changed:
             _FILE.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -80,8 +87,27 @@ def list_sources(project: str | None = None) -> list:
     with _LOCK:
         rows = _load()
     if project:
-        rows = [s for s in rows if s.get("project") == project]
+        rows = [s for s in rows if project in _linked(s)]
     return [_public(s) for s in rows]
+
+
+def _linked(s: dict) -> list:
+    """Every project this connector feeds — owner included."""
+    return s.get("projects") or ([s["project"]] if s.get("project") else [])
+
+
+def set_projects(source_id: int, projects: list) -> dict | None:
+    """Which boards may read this feed. The owner project always stays in the
+    set: it is where inbound pushes are filed, so dropping it would orphan the
+    data it is already collecting."""
+    s = get_source(source_id)
+    if s is None:
+        return None
+    owner = s.get("project")
+    linked = [p for p in dict.fromkeys(projects) if p]
+    if owner and owner not in linked:
+        linked.insert(0, owner)
+    return update_source(source_id, projects=linked)
 
 
 def get_source(source_id: int) -> dict | None:
@@ -105,7 +131,8 @@ def by_ingest_key(key: str) -> dict | None:
 
 def add_source(project: str, name: str, kind: str, url: str, auth: str,
                secret: str, header_name: str, data_path: str) -> dict:
-    entry = {"id": None, "project": project, "name": name, "kind": kind, "url": url,
+    entry = {"id": None, "project": project, "projects": [project],
+             "name": name, "kind": kind, "url": url,
              "auth": auth, "secret": secret, "header_name": header_name or "X-API-Key",
              "data_path": data_path, "enabled": True,
              # Every connector gets its own inbound key, so pushed data is
@@ -215,16 +242,21 @@ def _store_rows(source_id: int, rows: list, status: str) -> dict:
 # ── what the advisors actually read ──
 
 def live_context(project: str | None = None, max_chars: int = 3000) -> str:
-    """Digest of every enabled source's latest pull, for the prompt."""
+    """Digest of every enabled source's latest pull, for the prompt.
+
+    A source reaches a board only if that board is in its linked set, so the
+    CEO decides explicitly which feeds an agent reasons from.
+    """
     parts = []
     with _LOCK:
         rows = _load()
     for s in rows:
         if not s.get("enabled", True) or not s.get("sample"):
             continue
-        if project and s.get("project") != project:
+        if project and project not in _linked(s):
             continue
         head = (f"[ข้อมูลสดจากระบบ: {s['name']} ({KINDS.get(s['kind'], s['kind'])}) "
-                f"· โปรเจค {s.get('project') or 'ทั่วไป'} · ดึงเมื่อ {(s.get('last_sync') or '')[:16]}]")
+                f"· โปรเจค {' + '.join(_linked(s)) or 'ทั่วไป'} "
+                f"· ดึงเมื่อ {(s.get('last_sync') or '')[:16]}]")
         parts.append(f"{head}\n{s['sample'][:MAX_CHARS]}")
     return "\n\n".join(parts)[:max_chars]

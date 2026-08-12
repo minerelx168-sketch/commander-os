@@ -253,10 +253,81 @@ def test_rotating_a_key_revokes_the_old_one(client):
                        headers={"X-Source-Key": new}).status_code == 200
 
 
+# ── linking one feed to several projects ──
+
+def test_a_new_connector_starts_linked_to_its_owner(client):
+    s = _add(client, project="Cloudforcashpay").json()
+    assert s["projects"] == ["Cloudforcashpay"]
+
+
+def test_linking_extra_projects_widens_who_can_read_it(client):
+    from app import docs, sources
+    for p in ("Cloudforcashpay", "YourFin"):
+        docs.create_project(p)
+    s = _add(client, project="Cloudforcashpay", name="ledger").json()
+    with patch("httpx.get", return_value=httpx.Response(
+            200, json={"data": {"orders": [{"tag": "SHARED-LEDGER"}]}},
+            request=httpx.Request("GET", "https://x"))):
+        client.post(f"/api/sources/{s['id']}/fetch")
+
+    assert "SHARED-LEDGER" not in sources.live_context(project="YourFin")
+    r = client.put(f"/api/sources/{s['id']}/projects",
+                   json={"projects": ["Cloudforcashpay", "YourFin"]})
+    assert r.status_code == 200 and set(r.json()["projects"]) == {"Cloudforcashpay", "YourFin"}
+    assert "SHARED-LEDGER" in sources.live_context(project="YourFin")
+    assert "SHARED-LEDGER" in sources.live_context(project="Cloudforcashpay")
+
+
+def test_unlinking_takes_it_back_out_of_that_board(client):
+    from app import docs, sources
+    for p in ("Cloudforcashpay", "YourFin"):
+        docs.create_project(p)
+    s = _add(client, project="Cloudforcashpay").json()
+    with patch("httpx.get", return_value=httpx.Response(
+            200, json={"data": {"orders": [{"tag": "TEMP"}]}},
+            request=httpx.Request("GET", "https://x"))):
+        client.post(f"/api/sources/{s['id']}/fetch")
+    client.put(f"/api/sources/{s['id']}/projects",
+               json={"projects": ["Cloudforcashpay", "YourFin"]})
+    assert "TEMP" in sources.live_context(project="YourFin")
+    client.put(f"/api/sources/{s['id']}/projects", json={"projects": ["Cloudforcashpay"]})
+    assert "TEMP" not in sources.live_context(project="YourFin")
+
+
+def test_the_owner_project_cannot_be_dropped(client):
+    """Pushes are filed under the owner, so unlinking it would orphan them."""
+    from app import docs
+    for p in ("Cloudforcashpay", "YourFin"):
+        docs.create_project(p)
+    s = _add(client, project="Cloudforcashpay").json()
+    r = client.put(f"/api/sources/{s['id']}/projects", json={"projects": ["YourFin"]})
+    assert r.json()["projects"][0] == "Cloudforcashpay"
+
+
+def test_unknown_projects_are_refused(client):
+    s = _add(client, project="Cloudforcashpay").json()
+    r = client.put(f"/api/sources/{s['id']}/projects",
+                   json={"projects": ["Cloudforcashpay", "NotARealProject"]})
+    assert r.status_code == 400
+
+
+def test_listing_by_project_includes_linked_not_only_owned(client):
+    from app import docs
+    for p in ("Cloudforcashpay", "YourFin"):
+        docs.create_project(p)
+    s = _add(client, project="Cloudforcashpay", name="shared feed").json()
+    assert client.get("/api/sources?project=YourFin").json()["sources"] == []
+    client.put(f"/api/sources/{s['id']}/projects",
+               json={"projects": ["Cloudforcashpay", "YourFin"]})
+    names = [x["name"] for x in client.get("/api/sources?project=YourFin").json()["sources"]]
+    assert names == ["shared feed"]
+
+
 def test_ui_exposes_connector_and_seat_dropdown(client):
     html = client.get("/").text
     for marker in ("src-project", "src-kind", "addSource", "fetchSource", "copyHook",
                    "API Connector", "conn-scope", "rt-seat-menu", "toggleSeatDD",
                    "renderSeatSummary", "rt-textarea", "showKey", "copyIngest",
-                   "rotateKey", "/api/ingest"):
+                   "rotateKey", "/api/ingest", "toggleProjDD", "toggleSourceProject",
+                   "src-proj-dd", "โปรเจคที่ใช้ข้อมูลชุดนี้ได้"):
         assert marker in html, marker
