@@ -195,6 +195,37 @@ def test_every_chunk_of_a_long_report_can_be_replied_to(client):
         assert run and routine, mid
 
 
+def test_a_missing_reply_target_does_not_lose_the_answer(monkeypatch):
+    """Telegram 400s when the replied-to message is gone. Threading is a
+    nicety; delivery is not."""
+    import app.telegram as tg
+    monkeypatch.setattr(tg, "BOT_TOKEN", "t")
+    monkeypatch.setattr(tg, "CHAT_ID", "999")
+    monkeypatch.setattr(tg, "MOCK", False)
+    calls = []
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code = code
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError("http error")
+
+        def json(self):
+            return {"result": {"message_id": 5}}
+
+    def fake_post(url, json=None, timeout=None):
+        calls.append(json)
+        return Resp(400 if "reply_to_message_id" in json else 200)
+
+    with patch("httpx.post", side_effect=fake_post):
+        out = tg.send("คำตอบ", reply_to=99999)
+
+    assert out["ok"] and out["sent"] == 1
+    assert len(calls) == 2 and "reply_to_message_id" not in calls[1]
+
+
 def test_message_ids_are_recorded_so_replies_can_land(client):
     from app import store
     _run_a_routine(client, message_id=4242)

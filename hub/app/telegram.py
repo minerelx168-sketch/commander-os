@@ -66,6 +66,13 @@ def send(text: str, reply_to: int | None = None) -> dict:
         try:
             r = httpx.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                            json=body, timeout=30)
+            # Threading is a nicety; delivery is not. If the message being
+            # replied to is gone (deleted, or from another chat), send it
+            # standalone rather than losing the answer entirely.
+            if r.status_code == 400 and "reply_to_message_id" in body:
+                body.pop("reply_to_message_id")
+                r = httpx.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                               json=body, timeout=30)
             r.raise_for_status()
             sent += 1
             mid = r.json().get("result", {}).get("message_id")
