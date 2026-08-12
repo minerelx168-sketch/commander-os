@@ -28,7 +28,8 @@ from . import config
 
 COOKIE = "hermes_key"
 OPEN_PATHS = {"/", "/health", "/favicon.ico", "/docs", "/openapi.json", "/redoc",
-              "/api/ingest"}   # authenticates with its own per-connector key
+              "/api/ingest",   # authenticates with its own per-connector key
+              "/api/unlock"}   # how a browser obtains the cookie in the first place
 OPEN_SUFFIXES = ("/webhook",)          # inbound pushes authenticate their own way
 
 

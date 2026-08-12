@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import (auth, config, deliverable, depts, docs, finmodel, llm, report,
@@ -99,6 +99,33 @@ def index(key: str | None = None) -> Response:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "service": "commander-hub"}
+
+
+class UnlockIn(BaseModel):
+    key: str
+
+
+@app.post("/api/unlock")
+def unlock(body: UnlockIn) -> Response:
+    """Exchange the key for the session cookie the dashboard rides on.
+
+    Open by necessity: it is how a browser authenticates in the first place.
+    A wrong key gets 401 and no cookie, so it grants nothing.
+    """
+    if not auth.valid(body.key):
+        raise HTTPException(401, "คีย์ไม่ถูกต้อง")
+    resp = JSONResponse({"ok": True})
+    if config.HERMES_API_KEY:
+        resp.set_cookie(auth.COOKIE, body.key, httponly=True, samesite="lax",
+                        max_age=60 * 60 * 24 * 90)
+    return resp
+
+
+@app.post("/api/lock")
+def lock() -> Response:
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.COOKIE)
+    return resp
 
 
 @app.get("/api/state")

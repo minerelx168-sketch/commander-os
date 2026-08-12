@@ -73,6 +73,25 @@ def test_dashboard_and_health_stay_open(client):
     assert client.get("/health").status_code == 200
 
 
+def test_a_locked_hub_offers_a_way_in(client):
+    """A 401 must be recoverable from the browser, not a dead end that reads
+    as 'Hub Offline'."""
+    assert client.get("/api/state").status_code == 401
+    assert client.post("/api/unlock", json={"key": "wrong"}).status_code == 401
+    assert client.get("/api/state").status_code == 401        # nothing granted
+    assert client.post("/api/unlock", json={"key": KEY}).status_code == 200
+    assert client.get("/api/state").status_code == 200        # cookie now rides along
+    assert client.post("/api/lock").status_code == 200
+    assert client.get("/api/state").status_code == 401        # and can be dropped
+
+
+def test_ui_shows_an_unlock_gate_not_a_false_offline(client):
+    html = client.get("/").text
+    for marker in ("unlock-overlay", "submitUnlock", "showUnlock", "/api/unlock",
+                   "ถูกล็อกไว้", "r.status === 401"):
+        assert marker in html, marker
+
+
 def test_browser_can_unlock_once_via_query_param(client):
     fresh = client.get("/api/state")
     assert fresh.status_code == 401

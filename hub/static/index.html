@@ -902,6 +902,31 @@ body {
   word-break: break-all;
 }
 .src-key-note { font-size: 11.5px; color: var(--text-3); line-height: 1.6; margin-top: 8px; }
+
+/* Unlock gate — a locked hub must say so, not masquerade as a dead one */
+.unlock-overlay {
+  position: fixed; inset: 0; z-index: 200; display: flex;
+  align-items: center; justify-content: center;
+  background: rgba(2,6,16,.92); backdrop-filter: blur(6px);
+}
+.unlock-box {
+  width: min(420px, 90vw); background: var(--bg-2);
+  border: 1px solid var(--border-2); border-radius: var(--radius-lg);
+  padding: 32px 28px; text-align: center;
+  box-shadow: 0 24px 64px rgba(0,0,0,.6);
+}
+.unlock-icon { font-size: 34px; margin-bottom: 12px; }
+.unlock-title { font-size: 17px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.unlock-sub { font-size: 12.5px; color: var(--text-3); margin-bottom: 20px; line-height: 1.6; }
+.unlock-input {
+  width: 100%; background: var(--bg-3); border: 1px solid var(--border-2);
+  color: var(--text); font-family: inherit; font-size: 13px;
+  padding: 11px 14px; border-radius: var(--radius); outline: none; margin-bottom: 12px;
+}
+.unlock-input:focus { border-color: var(--accent); }
+.unlock-msg { font-size: 12px; color: var(--text-2); min-height: 18px; margin-top: 12px; }
+.unlock-hint { font-size: 11px; color: var(--text-3); margin-top: 6px; }
+.unlock-hint code { background: var(--bg-3); padding: 2px 6px; border-radius: 4px; }
 .rt-item {
   background: var(--bg-2); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
@@ -1207,6 +1232,21 @@ body {
 </style>
 </head>
 <body>
+
+<!-- Shown only when /api/state answers 401: the hub is key-protected, not down -->
+<div class="unlock-overlay" id="unlock-overlay" style="display:none;">
+  <div class="unlock-box">
+    <div class="unlock-icon">🔐</div>
+    <div class="unlock-title">Commander Hub ถูกล็อกไว้</div>
+    <div class="unlock-sub">ใส่ HERMES_API_KEY เพื่อเข้าใช้งาน — จำไว้ 90 วัน</div>
+    <input id="unlock-key" type="password" class="unlock-input" placeholder="วางคีย์ที่นี่"
+           onkeydown="if(event.key==='Enter')submitUnlock()">
+    <button class="btn btn-primary" style="width:100%;justify-content:center;"
+            onclick="submitUnlock()">ปลดล็อก</button>
+    <div class="unlock-msg" id="unlock-msg"></div>
+    <div class="unlock-hint">คีย์อยู่ในไฟล์ <code>hub/.env</code> บรรทัด HERMES_API_KEY</div>
+  </div>
+</div>
 
 <!-- ============================================================
      SIDEBAR
@@ -1600,7 +1640,10 @@ document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click'
 /* ---------- state ---------- */
 async function loadState() {
   try {
-    STATE = await (await fetch('/api/state')).json();
+    const r = await fetch('/api/state');
+    if (r.status === 401) { showUnlock(); return; }   // locked, not offline
+    STATE = await r.json();
+    document.getElementById('unlock-overlay').style.display = 'none';
     const dot = document.getElementById('status-dot');
     dot.className = 'status-dot online';
     document.getElementById('conn').textContent = 'Hub Online';
@@ -1635,6 +1678,28 @@ async function loadState() {
     dot.className = 'status-dot offline';
     document.getElementById('conn').textContent = 'Hub Offline';
   }
+}
+
+/* ---------- unlock (the hub is key-protected) ---------- */
+function showUnlock() {
+  document.getElementById('unlock-overlay').style.display = 'flex';
+  document.getElementById('status-dot').className = 'status-dot offline';
+  document.getElementById('conn').textContent = 'ล็อกอยู่ — ใส่คีย์';
+  setTimeout(() => document.getElementById('unlock-key').focus(), 50);
+}
+
+async function submitUnlock() {
+  const key = document.getElementById('unlock-key').value.trim();
+  const msg = document.getElementById('unlock-msg');
+  if (!key) { msg.textContent = 'ใส่คีย์ก่อน'; return; }
+  msg.textContent = '⏳ กำลังตรวจสอบ…';
+  const r = await fetch('/api/unlock', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({key})});
+  if (!r.ok) { msg.textContent = '⚠️ คีย์ไม่ถูกต้อง'; return; }
+  msg.textContent = '✅ ปลดล็อกแล้ว';
+  document.getElementById('unlock-key').value = '';
+  loadState();
 }
 
 function fillProjects(sel, projects, keepValue) {
