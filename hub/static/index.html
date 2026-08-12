@@ -888,6 +888,20 @@ body {
   border-radius: var(--radius); padding: 14px 16px;
 }
 .conn-scope-note { flex: 1; min-width: 260px; font-size: 12px; color: var(--text-3); line-height: 1.6; }
+
+/* Per-connector credential panel — what the CEO hands to each backend team */
+.src-key {
+  margin-top: 12px; padding: 12px 14px; background: var(--bg-3);
+  border: 1px solid var(--border-2); border-radius: var(--radius);
+}
+.src-key-row { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; font-size: 12px; }
+.src-key-row b { min-width: 74px; color: var(--text-3); font-weight: 500; }
+.src-key-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  color: var(--text); background: var(--bg); padding: 3px 8px; border-radius: 5px;
+  word-break: break-all;
+}
+.src-key-note { font-size: 11.5px; color: var(--text-3); line-height: 1.6; margin-top: 8px; }
 .rt-item {
   background: var(--bg-2); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px;
@@ -2352,6 +2366,7 @@ async function syncDrive() {
 
 /* ---------- data sources (POS / back-office APIs, per project) ---------- */
 let SRC_META = null;
+let SRC_CACHE = [];
 
 function srcKindChanged() {
   const webhook = document.getElementById('src-kind').value === 'webhook';
@@ -2368,6 +2383,7 @@ function srcAuthChanged() {
 async function loadSources() {
   const proj = document.getElementById('src-project').value;
   const j = await (await fetch('/api/sources' + (proj ? `?project=${encodeURIComponent(proj)}` : ''))).json();
+  SRC_CACHE = j.sources;
 
   if (!SRC_META) {
     SRC_META = j;
@@ -2396,8 +2412,22 @@ async function loadSources() {
         ${s.kind === 'webhook'
           ? `<button class="btn btn-sm btn-ghost" onclick="copyHook(${s.id})">📋 คัดลอก webhook URL</button>`
           : `<button class="btn btn-sm btn-primary" onclick="fetchSource(${s.id})">⟳ ดึงข้อมูลตอนนี้</button>`}
+        <button class="btn btn-sm btn-ghost" onclick="showKey(${s.id})">🔑 คีย์สำหรับ backend</button>
         <button class="btn btn-sm btn-ghost" onclick="toggleSource(${s.id}, ${!s.enabled})">${s.enabled ? '⏸ พัก' : '▶ เปิด'}</button>
         <button class="btn btn-sm btn-danger" onclick="deleteSource(${s.id})">ลบ</button>
+      </div>
+      <div class="src-key" id="src-key-${s.id}" style="display:none;">
+        <div class="src-key-row"><b>โปรเจค</b><code>${esc(s.project)}</code></div>
+        <div class="src-key-row"><b>Endpoint</b><code>POST ${location.origin}/api/ingest</code></div>
+        <div class="src-key-row"><b>Header</b><code>X-Source-Key: ${esc(s.ingest_key || '')}</code></div>
+        <div class="src-key-note">
+          คีย์นี้บอกระบบว่าข้อมูลมาจากโปรเจค <b>${esc(s.project)}</b> — backend ไม่ต้องส่งชื่อโปรเจคมาเอง
+          ใช้คนละคีย์กับโปรเจคอื่น ข้อมูลจึงไม่มีทางปนกัน
+        </div>
+        <div class="rt-actions" style="margin-top:8px;">
+          <button class="btn btn-sm btn-ghost" onclick="copyIngest(${s.id})">📋 คัดลอกคำสั่ง curl</button>
+          <button class="btn btn-sm btn-warn" onclick="rotateKey(${s.id})">♻️ ออกคีย์ใหม่</button>
+        </div>
       </div>
     </div>`;
   }).join('') : `<div class="empty-state"><div class="empty-state-icon">🔌</div><div class="empty-state-text">${
@@ -2439,6 +2469,31 @@ function copyHook(id) {
   const url = `${location.origin}/api/sources/${id}/webhook`;
   navigator.clipboard?.writeText(url);
   document.getElementById('src-status').textContent = `📋 คัดลอกแล้ว: ${url} (ส่ง POST JSON พร้อม header X-Source-Key)`;
+}
+
+function showKey(id) {
+  const box = document.getElementById('src-key-' + id);
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+}
+
+function copyIngest(id) {
+  const s = (SRC_CACHE || []).find(x => x.id === id);
+  if (!s) return;
+  const cmd = `curl -X POST ${location.origin}/api/ingest \\\n`
+    + `  -H "X-Source-Key: ${s.ingest_key}" \\\n`
+    + `  -H "Content-Type: application/json" \\\n`
+    + `  -d '[{"date":"2026-08-13","sales":12500,"orders":41}]'`;
+  navigator.clipboard?.writeText(cmd);
+  document.getElementById('src-status').textContent =
+    `📋 คัดลอกคำสั่งสำหรับ backend ของโปรเจค ${s.project} แล้ว`;
+}
+
+async function rotateKey(id) {
+  if (!confirm('ออกคีย์ใหม่? backend ที่ใช้คีย์เดิมจะส่งข้อมูลเข้าไม่ได้จนกว่าจะอัปเดต')) return;
+  await fetch(`/api/sources/${id}/rotate-key`, {method:'POST'});
+  document.getElementById('src-status').textContent = '♻️ ออกคีย์ใหม่แล้ว — อย่าลืมอัปเดตที่ backend';
+  await loadSources();
+  showKey(id);
 }
 
 async function toggleSource(id, enabled) {

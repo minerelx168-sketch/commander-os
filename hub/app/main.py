@@ -685,7 +685,10 @@ async def source_webhook(source_id: int, request: Request) -> dict:
     s = sources.get_source(source_id)
     if s is None:
         raise HTTPException(404, "source not found")
-    if s.get("secret") and request.headers.get("X-Source-Key") != s["secret"]:
+    presented = (request.headers.get("X-Source-Key")
+                 or request.headers.get("X-Hermes-API-Key", ""))
+    expected = s.get("ingest_key") or s.get("secret")
+    if expected and presented != expected:
         raise HTTPException(401, "bad source key")
     import json as _json
     body = await request.body()
@@ -694,3 +697,37 @@ async def source_webhook(source_id: int, request: Request) -> dict:
     except ValueError:
         raise HTTPException(400, "invalid JSON") from None
     return sources.ingest_webhook(source_id, payload)
+
+
+@app.post("/api/ingest")
+async def ingest(request: Request) -> dict:
+    """One endpoint for every backend; the key says which project sent the data.
+
+    A backend does not name its own project — that would let a
+    misconfigured (or hostile) caller write into someone else's board. It
+    presents the connector key it was issued, and the hub resolves the
+    project from it.
+    """
+    key = (request.headers.get("X-Source-Key")
+           or request.headers.get("X-Hermes-API-Key")
+           or (request.headers.get("Authorization", "")[7:].strip()
+               if request.headers.get("Authorization", "")[:7].lower() == "bearer " else ""))
+    s = sources.by_ingest_key(key)
+    if s is None:
+        raise HTTPException(401, "unknown connector key — ใช้ ingest_key ของโปรเจคนั้น")
+    import json as _json
+    body = await request.body()
+    try:
+        payload = _json.loads(body or b"[]")
+    except ValueError:
+        raise HTTPException(400, "invalid JSON") from None
+    result = sources.ingest_webhook(s["id"], payload)
+    return {**result, "project": s["project"], "source": s["name"], "source_id": s["id"]}
+
+
+@app.post("/api/sources/{source_id}/rotate-key")
+def rotate_source_key(source_id: int) -> dict:
+    s = sources.rotate_ingest_key(source_id)
+    if s is None:
+        raise HTTPException(404, "source not found")
+    return s

@@ -12,8 +12,10 @@ from the project's own system instead of last month's PDF.
 Secrets are stored server-side and never returned by the API — the UI only ever
 sees whether a key exists.
 """
+import hmac
 import json
 import logging
+import secrets
 import threading
 from datetime import datetime, timezone
 
@@ -45,7 +47,17 @@ MAX_CHARS = 2600        # what one source may contribute to a prompt
 
 def _load() -> list:
     if _FILE.exists():
-        return json.loads(_FILE.read_text(encoding="utf-8"))
+        rows = json.loads(_FILE.read_text(encoding="utf-8"))
+        # Connectors created before per-project keys existed get one now,
+        # rather than silently staying unattributable.
+        changed = False
+        for s in rows:
+            if not s.get("ingest_key"):
+                s["ingest_key"] = f"cx_{secrets.token_urlsafe(24)}"
+                changed = True
+        if changed:
+            _FILE.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+        return rows
     return []
 
 
@@ -54,7 +66,13 @@ def _save(rows: list) -> None:
 
 
 def _public(s: dict) -> dict:
-    """Everything except the secret."""
+    """Everything except the outbound credential.
+
+    `secret` is what we send TO the CEO's system, so it never leaves the
+    server. `ingest_key` is the opposite direction — the credential their
+    backend must present to us — so it is returned: they cannot use what they
+    cannot read.
+    """
     return {k: v for k, v in s.items() if k != "secret"} | {"has_secret": bool(s.get("secret"))}
 
 
@@ -71,11 +89,28 @@ def get_source(source_id: int) -> dict | None:
         return next((s for s in _load() if s["id"] == source_id), None)
 
 
+def by_ingest_key(key: str) -> dict | None:
+    """Which connector — and therefore which project — does this key belong to?
+
+    This is what makes multi-backend attribution unambiguous: the key IS the
+    identity, so a caller cannot claim to be a project it does not own.
+    """
+    if not key:
+        return None
+    with _LOCK:
+        rows = _load()
+    return next((s for s in rows
+                 if s.get("ingest_key") and hmac.compare_digest(s["ingest_key"], key)), None)
+
+
 def add_source(project: str, name: str, kind: str, url: str, auth: str,
                secret: str, header_name: str, data_path: str) -> dict:
     entry = {"id": None, "project": project, "name": name, "kind": kind, "url": url,
              "auth": auth, "secret": secret, "header_name": header_name or "X-API-Key",
              "data_path": data_path, "enabled": True,
+             # Every connector gets its own inbound key, so pushed data is
+             # attributed to one project by construction rather than by trust.
+             "ingest_key": f"cx_{secrets.token_urlsafe(24)}",
              "last_sync": None, "last_status": None, "rows": 0, "sample": None,
              "created_at": datetime.now(timezone.utc).isoformat()}
     with _LOCK:
@@ -84,6 +119,10 @@ def add_source(project: str, name: str, kind: str, url: str, auth: str,
         rows.append(entry)
         _save(rows)
     return _public(entry)
+
+
+def rotate_ingest_key(source_id: int) -> dict | None:
+    return update_source(source_id, ingest_key=f"cx_{secrets.token_urlsafe(24)}")
 
 
 def update_source(source_id: int, **fields) -> dict | None:

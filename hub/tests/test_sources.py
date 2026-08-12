@@ -110,11 +110,12 @@ def test_csv_source_is_parsed(client):
 
 
 def test_webhook_push_requires_the_key(client):
-    sid = _add(client, kind="webhook", url="", secret="hook-key").json()["id"]
+    s = _add(client, kind="webhook", url="", secret="hook-key").json()
+    sid, key = s["id"], s["ingest_key"]
     bad = client.post(f"/api/sources/{sid}/webhook", json=[{"x": 1}])
     assert bad.status_code == 401
     ok = client.post(f"/api/sources/{sid}/webhook", json=[{"sale": 100}, {"sale": 200}],
-                     headers={"X-Source-Key": "hook-key"})
+                     headers={"X-Source-Key": key})
     assert ok.status_code == 200 and ok.json()["rows"] == 2
 
 
@@ -165,14 +166,6 @@ def test_delete_removes_it(client):
     assert client.post(f"/api/sources/{sid}/fetch").status_code == 404
 
 
-def test_ui_exposes_connector_and_seat_dropdown(client):
-    html = client.get("/").text
-    for marker in ("src-project", "src-kind", "addSource", "fetchSource", "copyHook",
-                   "API Connector", "conn-scope", "rt-seat-menu", "toggleSeatDD",
-                   "renderSeatSummary", "rt-textarea"):
-        assert marker in html, marker
-
-
 def test_a_project_never_sees_another_project_data(client):
     """The isolation the UI promises must hold in the data layer."""
     from app import sources
@@ -192,3 +185,78 @@ def test_a_project_never_sees_another_project_data(client):
     fin_ctx = sources.live_context(project="YourFin")
     assert "FLOWER-ONLY" in flower_ctx and "FIN-ONLY" not in flower_ctx
     assert "FIN-ONLY" in fin_ctx and "FLOWER-ONLY" not in fin_ctx
+
+
+# ── multi-backend attribution: the key identifies the project ──
+
+def test_every_connector_gets_its_own_ingest_key(client):
+    a = _add(client, project="Cloudforcashpay", name="backend A").json()
+    b = _add(client, project="FlowerVending", name="backend B").json()
+    assert a["ingest_key"].startswith("cx_") and len(a["ingest_key"]) >= 32
+    assert a["ingest_key"] != b["ingest_key"]
+
+
+def test_ingest_attributes_data_by_key_alone(client):
+    """A backend never names its own project — the key resolves it."""
+    a = _add(client, project="Cloudforcashpay", name="POS A").json()
+    b = _add(client, project="FlowerVending", name="POS B").json()
+
+    ra = client.post("/api/ingest", json=[{"txn": "AAA"}],
+                     headers={"X-Source-Key": a["ingest_key"]})
+    rb = client.post("/api/ingest", json=[{"txn": "BBB"}],
+                     headers={"X-Source-Key": b["ingest_key"]})
+    assert ra.json()["project"] == "Cloudforcashpay" and ra.json()["source"] == "POS A"
+    assert rb.json()["project"] == "FlowerVending" and rb.json()["source"] == "POS B"
+
+    from app import sources
+    ctx_a = sources.live_context(project="Cloudforcashpay")
+    ctx_b = sources.live_context(project="FlowerVending")
+    assert "AAA" in ctx_a and "BBB" not in ctx_a
+    assert "BBB" in ctx_b and "AAA" not in ctx_b
+
+
+def test_ingest_accepts_the_documented_header_forms(client):
+    s = _add(client, project="Cloudforcashpay").json()
+    k = s["ingest_key"]
+    assert client.post("/api/ingest", json=[{"a": 1}], headers={"X-Source-Key": k}).status_code == 200
+    assert client.post("/api/ingest", json=[{"a": 1}], headers={"X-Hermes-API-Key": k}).status_code == 200
+    assert client.post("/api/ingest", json=[{"a": 1}],
+                       headers={"Authorization": f"Bearer {k}"}).status_code == 200
+
+
+def test_ingest_rejects_unknown_or_missing_keys(client):
+    _add(client, project="Cloudforcashpay")
+    assert client.post("/api/ingest", json=[{"a": 1}]).status_code == 401
+    assert client.post("/api/ingest", json=[{"a": 1}],
+                       headers={"X-Source-Key": "cx_not-a-real-key"}).status_code == 401
+
+
+def test_a_backend_cannot_write_into_another_project(client):
+    """Even if it lies about the project in the body, the key wins."""
+    a = _add(client, project="Cloudforcashpay", name="POS A").json()
+    r = client.post("/api/ingest", json={"project": "FlowerVending", "txn": "SPOOF"},
+                    headers={"X-Source-Key": a["ingest_key"]})
+    assert r.json()["project"] == "Cloudforcashpay"
+    from app import sources
+    assert "SPOOF" not in sources.live_context(project="FlowerVending")
+    assert "SPOOF" in sources.live_context(project="Cloudforcashpay")
+
+
+def test_rotating_a_key_revokes_the_old_one(client):
+    s = _add(client, project="Cloudforcashpay").json()
+    old = s["ingest_key"]
+    new = client.post(f"/api/sources/{s['id']}/rotate-key").json()["ingest_key"]
+    assert new != old
+    assert client.post("/api/ingest", json=[{"a": 1}],
+                       headers={"X-Source-Key": old}).status_code == 401
+    assert client.post("/api/ingest", json=[{"a": 1}],
+                       headers={"X-Source-Key": new}).status_code == 200
+
+
+def test_ui_exposes_connector_and_seat_dropdown(client):
+    html = client.get("/").text
+    for marker in ("src-project", "src-kind", "addSource", "fetchSource", "copyHook",
+                   "API Connector", "conn-scope", "rt-seat-menu", "toggleSeatDD",
+                   "renderSeatSummary", "rt-textarea", "showKey", "copyIngest",
+                   "rotateKey", "/api/ingest"):
+        assert marker in html, marker
