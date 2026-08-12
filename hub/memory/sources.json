@@ -19,5 +19,26 @@
   "rows": 1,
   "sample": "[{\"sales\": 1200}]",
   "created_at": "2026-08-12T19:32:39.181098+00:00"
+ },
+ {
+  "id": 2,
+  "project": "FullCo",
+  "projects": [
+   "FullCo"
+  ],
+  "name": "POS",
+  "kind": "pos_rest",
+  "url": "https://pos.example.com/x",
+  "auth": "none",
+  "secret": "",
+  "header_name": "X-API-Key",
+  "data_path": "data.orders",
+  "enabled": true,
+  "ingest_key": "cx_pUSailNdxUelH5HZOA1_ZTStfJEejY3e",
+  "last_sync": "2026-08-12T19:36:05.656182+00:00",
+  "last_status": "ok",
+  "rows": 1,
+  "sample": "[{\"sales\": 1200}]",
+  "created_at": "2026-08-12T19:36:05.653397+00:00"
  }
 ]
