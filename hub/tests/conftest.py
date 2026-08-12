@@ -12,3 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # which is the one the fixtures actually stub.
 for _key in ("TAVILY_API_KEY", "BRAVE_API_KEY", "SERPER_API_KEY", "SERPAPI_API_KEY"):
     os.environ[_key] = ""
+
+# Same reasoning for the hub's own API key: with HERMES_API_KEY set in .env every
+# unauthenticated test call would 401. Auth is exercised deliberately in
+# test_auth.py, which sets the key on config itself.
+os.environ["HERMES_API_KEY"] = ""

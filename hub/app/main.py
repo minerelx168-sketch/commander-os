@@ -18,7 +18,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from . import (config, deliverable, depts, docs, finmodel, llm, report,
+from . import (auth, config, deliverable, depts, docs, finmodel, llm, report,
                research, routines, sources, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +31,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Commander Hub — C-Suite Advisory", lifespan=lifespan)
+app.middleware("http")(auth.require_api_key)
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -84,8 +85,15 @@ def _view(session: dict) -> dict:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return (STATIC / "index.html").read_text(encoding="utf-8")
+def index(key: str | None = None) -> Response:
+    """Serve the dashboard. `/?key=<HERMES_API_KEY>` stores the key as an
+    httpOnly cookie so the CEO's browser can call /api/* without headers."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    resp = HTMLResponse(html)
+    if key and auth.valid(key) and config.HERMES_API_KEY:
+        resp.set_cookie(auth.COOKIE, key, httponly=True, samesite="lax",
+                        max_age=60 * 60 * 24 * 90)
+    return resp
 
 
 @app.get("/health")

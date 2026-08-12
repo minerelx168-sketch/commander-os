@@ -88,3 +88,8 @@ LINE_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 
 MEMORY_DIR = ROOT / "memory"
 MEMORY_DIR.mkdir(exist_ok=True)
+
+# --- Machine access (Hermes and any other automation) ---
+# Empty means the API stays open, which is correct for a laptop-only hub and
+# wrong the moment it is exposed; setting the key turns enforcement on.
+HERMES_API_KEY = os.getenv("HERMES_API_KEY", "")
