@@ -220,6 +220,63 @@ def test_no_such_warning_once_data_exists(client):
     assert "1200" in seen["user"]
 
 
+def test_an_empty_reply_is_a_failure_not_a_success(client):
+    """A blank answer from a provider must never be reported as ok — the seat
+    contributed nothing and the board would not know."""
+    from app import llm
+    with patch.dict(llm._CALLERS, {"deepseek": lambda s, u, c=None, **kw: "   "}), \
+         patch.object(llm, "provider_ready", return_value=True):
+        out = llm.chat("deepseek", "sys", "user", attempts=1)
+    assert out["ok"] is False
+    assert out["text"], "a failed seat must still say something"
+
+
+def test_routine_marks_a_blank_seat_and_still_delivers(client):
+    from app import routines
+    r = client.post("/api/routines", json={"task": "ทดสอบ", "frequency": "daily",
+                                           "time": "09:00", "seats": ["cfo", "datalyst"]}).json()
+
+    def flaky(provider, system, user, **kw):
+        if provider == "mock":
+            return {"text": "", "provider": provider, "model": "m", "ok": False}
+        return {"text": "รายงานปกติ", "provider": provider, "model": "m", "ok": True}
+
+    with patch("app.llm.chat", side_effect=flaky), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1}) as tg:
+        run = routines.run_routine(r)
+
+    assert set(run["results"]) == {"cfo", "datalyst"}
+    assert run["delivery"]["ok"]           # the working seats still reach the CEO
+    body = tg.call_args.args[0]
+    assert "ตอบไม่สำเร็จ" in body or "รายงานปกติ" in body
+
+
+def test_seats_run_in_parallel_not_one_after_another(client):
+    """Three reasoning models in series outrun any sane HTTP timeout."""
+    import threading
+    import time
+    from app import routines
+    r = client.post("/api/routines", json={"task": "ทดสอบ", "frequency": "daily",
+                                           "time": "09:00",
+                                           "seats": ["cfo", "coo", "datalyst"]}).json()
+    live, peak, lock = 0, 0, threading.Lock()
+
+    def slow(provider, system, user, **kw):
+        nonlocal live, peak
+        with lock:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.15)
+        with lock:
+            live -= 1
+        return {"text": "ok", "provider": provider, "model": "m", "ok": True}
+
+    with patch("app.llm.chat", side_effect=slow), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1}):
+        routines.run_routine(r)
+    assert peak >= 2, f"seats ran serially (peak concurrency {peak})"
+
+
 def test_ui_exposes_the_routine_page(client):
     html = client.get("/").text
     for marker in ('data-view="routine"', "view-routine", "loadRoutines", "createRoutine",

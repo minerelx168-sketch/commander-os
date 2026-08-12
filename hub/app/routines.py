@@ -19,6 +19,7 @@ Design decisions worth keeping:
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from . import config, docs, llm, sources, store, telegram
@@ -128,12 +129,19 @@ def run_routine(routine: dict) -> dict:
                            f"({previous['at'][:10]})]\n{r['text'][:700]}")
     user = "\n\n".join(ctx)
 
-    results = {}
-    for dept in routine["seats"]:
-        if dept not in config.DEPTS:
-            continue
-        out = llm.chat(store.get_providers().get(dept, "mock"), _seat_prompt(dept), user)
-        results[dept] = {"text": out["text"], "provider": out["provider"], "ok": out["ok"]}
+    seats = [d for d in routine["seats"] if d in config.DEPTS]
+
+    def one(dept: str) -> tuple[str, dict]:
+        # Routine reports are structured and Thai-heavy; the default ceiling
+        # truncates reasoning models into an empty reply.
+        out = llm.chat(store.get_providers().get(dept, "mock"), _seat_prompt(dept), user,
+                       max_tokens=4096)
+        return dept, {"text": out["text"], "provider": out["provider"], "ok": out["ok"]}
+
+    # Serially, three seats on slow reasoning models outrun any sane HTTP
+    # timeout; they have nothing to say to each other here, so run them at once.
+    with ThreadPoolExecutor(max_workers=max(1, len(seats))) as ex:
+        results = dict(ex.map(one, seats))
 
     run = store.add_routine_run(routine["id"], results)
     _deliver(routine, run)
@@ -146,11 +154,12 @@ def run_routine(routine: dict) -> dict:
 
 def _deliver(routine: dict, run: dict) -> None:
     stamp = run["at_local"]
-    lines = [f"🔁 Routine: {routine['task']}", f"🕒 {stamp} (UTC+7)", ""]
+    lines = [f"🔁 Routine: {routine['task'][:120]}", f"🕒 {stamp} (UTC+7)", ""]
     for dept, r in run["results"].items():
         d = config.DEPTS.get(dept, {})
-        lines.append(f"{d.get('icon', '•')} {d.get('name', dept)} [{r['provider']}]")
-        lines.append(r["text"].strip())
+        flag = "" if r["ok"] else " ⚠️ ตอบไม่สำเร็จ"
+        lines.append(f"{d.get('icon', '•')} {d.get('name', dept)} [{r['provider']}]{flag}")
+        lines.append(r["text"].strip() or "(ไม่มีคำตอบกลับมา)")
         lines.append("")
     lines.append("— นำผลสะสมไปให้ Boardroom ถกต่อได้จากหน้า เอกสาร")
     res = telegram.send("\n".join(lines))

@@ -63,18 +63,30 @@ def _anthropic_sonnet(system: str, user: str, cancel=None, max_tokens: int | Non
 
 
 def _deepseek(system: str, user: str, cancel=None, max_tokens: int | None = None) -> str:
-    """DeepSeek — OpenAI-compatible chat completions."""
+    """DeepSeek — OpenAI-compatible chat completions.
+
+    It is a reasoning model: part of the budget goes to thinking, so a long
+    prompt with a small ceiling can burn the whole allowance and return an
+    empty `content` with finish_reason=length. Raise the floor and say so out
+    loud rather than handing the board a blank seat.
+    """
     r = httpx.post(
         config.DEEPSEEK_API_URL,
         headers={"Authorization": f"Bearer {config.DEEPSEEK_API_KEY}"},
         json={"model": config.PROVIDERS["deepseek"]["model"],
-              "max_tokens": max_tokens or 2048,
+              "max_tokens": max_tokens or 4096,
               "messages": [{"role": "system", "content": system},
                            {"role": "user", "content": user}]},
-        timeout=_timeout_for(max_tokens),
+        timeout=_timeout_for(max_tokens or 4096),
     )
     r.raise_for_status()
-    return (r.json()["choices"][0]["message"].get("content") or "").strip()
+    choice = r.json()["choices"][0]
+    text = (choice["message"].get("content") or "").strip()
+    if not text:
+        raise RuntimeError(
+            f"deepseek returned no content (finish_reason={choice.get('finish_reason')}) "
+            "— prompt too long for the token budget")
+    return text
 
 
 def _gemini(system: str, user: str, cancel=None) -> str:
@@ -205,7 +217,12 @@ def chat(provider: str, system: str, user: str, cancel=None,
         if cancel is not None and cancel():
             break
         try:
-            return {"text": caller(system, user, cancel, **kwargs), "provider": provider,
+            text = caller(system, user, cancel, **kwargs)
+            # A blank reply is a failure wearing a 200: the seat contributed
+            # nothing, and reporting ok=True hides that from the board.
+            if not (text or "").strip():
+                raise RuntimeError(f"{provider} returned an empty reply")
+            return {"text": text, "provider": provider,
                     "model": config.PROVIDERS[provider]["model"], "ok": True}
         except Exception as e:  # noqa: BLE001 — a consult must never 500 the whole board
             last = e
