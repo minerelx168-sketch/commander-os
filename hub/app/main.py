@@ -14,7 +14,8 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import (BackgroundTasks, FastAPI, File, Form, HTTPException, Request,
+                     Response, UploadFile)
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -772,9 +773,14 @@ async def ingest(request: Request) -> dict:
 # ── Telegram: the CEO replies to a report and asks a follow-up ──
 
 @app.post("/api/telegram/webhook")
-async def telegram_webhook(request: Request) -> dict:
+async def telegram_webhook(request: Request, background: BackgroundTasks) -> dict:
     """Telegram posts every message here. Open by necessity (Telegram cannot
-    send our key) but guarded by the registered secret plus an owner check."""
+    send our key) but guarded by the registered secret plus an owner check.
+
+    Answer the HTTP call immediately and think afterwards: an advisor takes
+    30s+, and Telegram treats a slow webhook as failed and redelivers the
+    update — which would answer the same question several times.
+    """
     if not telegram.valid_secret(request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")):
         raise HTTPException(401, "bad telegram secret")
     import json as _json
@@ -783,7 +789,10 @@ async def telegram_webhook(request: Request) -> dict:
         update = _json.loads(body or b"{}")
     except ValueError:
         raise HTTPException(400, "invalid JSON") from None
-    return followup.handle_update(update)
+    if not followup.accepts(update):
+        return {"handled": False, "reason": "ignored"}
+    background.add_task(followup.handle_update, update)
+    return {"handled": True, "queued": True}
 
 
 @app.get("/api/telegram/status")

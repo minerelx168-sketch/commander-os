@@ -19,15 +19,21 @@ def client(tmp_path, monkeypatch):
     import app.telegram as tg
     monkeypatch.setattr(tg, "CHAT_ID", "999")
     monkeypatch.setattr(tg, "WEBHOOK_SECRET", "")
+    import app.followup as fu
+    fu._SEEN.clear()          # update ids are deduped process-wide
     from app.main import app
     return TestClient(app)
 
 
-def _update(text, reply_to=None, chat_id=999, message_id=500):
+_UID = iter(range(1000, 9999))
+
+
+def _update(text, reply_to=None, chat_id=999, message_id=500, update_id=None):
     msg = {"message_id": message_id, "chat": {"id": chat_id}, "text": text}
     if reply_to:
         msg["reply_to_message"] = {"message_id": reply_to}
-    return {"update_id": 1, "message": msg}
+    return {"update_id": update_id if update_id is not None else next(_UID),
+            "message": msg}
 
 
 def _run_a_routine(client, seats=("cfo",), message_id=77):
@@ -102,7 +108,9 @@ def test_a_message_that_replies_to_nothing_still_gets_an_answer(client):
                                              "model": "m", "ok": True}), \
          patch("app.telegram.send", return_value={"ok": True, "sent": 1, "message_ids": [78]}):
         r = client.post("/api/telegram/webhook", json=_update("สภาพคล่องตอนนี้เป็นยังไง"))
-    assert r.json()["handled"] is True and r.json()["linked_run"] is None
+    assert r.json()["queued"] is True
+    fu = client.get("/api/followups").json()["followups"][0]
+    assert fu["answer"] == "ตอบได้" and fu["run_id"] is None
 
 
 def test_strangers_are_ignored(client):
@@ -163,9 +171,9 @@ def test_replying_to_an_old_report_still_answers_about_the_latest(client):
         r = client.post("/api/telegram/webhook",
                         json=_update("แล้วต้องทำอะไรก่อน", reply_to=99999))  # unknown id
 
-    body = r.json()
-    assert body["handled"] and body["exact_reply"] is False
-    assert body["linked_run"], "should fall back to the latest run"
+    assert r.json()["queued"] is True
+    fu = client.get("/api/followups").json()["followups"][0]
+    assert fu["run_id"], "should fall back to the latest run"
     assert "NPL อยู่ที่ 8.1%" in seen["user"], "context of the latest report is missing"
     assert "อ้างอิงรายงานล่าสุด" in tg.call_args.args[0]
 
@@ -175,8 +183,7 @@ def test_an_exact_reply_is_marked_as_such(client):
     with patch("app.llm.chat", return_value={"text": "ok", "provider": "p",
                                              "model": "m", "ok": True}), \
          patch("app.telegram.send", return_value={"ok": True, "sent": 1, "message_ids": [80]}) as tg:
-        r = client.post("/api/telegram/webhook", json=_update("ถามตรงนี้", reply_to=77))
-    assert r.json()["exact_reply"] is True
+        client.post("/api/telegram/webhook", json=_update("ถามตรงนี้", reply_to=77))
     assert "อ้างอิงรายงานล่าสุด" not in tg.call_args.args[0]
 
 
@@ -224,6 +231,45 @@ def test_a_missing_reply_target_does_not_lose_the_answer(monkeypatch):
 
     assert out["ok"] and out["sent"] == 1
     assert len(calls) == 2 and "reply_to_message_id" not in calls[1]
+
+
+def test_the_webhook_answers_telegram_immediately(client):
+    """An advisor takes 30s+; Telegram calls a slow webhook failed and
+    redelivers, which would answer the same question several times."""
+    import time as _t
+    _run_a_routine(client, message_id=77)
+
+    def slow(provider, system, user, **kw):
+        _t.sleep(0.4)
+        return {"text": "ตอบช้า", "provider": provider, "model": "m", "ok": True}
+
+    with patch("app.llm.chat", side_effect=slow), \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1, "message_ids": [80]}):
+        start = _t.monotonic()
+        r = client.post("/api/telegram/webhook", json=_update("ถาม", reply_to=77))
+        elapsed = _t.monotonic() - start
+
+    assert r.json() == {"handled": True, "queued": True}
+    # TestClient runs background tasks inline, so assert on the shape, not the
+    # clock: the response must not carry the answer.
+    assert "delivery" not in r.json()
+    assert elapsed >= 0.4        # the work did happen, just after the reply
+
+
+def test_a_redelivered_update_is_not_answered_twice(client):
+    _run_a_routine(client, message_id=77)
+    upd = _update("ถามซ้ำ", reply_to=77, update_id=555)
+
+    with patch("app.llm.chat", return_value={"text": "ok", "provider": "p",
+                                             "model": "m", "ok": True}) as chat, \
+         patch("app.telegram.send", return_value={"ok": True, "sent": 1, "message_ids": [80]}):
+        first = client.post("/api/telegram/webhook", json=upd)
+        second = client.post("/api/telegram/webhook", json=upd)
+
+    assert first.json()["queued"] is True
+    assert second.json()["handled"] is False
+    assert chat.call_count == 1, "the same update was answered twice"
+    assert len(client.get("/api/followups").json()["followups"]) == 1
 
 
 def test_message_ids_are_recorded_so_replies_can_land(client):

@@ -17,6 +17,12 @@ from . import config, docs, llm, sources, store, telegram
 
 log = logging.getLogger("hub.followup")
 
+# Telegram redelivers an update whenever it is unsure we got it. Answering the
+# same question twice costs a model call and confuses the thread, so remember
+# what we have already handled.
+_SEEN: set = set()
+_SEEN_MAX = 500
+
 FOLLOWUP_SYSTEM = (
     "คุณคือ {name} ({role}) ที่ปรึกษาประจำตัว CEO\n"
     "ขอบเขตความเชี่ยวชาญของคุณ: {lane}\n"
@@ -83,6 +89,22 @@ def answer(question: str, run: dict | None, routine: dict | None) -> dict:
     out = llm.chat(store.get_providers().get(dept, "mock"), _prompt(dept),
                    "\n\n".join(ctx), max_tokens=2048)
     return {"dept": dept, "text": out["text"], "provider": out["provider"], "ok": out["ok"]}
+
+
+def accepts(update: dict) -> bool:
+    """Is this an update we will act on? Checked before queueing so the
+    webhook can reject noise — and repeats — without spawning work."""
+    if telegram.parse_reply(update) is None or not telegram.from_owner(update):
+        return False
+    uid = update.get("update_id")
+    if uid is not None:
+        if uid in _SEEN:
+            log.info("telegram update %s already handled — ignoring repeat", uid)
+            return False
+        _SEEN.add(uid)
+        if len(_SEEN) > _SEEN_MAX:
+            _SEEN.clear()
+    return True
 
 
 def handle_update(update: dict) -> dict:
