@@ -88,6 +88,22 @@ def test_the_answer_is_one_shot_not_a_routine_or_a_board_session(client):
     assert len(fu) == 1 and fu[0]["question"] == "ถามหน่อย" and fu[0]["run_id"]
 
 
+def test_a_named_seat_wins_even_if_it_was_silent_in_the_report(client):
+    """The CEO wrote 'เรียก COO' and the CFO answered twice: _seat_of only
+    searched seats present in the report, and COO was not one of them."""
+    from app import followup
+    run = {"results": {"cfo": {"text": "…", "ok": True},
+                       "datalyst": {"text": "…", "ok": True}}}
+    for q in ("เรียก COO\n\nขอรายชื่อลูกค้าที่ FPD 7 วันล่าสุด",
+              "ขอให้ COO ช่วยดึง case สรุปมาให้ฉันเป็นไฟล์ .xlsx",
+              "coo ช่วยดูหน่อย"):
+        assert followup._seat_of(run, q) == "coo", q
+    # a seat that never ran at all is still reachable by name
+    assert followup._seat_of(run, "Researcher ช่วยหาข้อมูลเทียบคู่แข่ง") == "researcher"
+    # nobody named -> a seat that actually contributed
+    assert followup._seat_of(run, "แล้วไงต่อ") == "cfo"
+
+
 def test_the_named_seat_answers(client):
     _run_a_routine(client, seats=("cfo", "coo", "datalyst"), message_id=77)
     picked = {}

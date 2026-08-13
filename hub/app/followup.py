@@ -37,16 +37,22 @@ FOLLOWUP_SYSTEM = (
 
 
 def _seat_of(run: dict, hint: str | None = None) -> str:
-    """Who should answer. The report's own seats are the candidates; when the
-    CEO names one ('CFO ...') that wins, otherwise the first seat that
-    actually produced the report does."""
-    seats = [k for k, v in (run.get("results") or {}).items() if v.get("ok")]
+    """Who should answer.
+
+    A seat the CEO names outranks everything — he is addressing a person, not
+    filing a ticket, and that person may well be one who stayed silent in the
+    report (or was never on it). Searching only the report's own seats is what
+    made "เรียก COO" land on the CFO.
+
+    With nobody named, prefer a seat that actually contributed to the report.
+    """
     if hint:
         low = hint.lower()
-        for key in seats or list(config.DEPTS):
-            d = config.DEPTS.get(key, {})
-            if key in low or d.get("name", "").lower() in low:
+        for key, d in config.DEPTS.items():
+            names = [key, d.get("name", ""), d.get("role", "")]
+            if any(n and n.lower() in low for n in names):
                 return key
+    seats = [k for k, v in (run.get("results") or {}).items() if v.get("ok")]
     return seats[0] if seats else next(iter(config.DEPTS))
 
 
