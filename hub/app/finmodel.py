@@ -19,16 +19,14 @@ Sheets produced:
   5. วิธีอ่าน (How to read)   — provenance, guardrails, what to change
 """
 import io
-import json
 import logging
-import re
 
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from . import config, llm, store
+from . import config, jsonx, llm, store
 
 log = logging.getLogger("hub.finmodel")
 
@@ -94,19 +92,26 @@ ASSUMPTION_SYSTEM = (
     "}"
 )
 
-# Assumption rows: (json_path, label, excel_number_format, defined_name)
+# Assumption rows: (json_path, label, excel_number_format, defined_name, unit).
+#
+# The unit is not decoration. Excel's percent format multiplies by 100 on the way
+# to the screen, so a model that answers `3` where the schema asked for `0.03`
+# does not produce a 3% growth rate — it produces 300% a month, a two-year
+# forecast off by ten orders of magnitude, and every downstream sheet, chart and
+# break-even quietly agreeing with it. Naming the unit lets `_num` catch it.
 _ROWS = [
-    ("revenue.units_month_1", "จำนวนหน่วยที่ขายเดือนแรก", "#,##0", "units_m1"),
-    ("revenue.price_per_unit", "ราคาขายต่อหน่วย (บาท)", _BAHT, "price"),
-    ("revenue.growth_rate_monthly", "อัตราเติบโตต่อเดือน", _PCT, "growth"),
-    ("revenue.churn_or_seasonality", "อัตราหดตัว/ฤดูกาลต่อเดือน", _PCT, "churn"),
-    ("costs.cogs_pct_of_revenue", "ต้นทุนขาย (% ของรายได้)", _PCT, "cogs_pct"),
-    ("costs.fixed_cost_month", "ค่าใช้จ่ายคงที่ต่อเดือน (บาท)", _BAHT, "fixed_cost"),
-    ("costs.marketing_pct_of_revenue", "งบการตลาด (% ของรายได้)", _PCT, "mkt_pct"),
-    ("costs.other_variable_pct", "ต้นทุนผันแปรอื่น (% ของรายได้)", _PCT, "other_pct"),
-    ("capital.upfront_investment", "เงินลงทุนเริ่มต้น (บาท)", _BAHT, "capex"),
-    ("capital.starting_cash", "เงินสดตั้งต้น (บาท)", _BAHT, "cash0"),
-    ("capital.payment_collection_lag_months", "ระยะเวลาเก็บเงิน (เดือน)", "0", "collect_lag"),
+    ("revenue.units_month_1", "จำนวนหน่วยที่ขายเดือนแรก", "#,##0", "units_m1", "count"),
+    ("revenue.price_per_unit", "ราคาขายต่อหน่วย (บาท)", _BAHT, "price", "money"),
+    ("revenue.growth_rate_monthly", "อัตราเติบโตต่อเดือน", _PCT, "growth", "pct"),
+    ("revenue.churn_or_seasonality", "อัตราหดตัว/ฤดูกาลต่อเดือน", _PCT, "churn", "pct"),
+    ("costs.cogs_pct_of_revenue", "ต้นทุนขาย (% ของรายได้)", _PCT, "cogs_pct", "pct"),
+    ("costs.fixed_cost_month", "ค่าใช้จ่ายคงที่ต่อเดือน (บาท)", _BAHT, "fixed_cost", "money"),
+    ("costs.marketing_pct_of_revenue", "งบการตลาด (% ของรายได้)", _PCT, "mkt_pct", "pct"),
+    ("costs.other_variable_pct", "ต้นทุนผันแปรอื่น (% ของรายได้)", _PCT, "other_pct", "pct"),
+    ("capital.upfront_investment", "เงินลงทุนเริ่มต้น (บาท)", _BAHT, "capex", "money"),
+    ("capital.starting_cash", "เงินสดตั้งต้น (บาท)", _BAHT, "cash0", "money"),
+    ("capital.payment_collection_lag_months", "ระยะเวลาเก็บเงิน (เดือน)", "0",
+     "collect_lag", "count"),
 ]
 
 _SCENARIOS = [("base", "Base", _GREY), ("best", "Best", _GOOD), ("worst", "Worst", _BAD)]
@@ -121,21 +126,18 @@ def _dig(data: dict, path: str):
     return cur
 
 
-def _num(entry, default=0.0) -> float:
-    """Assumption cells arrive as {"value": n, ...} but tolerate a bare number."""
-    if isinstance(entry, dict):
-        entry = entry.get("value")
-    if isinstance(entry, bool) or entry is None:
-        return default
-    if isinstance(entry, (int, float)):
-        return float(entry)
-    try:  # "1,250 บาท" / "3%" — strip anything that isn't numeric
-        txt = str(entry).strip()
-        pct = txt.endswith("%")
-        val = float(re.sub(r"[^0-9.\-]", "", txt) or 0)
-        return val / 100 if pct else val
-    except ValueError:
-        return default
+def _num(entry, default=0.0, unit: str | None = None) -> float:
+    """Assumption cells arrive as {"value": n, ...} but tolerate a bare number,
+    and CFOs — human or model — write "1,250 บาท", "1.2 ล้าน", "(3,000)" and
+    "3%" as freely as they write 1250. `unit` is what the schema promised, so a
+    percentage answered as a whole number can be caught. See jsonx.number."""
+    return _num_detail(entry, default, unit)[0]
+
+
+def _num_detail(entry, default=0.0, unit: str | None = None):
+    """`(value, note)` — the note says how the text was reinterpreted, if it was.
+    A unit fix the CEO cannot see is a wrong number he cannot trace."""
+    return jsonx.number_detail(entry, unit, default)
 
 
 def _src(entry) -> str:
@@ -179,16 +181,21 @@ def _assumptions_sheet(wb: Workbook, model: dict) -> dict:
 
     _hdr(ws, 6, ["ตัวแปร", "ค่า", "ที่มาของตัวเลข", "หมายเหตุ", "ประเภท"])
     refs, row = {}, 7
-    for path, label, fmt, name in _ROWS:
+    for path, label, fmt, name, unit in _ROWS:
         entry = _dig(model, path)
+        value, fix = _num_detail(entry, 0.0, unit)
         ws.cell(row=row, column=1, value=label).font = Font(size=10)
-        cell = ws.cell(row=row, column=2, value=_num(entry))
+        cell = ws.cell(row=row, column=2, value=value)
         cell.number_format = fmt
         cell.fill = PatternFill("solid", fgColor="FFFFF9DB")  # editable = yellow
         cell.font = Font(bold=True, size=10)
         src = _src(entry)
         ws.cell(row=row, column=3, value=src).font = Font(size=9)
-        ws.cell(row=row, column=4, value=_note(entry)).font = Font(size=9, color="FF57606A")
+        note = _note(entry)
+        if fix:                       # say so in the sheet, not just in the log
+            note = f"{note} [ระบบตีความหน่วย: {fix}]" if note else f"[ระบบตีความหน่วย: {fix}]"
+            log.warning("assumption %s reinterpreted: %s", path, fix)
+        ws.cell(row=row, column=4, value=note).font = Font(size=9, color="FF57606A")
         est = "ประมาณการ" if "ประมาณ" in src or src == "—" else "จากบทถกเถียง"
         c5 = ws.cell(row=row, column=5, value=est)
         c5.font = Font(size=9, bold=est == "ประมาณการ",
@@ -209,7 +216,7 @@ def _assumptions_sheet(wb: Workbook, model: dict) -> dict:
         ws.cell(row=row, column=1, value=label).font = Font(bold=True, size=10)
         ws.cell(row=row, column=1).fill = PatternFill("solid", fgColor=fill)
         for col, field, dflt in ((2, "revenue_mult", 1.0), (3, "cost_mult", 1.0)):
-            c = ws.cell(row=row, column=col, value=_num(sc.get(field), dflt))
+            c = ws.cell(row=row, column=col, value=_num(sc.get(field), dflt, "mult"))
             c.number_format = "0.00"
             c.fill = PatternFill("solid", fgColor="FFFFF9DB")
             c.font = Font(bold=True, size=10)
@@ -571,18 +578,15 @@ def assumptions(session: dict, refresh: bool = False) -> dict:
         return {}
 
     provider = store.get_providers().get("cfo", "mock")
-    out = llm.chat(provider, ASSUMPTION_SYSTEM,
-                   f"คำถามของ CEO: {session['question']}\n\nบทถกเถียงของบอร์ด:\n"
-                   + "\n\n".join(transcript), max_tokens=8192)
-    if not out["ok"]:
-        log.warning("finmodel assumptions failed for consult %s: provider not ok",
-                    session.get("id"))
-        return {}
-    from .report import _parse_json  # local import avoids a cycle at module load
-    data = _parse_json(out["text"])
+    out = llm.chat_json(provider, ASSUMPTION_SYSTEM,
+                        f"คำถามของ CEO: {session['question']}\n\nบทถกเถียงของบอร์ด:\n"
+                        + "\n\n".join(transcript), max_tokens=8192,
+                        required=("revenue", "costs"))
+    data = out["data"]
     if not isinstance(data, dict) or not data:
-        log.warning("finmodel assumptions unparseable for consult %s (chars=%s)",
-                    session.get("id"), len(out.get("text") or ""))
+        log.warning("finmodel assumptions unusable for consult %s (ok=%s calls=%s chars=%s): %s",
+                    session.get("id"), out.get("ok"), out.get("calls"),
+                    len(out.get("text") or ""), out["error"])
         return {}
     data["_provider"] = out.get("provider", provider)
     store.attach_finmodel(session["id"], data)

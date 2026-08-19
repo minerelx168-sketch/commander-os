@@ -18,16 +18,14 @@ harfbuzz the tone mark lands on top of the vowel and disappears. fpdf2 with
 shaping enabled plus the bundled Sarabun (OFL) font renders it correctly on
 any machine with no setup.
 """
-import json
 import logging
-import re
 from datetime import datetime, timezone
 
 from fpdf import FPDF
 from fpdf.enums import Align, VAlign
 from fpdf.fonts import FontFace
 
-from . import config, depts, docs, llm, store
+from . import config, depts, docs, jsonx, llm, store
 
 log = logging.getLogger("hub.report")
 
@@ -323,82 +321,11 @@ OPTIONS_SYSTEM = (
 )
 
 
-def _salvage_json(fragment: str) -> dict | None:
-    """Close a JSON object that was cut off mid-generation.
-
-    A long Thai document can exhaust the output budget (stop_reason=max_tokens),
-    which used to throw away every complete section the advisor had already
-    written. Walk the fragment, drop the half-written tail, and shut the
-    remaining containers so the finished sections survive. Returns None when
-    nothing coherent is left — a partial document is useful, a fabricated one
-    is not.
-    """
-    depth, in_str, esc, last_good = 0, False, False, None
-    for i, ch in enumerate(fragment):
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch in "{[":
-            depth += 1
-        elif ch in "}]":
-            depth -= 1
-        elif ch == "," and depth <= 2:
-            last_good = i          # a safe place to truncate: end of an entry
-    if last_good is None:
-        return None
-
-    head = fragment[:last_good]
-    # re-count what is still open after truncating, then close it in order
-    stack, in_str, esc = [], False, False
-    for ch in head:
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch in "{[":
-            stack.append(ch)
-        elif ch in "}]" and stack:
-            stack.pop()
-    repaired = head + "".join("}" if c == "{" else "]" for c in reversed(stack))
-    try:
-        parsed = json.loads(repaired)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 def _parse_json(text: str) -> dict | None:
-    """LLMs like to wrap JSON in prose or fences — dig it out. Falls back to
-    salvaging a truncated reply so a budget overrun costs sections, not the
-    whole document."""
-    if not text:
-        return None
-    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-    start = cleaned.find("{")
-    if start < 0:
-        return None
-    end = cleaned.rfind("}")
-    if end > start:
-        try:
-            parsed = json.loads(cleaned[start:end + 1])
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    return _salvage_json(cleaned[start:])
+    """LLMs like to wrap JSON in prose or fences — dig it out, repairing the
+    usual damage and salvaging a truncated reply so a budget overrun costs
+    sections, not the whole document. See app/jsonx.py for what it survives."""
+    return jsonx.extract(text)
 
 
 def _web_sources(session: dict) -> list:
@@ -425,15 +352,16 @@ def methodology(session: dict, step_key: str, refresh: bool = False) -> dict:
     sources = "\n".join(f"[{i}] {s.get('title', '')} — {s.get('url', '')}"
                         for i, s in enumerate(_web_sources(session), 1))
 
-    out = llm.chat(depts._chair_provider(), METHOD_SYSTEM,
-                   f"คำถามของ CEO: {session['question']}\n"
-                   f"รอบที่ตรวจ: {depts.STEP_LABELS.get(step_key, step_key)}\n\n"
-                   + "\n\n".join(answers)
-                   + (f"\n\nแหล่งเว็บที่บอร์ดมีให้อ้าง:\n{sources}" if sources else ""))
-    data = _parse_json(out["text"]) if out["ok"] else None
+    out = llm.chat_json(depts._chair_provider(), METHOD_SYSTEM,
+                        f"คำถามของ CEO: {session['question']}\n"
+                        f"รอบที่ตรวจ: {depts.STEP_LABELS.get(step_key, step_key)}\n\n"
+                        + "\n\n".join(answers)
+                        + (f"\n\nแหล่งเว็บที่บอร์ดมีให้อ้าง:\n{sources}" if sources else ""),
+                        required=("advisors",))
+    data = out["data"]
     if data is None:
-        log.warning("methodology extraction failed for consult %s step %s",
-                    session.get("id"), step_key)
+        log.warning("methodology extraction failed for consult %s step %s (%s)",
+                    session.get("id"), step_key, out["error"])
         return {}
     store.attach_methodology(session["id"], step_key, data)
     return data
@@ -464,14 +392,14 @@ def decision_options(session: dict, refresh: bool = False) -> dict:
     # 8192: the Thai JSON schema below does not fit in the 2048 default —
     # it truncates mid-object and _parse_json then returns None, which used to
     # surface as a silently empty options section.
-    out = llm.chat(depts._chair_provider(), OPTIONS_SYSTEM,
-                   f"คำถามของ CEO: {session['question']}\n\n" + "\n\n".join(transcript),
-                   max_tokens=8192)
-    data = _parse_json(out["text"]) if out["ok"] else None
+    out = llm.chat_json(depts._chair_provider(), OPTIONS_SYSTEM,
+                        f"คำถามของ CEO: {session['question']}\n\n" + "\n\n".join(transcript),
+                        max_tokens=8192, required=("options", "recommended"))
+    data = out["data"]
     if data is None:
-        log.warning("decision options failed for consult %s (ok=%s, reply chars=%s) — "
-                    "reply likely truncated or not JSON", session.get("id"),
-                    out.get("ok"), len(out.get("text") or ""))
+        log.warning("decision options failed for consult %s (ok=%s, calls=%s, chars=%s): %s",
+                    session.get("id"), out.get("ok"), out.get("calls"),
+                    len(out.get("text") or ""), out["error"])
         return {}
     store.attach_options(session["id"], data)
     return data

@@ -12,11 +12,9 @@ Two jobs:
 Both fail closed: with no provider or a malformed reply the pipeline gets an
 empty result and the session proceeds, rather than blocking on the audit.
 """
-import json
 import logging
-import re
 
-from . import llm, store
+from . import jsonx, llm, store
 
 log = logging.getLogger("hub.memory")
 
@@ -55,18 +53,20 @@ CONFLICT_SYSTEM = (
 
 
 def _parse_json(text: str) -> dict | None:
-    """LLMs like to wrap JSON in prose or fences — dig it out."""
-    if not text:
+    """LLMs like to wrap JSON in prose or fences — dig it out (see app/jsonx.py)."""
+    return jsonx.extract(text)
+
+
+def _confidence_pct(value) -> int | None:
+    """Confidence, normalised to 0-100. A seat that answers `0.7` means 70%, not
+    zero — and `int(0.7)` is exactly the rounding that files a confident ruling
+    into the archive as no confidence at all."""
+    if value is None or value == "":
         return None
-    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        parsed = json.loads(cleaned[start:end + 1])
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        return None
+    if isinstance(value, float) and 0 < value <= 1:
+        return int(round(value * 100))
+    score = jsonx.as_int(value)
+    return score if score is not None and 0 <= score <= 100 else None
 
 
 def recall(project: str | None, limit: int = 8) -> list:
@@ -98,36 +98,50 @@ def conflicts(question: str, project: str | None, provider: str) -> dict:
     past = recall(project)
     if not past:
         return {"conflicts": [], "carry_forward": [], "checked": 0}
-    out = llm.chat(provider, CONFLICT_SYSTEM,
-                   f"มติเก่าของบอร์ด:\n{as_prompt(past)}\n\nคำถามใหม่: {question}")
-    data = _parse_json(out["text"]) if out["ok"] else None
+    # No `required`: an empty conflicts list is the *correct* answer most of the
+    # time, so demanding a non-empty one would buy a repair round on every clean
+    # question and pressure the model into inventing a clash.
+    out = llm.chat_json(provider, CONFLICT_SYSTEM,
+                        f"มติเก่าของบอร์ด:\n{as_prompt(past)}\n\nคำถามใหม่: {question}")
+    data = out["data"]
     if data is None:
-        log.warning("conflict check failed for %r", question[:60])
+        log.warning("conflict check failed for %r: %s", question[:60], out["error"])
         return {"conflicts": [], "carry_forward": [], "checked": len(past)}
     known = {m["id"] for m in past}
-    # drop hallucinated memory ids rather than showing the CEO a dangling ref
-    found = [c for c in (data.get("conflicts") or []) if c.get("memory_id") in known]
+    # Drop hallucinated memory ids rather than showing the CEO a dangling ref —
+    # but read "1", "#1" and 1 as the same id first, or a model that quotes the
+    # number as a string has every real citation thrown away as a hallucination.
+    found = []
+    for c in jsonx.as_list(data.get("conflicts")):
+        if not isinstance(c, dict):
+            continue
+        mid = jsonx.as_int(c.get("memory_id"))
+        if mid in known:
+            found.append({**c, "memory_id": mid})
     return {"conflicts": found,
-            "carry_forward": data.get("carry_forward") or [],
+            "carry_forward": jsonx.as_str_list(data.get("carry_forward")),
             "checked": len(past)}
 
 
 def remember(session: dict, transcript: str, provider: str) -> dict | None:
     """Distil a finished session into one durable entry. None on failure."""
-    out = llm.chat(provider, DISTIL_SYSTEM,
-                   f"คำถามของ CEO: {session['question']}\n\nบันทึกการประชุม:\n{transcript}")
-    data = _parse_json(out["text"]) if out["ok"] else None
+    out = llm.chat_json(provider, DISTIL_SYSTEM,
+                        f"คำถามของ CEO: {session['question']}\n\n"
+                        f"บันทึกการประชุม:\n{transcript}",
+                        required=("conclusion",))
+    data = out["data"]
     if data is None or not data.get("conclusion"):
-        log.warning("memory distil failed for consult %s", session.get("id"))
+        log.warning("memory distil failed for consult %s: %s",
+                    session.get("id"), out["error"])
         return None
     return store.add_memory({
         "consult_id": session.get("id"),
         "question": session.get("question"),
         "project": session.get("project"),
-        "conclusion": data.get("conclusion"),
-        "stance": data.get("stance"),
-        "confidence": data.get("confidence"),
-        "constraints": data.get("constraints") or [],
-        "open_questions": data.get("open_questions") or [],
-        "tripwires": data.get("tripwires") or [],
+        "conclusion": jsonx.as_str(data.get("conclusion")),
+        "stance": jsonx.as_str(data.get("stance")) or None,
+        "confidence": _confidence_pct(data.get("confidence")),
+        "constraints": jsonx.as_str_list(data.get("constraints")),
+        "open_questions": jsonx.as_str_list(data.get("open_questions")),
+        "tripwires": jsonx.as_str_list(data.get("tripwires")),
     })

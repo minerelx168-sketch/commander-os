@@ -28,7 +28,6 @@ found itself. Between stages the CEO can steer, skip, stop, rewind (reset) or
 branch; rejected paths are replayed so the board does not re-serve an angle
 that was already turned down.
 """
-import json
 import logging
 import re
 import time
@@ -36,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
-from . import config, docs, llm, memory, research, sources, store
+from . import config, docs, jsonx, llm, memory, research, sources, store
 
 log = logging.getLogger("hub.depts")
 
@@ -346,28 +345,34 @@ def _fmt(dept: str, template: str) -> str:
 
 
 def _parse_json(text: str) -> dict | None:
-    if not text:
-        return None
-    cleaned = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        parsed = json.loads(cleaned[start:end + 1])
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        return None
+    """Every stage that asks for a schema reads it through the same door. This
+    used to be a private copy that could not salvage a truncated reply, so the
+    exact overrun that cost the report a section cost the framing stage the whole
+    board."""
+    return jsonx.extract(text)
 
 
-_CONFIDENCE = re.compile(r"ความมั่นใจ\s*[:：]?\s*(\d{1,3})\s*%?")
+# The label and the number are rarely adjacent in a real reply: seats write
+# "ความมั่นใจ: **62%**", "ความมั่นใจต่อจุดยืนนี้ ประมาณ 62%", "confidence: 7/10".
+# Requiring `label: digits` scored those as unrated, and an unrated seat drops out
+# of the board's average — so the CEO saw a confidence figure computed from
+# whichever seats happened to punctuate the way the regex expected.
+_CONFIDENCE = re.compile(
+    r"(?:ความมั่นใจ|ความเชื่อมั่น|confidence)"
+    r"[ \t]*[:：]?[ \t]*\n?"          # the score may sit on the next line
+    r"[^\d\n]{0,30}?"                 # …but not lines further down
+    r"(\d{1,3})[ \t]*(%|/\s*100|/\s*10)?",   # /100 before /10: "85/100" is not "85/10"+"0"
+    re.IGNORECASE)
 
 
 def parse_confidence(text: str) -> int | None:
-    """Pull the self-scored confidence out of a seat's reply."""
+    """Pull the self-scored confidence out of a seat's reply, as 0-100."""
     m = _CONFIDENCE.search(text or "")
     if not m:
         return None
-    value = int(m.group(1))
+    value, scale = int(m.group(1)), (m.group(2) or "").replace(" ", "")
+    if scale == "/10":                 # "7/10" is a score, not seven percent
+        value *= 10
     return value if 0 <= value <= 100 else None
 
 
@@ -588,8 +593,9 @@ def _frame(session: dict, directive: str | None, tail: str) -> dict:
     if knowledge:
         ctx.append(f"ตัวอย่างเอกสารที่ CEO มี:\n{knowledge}")
 
-    out = llm.chat(provider, FRAME_SYSTEM, "\n\n".join(ctx) + tail)
-    data = _parse_json(out["text"]) if out["ok"] else None
+    out = llm.chat_json(provider, FRAME_SYSTEM, "\n\n".join(ctx) + tail,
+                        required=("reframed", "seats"))
+    data = out["data"]
 
     if data is None:
         # Fail open: a bad framing pass must not stop the board convening.
@@ -604,38 +610,45 @@ def _frame(session: dict, directive: str | None, tail: str) -> dict:
                 "memory_checked": conflict["checked"],
                 "diversity": model_diversity({"seats": chosen})}
 
-    chosen = [s for s in (data.get("seats") or []) if s in config.DEPTS]
+    # The moderator answers in prose as readily as in arrays — "cfo, coo" and
+    # ["cfo","coo"] mean the same thing and both have to convene the same board.
+    chosen = [s for s in jsonx.as_str_list(data.get("seats")) if s in config.DEPTS]
     if len(chosen) < 2:                       # a debate needs at least two voices
         chosen = list(config.DEPTS)
     store.set_seats(session["id"], chosen)
 
-    lines = [f"สิ่งที่กำลังตัดสินใจจริง: {data.get('reframed', '')}"]
-    if data.get("decision_type"):
-        lines.append(f"ลักษณะการตัดสินใจ: {data['decision_type']}")
+    reasons = {k: jsonx.as_str(v) for k, v in jsonx.as_dict(data.get("seat_reasons")).items()}
+    changers = jsonx.as_str_list(data.get("what_would_change_the_answer"))
+    criteria = jsonx.as_str_list(data.get("success_criteria"))
+    reframed = jsonx.as_str(data.get("reframed")) or session["question"]
+    decision_type = jsonx.as_str(data.get("decision_type"))
+    framing_risk = jsonx.as_str(data.get("framing_risk"))
+
+    lines = [f"สิ่งที่กำลังตัดสินใจจริง: {reframed}"]
+    if decision_type:
+        lines.append(f"ลักษณะการตัดสินใจ: {decision_type}")
     lines.append("เรียกเข้าประชุม: " + ", ".join(
-        f"{config.DEPTS[k]['name']} ({(data.get('seat_reasons') or {}).get(k, '')})".strip()
-        for k in chosen))
-    excluded = {k: v for k, v in (data.get("excluded") or {}).items() if k in config.DEPTS}
+        f"{config.DEPTS[k]['name']} ({reasons.get(k, '')})".strip() for k in chosen))
+    excluded = {k: jsonx.as_str(v) for k, v in jsonx.as_dict(data.get("excluded")).items()
+                if k in config.DEPTS}
     if excluded:
         lines.append("ไม่เรียก: " + ", ".join(
             f"{config.DEPTS[k]['name']} ({v})" for k, v in excluded.items()))
-    if data.get("what_would_change_the_answer"):
-        lines.append("หลักฐานที่จะเปลี่ยนคำตอบได้:\n"
-                     + "\n".join(f"• {x}" for x in data["what_would_change_the_answer"]))
-    if data.get("success_criteria"):
-        lines.append("จะรู้ได้อย่างไรว่าตัดสินใจถูก:\n"
-                     + "\n".join(f"• {x}" for x in data["success_criteria"]))
-    if data.get("framing_risk"):
-        lines.append(f"ความเสี่ยงที่จะตอบผิดข้อ: {data['framing_risk']}")
+    if changers:
+        lines.append("หลักฐานที่จะเปลี่ยนคำตอบได้:\n" + "\n".join(f"• {x}" for x in changers))
+    if criteria:
+        lines.append("จะรู้ได้อย่างไรว่าตัดสินใจถูก:\n" + "\n".join(f"• {x}" for x in criteria))
+    if framing_risk:
+        lines.append(f"ความเสี่ยงที่จะตอบผิดข้อ: {framing_risk}")
 
     return {"text": "\n".join(lines), "provider": out["provider"], "ok": True,
-            "seats": chosen, "seat_reasons": data.get("seat_reasons") or {},
+            "seats": chosen, "seat_reasons": reasons,
             "excluded": excluded,
-            "reframed": data.get("reframed") or session["question"],
-            "decision_type": data.get("decision_type"),
-            "what_would_change_the_answer": data.get("what_would_change_the_answer") or [],
-            "success_criteria": data.get("success_criteria") or [],
-            "framing_risk": data.get("framing_risk") or "",
+            "reframed": reframed,
+            "decision_type": decision_type,
+            "what_would_change_the_answer": changers,
+            "success_criteria": criteria,
+            "framing_risk": framing_risk,
             "conflicts": conflict["conflicts"],
             "carry_forward": conflict["carry_forward"],
             "memory_checked": conflict["checked"],

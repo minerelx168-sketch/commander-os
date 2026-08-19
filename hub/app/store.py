@@ -1,9 +1,16 @@
-"""Persistent JSON store: provider assignment, consult sessions, decision log.
+"""Persistent JSON store: provider assignment, consult sessions, decision log,
+pipeline routines.
 
 A consult is a *session* that advances one step at a time so the CEO can
 decide between rounds (continue / redirect / skip / stop), and can branch or
 reset any step like a git history. Abandoned paths are kept in `history` so
 the board can learn from the route the CEO rejected.
+
+A routine is the other half: not one hard question but *recurring work*, with a
+project, a named owner, and its own work tree of tasks. Each task keeps every
+run it has ever produced instead of overwriting the last one, so a CEO comment
+that corrects an answer leaves both versions on the record — what the AI said,
+what it was told, and what it changed.
 """
 import json
 import threading
@@ -26,6 +33,10 @@ _DEFAULT = {
     "routines": [],                                   # standing orders on a schedule
     "routine_runs": [],                               # every execution, newest last
     "followups": [],                                  # one-shot Q&A from Telegram
+    # Pipeline work trees. Kept under their own key because a "routine" here is
+    # a lane of work with tasks and runs, not a scheduled report — merging the
+    # two would have one system silently reading the other's records.
+    "trees": [],
 }
 
 
@@ -186,6 +197,229 @@ def set_seats(session_id: int, seats: list) -> None:
             return
         c["seats"] = seats
         _save(data)
+
+
+# ── pipeline: routines, each its own work tree ──
+#
+# A routine is a lane of recurring work — "รายงานยอดขายรายสัปดาห์", "ตรวจ
+# กระแสเงินสดรายเดือน". It carries a project and a named owner because work with
+# no owner is a wish, and it holds its own tasks: nothing here is shared between
+# routines, so two lanes can disagree, be re-run, or be deleted independently.
+#
+# A task never overwrites its own output. Every execution appends a `run`, and a
+# CEO comment appends a run of its own rather than editing the last one — the
+# tree is the audit trail of what the AI was told and what changed because of it.
+
+_ROUTINE_STATUSES = ("active", "paused", "archived")
+_TASK_STATUSES = ("todo", "running", "review", "done", "blocked")
+
+
+def _tree_of(data: dict, routine_id: int) -> dict | None:
+    return next((r for r in data["trees"] if r["id"] == routine_id), None)
+
+
+def _task_of(routine: dict, task_id: int) -> dict | None:
+    return next((t for t in routine["tasks"] if t["id"] == task_id), None)
+
+
+def add_tree(name: str, project: str | None, owner: str, dept: str,
+             goal: str = "", cadence: str = "") -> dict:
+    entry = {"id": None, "name": name, "project": project or None, "owner": owner,
+             "dept": dept, "goal": goal or "", "cadence": cadence or "",
+             "status": "active", "tasks": [], "at": _now(), "updated_at": _now()}
+    with _LOCK:
+        data = _load()
+        entry["id"] = max((r["id"] for r in data["trees"]), default=0) + 1
+        # The work tree's own name, stable for the life of the routine: it is how
+        # a run, a comment and a branch are traced back to one lane of work.
+        slug = _slug(name)
+        entry["tree"] = f"routine/{entry['id']}-{slug}" if slug else f"routine/{entry['id']}"
+        data["trees"].append(entry)
+        _save(data)
+    return entry
+
+
+def _slug(name: str) -> str:
+    """A short ASCII handle for a tree name, or "" when there is nothing to
+    slug — a Thai routine name leaves the tree as `routine/<id>` rather than
+    `routine/<id>-` or some invented English filler."""
+    keep = [c.lower() if c.isascii() and c.isalnum() else "-" for c in (name or "")]
+    slug = "".join(keep).strip("-")
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug[:32].strip("-")
+
+
+def get_trees(include_archived: bool = False) -> list:
+    with _LOCK:
+        items = _load()["trees"]
+    return [r for r in items if include_archived or r.get("status") != "archived"]
+
+
+def get_tree(routine_id: int) -> dict | None:
+    with _LOCK:
+        return _tree_of(_load(), routine_id)
+
+
+def update_tree(routine_id: int, **fields) -> dict | None:
+    """Patch the tree's own attributes. `tasks` is never patched here — tasks
+    move through their own calls so a stale UI cannot overwrite a run."""
+    allowed = {"name", "project", "owner", "dept", "goal", "cadence", "status"}
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        if r is None:
+            return None
+        for k, v in fields.items():
+            if k in allowed and v is not None:
+                r[k] = v
+        r["updated_at"] = _now()
+        _save(data)
+        return r
+
+
+def delete_tree(routine_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        before = len(data["trees"])
+        data["trees"] = [r for r in data["trees"] if r["id"] != routine_id]
+        _save(data)
+        return len(data["trees"]) < before
+
+
+def add_task(routine_id: int, title: str, brief: str = "",
+             owner: str | None = None, parent_task: int | None = None,
+             runs: list | None = None, branched_from: int | None = None) -> dict | None:
+    """Add a task to a routine's tree. `owner` falls back to the routine's owner
+    so a task is never unassigned; `parent_task` records a branch's origin."""
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        if r is None:
+            return None
+        task = {"id": max((t["id"] for t in r["tasks"]), default=0) + 1,
+                "title": title, "brief": brief or "",
+                "owner": owner or r.get("owner", ""),
+                "status": "todo", "runs": runs or [], "comments": [],
+                "parent_task": parent_task, "branched_from": branched_from,
+                "at": _now()}
+        r["tasks"].append(task)
+        r["updated_at"] = _now()
+        _save(data)
+        return task
+
+
+def update_task(routine_id: int, task_id: int, **fields) -> dict | None:
+    allowed = {"title", "brief", "owner", "status"}
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        t = _task_of(r, task_id) if r else None
+        if t is None:
+            return None
+        for k, v in fields.items():
+            if k in allowed and v is not None:
+                t[k] = v
+        r["updated_at"] = _now()
+        _save(data)
+        return t
+
+
+def delete_task(routine_id: int, task_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        if r is None:
+            return False
+        before = len(r["tasks"])
+        r["tasks"] = [t for t in r["tasks"] if t["id"] != task_id]
+        r["updated_at"] = _now()
+        _save(data)
+        return len(r["tasks"]) < before
+
+
+def append_run(routine_id: int, task_id: int, run: dict) -> dict | None:
+    """Record one execution. Runs are appended, never replaced — the previous
+    answer is the only way to see what a comment actually changed."""
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        t = _task_of(r, task_id) if r else None
+        if t is None:
+            return None
+        entry = {**run, "n": len(t["runs"]) + 1, "at": _now()}
+        t["runs"].append(entry)
+        # Everything the CEO had flagged is answered by this run, whatever it says
+        for c in t["comments"]:
+            if c.get("answered_by") is None:
+                c["answered_by"] = entry["n"]
+        t["status"] = "review" if entry.get("ok") else "blocked"
+        r["updated_at"] = _now()
+        _save(data)
+        return t
+
+
+def add_comment(routine_id: int, task_id: int, text: str,
+                author: str = "CEO") -> dict | None:
+    """A correction aimed at the run that is currently on top. `answered_by` stays
+    None until a later run responds to it, which is what makes an unaddressed
+    comment visible instead of lost in a thread."""
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        t = _task_of(r, task_id) if r else None
+        if t is None:
+            return None
+        comment = {"id": max((c["id"] for c in t["comments"]), default=0) + 1,
+                   "text": text, "author": author,
+                   "on_run": len(t["runs"]) or None, "answered_by": None,
+                   "at": _now()}
+        t["comments"].append(comment)
+        r["updated_at"] = _now()
+        _save(data)
+        return comment
+
+
+def open_comments(task: dict) -> list:
+    """Comments no run has answered yet — the CEO's outstanding corrections."""
+    return [c for c in task.get("comments", []) if c.get("answered_by") is None]
+
+
+def branch_task(routine_id: int, task_id: int, run_n: int,
+                title: str | None = None) -> dict | None:
+    """Fork a task at one of its runs into a sibling in the same tree.
+
+    The original keeps every run; the branch starts from the chosen one and is
+    told which route it came from, so the CEO can hold two answers to the same
+    task side by side instead of losing one to the other.
+    """
+    with _LOCK:
+        data = _load()
+        r = _tree_of(data, routine_id)
+        t = _task_of(r, task_id) if r else None
+        if t is None:
+            return None
+        kept = [json.loads(json.dumps(run)) for run in t["runs"] if run["n"] <= run_n]
+        if not kept:
+            return None
+        src_title, src_brief, src_owner = t["title"], t["brief"], t["owner"]
+    return add_task(routine_id, title or f"{src_title} (แตกกิ่ง)", src_brief,
+                    src_owner, parent_task=task_id, runs=kept, branched_from=run_n)
+
+
+def pipeline_stats() -> dict:
+    with _LOCK:
+        trees = _load()["trees"]
+    tasks = [t for r in trees for t in r["tasks"]]
+    return {
+        "routines": sum(1 for r in trees if r.get("status") != "archived"),
+        "tasks": len(tasks),
+        "done": sum(1 for t in tasks if t["status"] == "done"),
+        "review": sum(1 for t in tasks if t["status"] == "review"),
+        "blocked": sum(1 for t in tasks if t["status"] == "blocked"),
+        "open_comments": sum(len(open_comments(t)) for t in tasks),
+        "runs": sum(len(t["runs"]) for t in tasks),
+    }
 
 
 # ── persistent memory: what past sessions concluded ──

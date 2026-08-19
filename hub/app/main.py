@@ -1,4 +1,8 @@
-"""Commander Hub — C-Suite strategic advisory board. No task automation.
+"""Commander Hub — C-Suite advisory board, plus the recurring work it owns.
+
+Nothing here runs unattended: every board round and every pipeline task moves
+because the CEO pressed the button, and every result is his to accept, correct
+or discard.
 
 Pages (single-page UI in static/index.html):
   1. Boardroom — ask a hard question scoped to a project; the board advances
@@ -7,6 +11,9 @@ Pages (single-page UI in static/index.html):
   2. Routine — standing orders: a task the assigned seats report on daily /
      weekly / monthly (UTC+7) straight to Telegram, filed into the library
   3. Decisions — Proven-by-Decision log: record what you decided, score the advice
+  4. Pipeline — recurring work, one work tree per routine: project, named
+     owner, tasks that keep every run they have produced, CEO comments that
+     correct a wrong answer by re-running it, and the reasoning behind each run
   4. เอกสาร — LINE / upload / Drive knowledge library feeding the board
   5. Agents — pick which AI provider powers each advisor
 """
@@ -20,7 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import (auth, config, deliverable, depts, docs, finmodel, followup, llm,
-               report, research, routines, sources, store, telegram)
+               pipeline, report, research, routines, sources, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -72,6 +79,52 @@ class RethinkIn(BaseModel):
 class ScoreIn(BaseModel):
     outcome: str
     verdict: str  # saved | faster | neutral | missed
+
+
+class RoutineIn(BaseModel):
+    name: str
+    owner: str
+    dept: str
+    project: str | None = None
+    goal: str | None = None
+    cadence: str | None = None
+
+
+class RoutinePatchIn(BaseModel):
+    name: str | None = None
+    owner: str | None = None
+    dept: str | None = None
+    project: str | None = None
+    goal: str | None = None
+    cadence: str | None = None
+    status: str | None = None
+
+
+class TaskIn(BaseModel):
+    title: str
+    brief: str | None = None
+    owner: str | None = None
+
+
+class TaskPatchIn(BaseModel):
+    title: str | None = None
+    brief: str | None = None
+    owner: str | None = None
+    status: str | None = None
+
+
+class RunIn(BaseModel):
+    directive: str | None = None   # a one-off steer for this run only
+
+
+class CommentIn(BaseModel):
+    text: str
+    rerun: bool = True             # a correction the task never re-runs is a note
+
+
+class BranchTaskIn(BaseModel):
+    run: int
+    title: str | None = None
 
 
 def _view(session: dict) -> dict:
@@ -151,6 +204,7 @@ def state() -> dict:
         "memory_count": len(store.get_memory(limit=500)),
         "consults": store.get_consults(8),
         "decision_stats": store.decision_stats(),
+        "pipeline": _pipeline_stats(),
     }
 
 
@@ -471,6 +525,186 @@ def delete_decision(decision_id: int, forget: bool = False) -> dict:
                if forget and d.get("consult_id") else 0)
     store.delete_decision(decision_id)
     return {"deleted": decision_id, "forgotten": dropped}
+
+
+# ── Pipeline: recurring work, one tree per routine ──
+
+def _routine_or_404(routine_id: int) -> dict:
+    r = store.get_tree(routine_id)
+    if r is None:
+        raise HTTPException(404, "routine not found")
+    return r
+
+
+def _task_or_404(routine: dict, task_id: int) -> dict:
+    t = next((x for x in routine["tasks"] if x["id"] == task_id), None)
+    if t is None:
+        raise HTTPException(404, "task not found")
+    return t
+
+
+def _routine_view(r: dict) -> dict:
+    """A routine plus what the UI needs to render its tree without extra calls.
+
+    `running_now` comes from the live registry, not from the stored status: a
+    task left reading "running" by a process that died is *stalled*, and the
+    tree map has to be able to tell the two apart.
+    """
+    seat = config.DEPTS.get(r.get("dept"), {})
+    provider = store.get_providers().get(r.get("dept"), "mock")
+    tasks = []
+    for t in r.get("tasks", []):
+        running = pipeline.is_running(r["id"], t["id"])
+        tasks.append({**t,
+                      "open_comments": store.open_comments(t),
+                      "running_now": running,
+                      "stalled": t["status"] == "running" and not running})
+    return {**r,
+            "seat_name": seat.get("name", r.get("dept", "")),
+            "seat_icon": seat.get("icon", "•"),
+            "provider": provider,
+            "vendor": depts.vendor_of(provider),
+            "provider_ready": llm.provider_ready(provider),
+            "running_now": any(t["running_now"] for t in tasks),
+            "tasks": tasks}
+
+
+def _pipeline_stats() -> dict:
+    """Stored counters plus what is in flight this second."""
+    return {**store.pipeline_stats(), "running": len(pipeline.live())}
+
+
+@app.get("/api/pipeline")
+def pipeline_state(include_archived: bool = False) -> dict:
+    return {"routines": [_routine_view(r)
+                         for r in store.get_trees(include_archived)],
+            "stats": _pipeline_stats(),
+            "live": pipeline.live(),
+            "task_statuses": list(store._TASK_STATUSES),
+            "projects": docs.list_projects()}
+
+
+@app.get("/api/pipeline/live")
+def pipeline_live() -> dict:
+    """Just what is running, for the tree map to poll on a short interval.
+
+    Separate from /api/pipeline on purpose: the map ticks every couple of
+    seconds and has no business re-serialising every run and comment in the
+    store to do it.
+    """
+    return {"live": pipeline.live(), "stats": _pipeline_stats()}
+
+
+@app.post("/api/pipeline/routines")
+def create_routine(body: RoutineIn) -> dict:
+    """A routine needs a name and an owner. Work with no owner is a wish, and
+    the whole point of a routine is that somebody answers for it."""
+    if not body.name.strip():
+        raise HTTPException(400, "name is required")
+    if not body.owner.strip():
+        raise HTTPException(400, "owner is required — งานที่ไม่มีผู้รับผิดชอบไม่ใช่งาน")
+    if body.dept not in config.DEPTS:
+        raise HTTPException(400, f"unknown dept: {body.dept}")
+    project = (body.project or "").strip() or None
+    if project == NO_PROJECT:
+        project = None
+    return _routine_view(store.add_tree(
+        body.name.strip(), project, body.owner.strip(), body.dept,
+        (body.goal or "").strip(), (body.cadence or "").strip()))
+
+
+@app.patch("/api/pipeline/routines/{routine_id}")
+def patch_routine(routine_id: int, body: RoutinePatchIn) -> dict:
+    _routine_or_404(routine_id)
+    fields = body.model_dump(exclude_none=True)
+    if "dept" in fields and fields["dept"] not in config.DEPTS:
+        raise HTTPException(400, f"unknown dept: {fields['dept']}")
+    if "status" in fields and fields["status"] not in store._ROUTINE_STATUSES:
+        raise HTTPException(400, "status must be " + "|".join(store._ROUTINE_STATUSES))
+    for key in ("name", "owner"):
+        if key in fields and not str(fields[key]).strip():
+            raise HTTPException(400, f"{key} cannot be blank")
+    if fields.get("project") in ("", NO_PROJECT):
+        fields["project"] = None
+    return _routine_view(store.update_tree(routine_id, **fields))
+
+
+@app.delete("/api/pipeline/routines/{routine_id}")
+def remove_routine(routine_id: int) -> dict:
+    _routine_or_404(routine_id)
+    store.delete_tree(routine_id)
+    return {"deleted": routine_id}
+
+
+@app.post("/api/pipeline/routines/{routine_id}/tasks")
+def create_task(routine_id: int, body: TaskIn) -> dict:
+    _routine_or_404(routine_id)
+    if not body.title.strip():
+        raise HTTPException(400, "title is required")
+    store.add_task(routine_id, body.title.strip(), (body.brief or "").strip(),
+                   (body.owner or "").strip() or None)
+    return _routine_view(_routine_or_404(routine_id))
+
+
+@app.patch("/api/pipeline/routines/{routine_id}/tasks/{task_id}")
+def patch_task(routine_id: int, task_id: int, body: TaskPatchIn) -> dict:
+    routine = _routine_or_404(routine_id)
+    _task_or_404(routine, task_id)
+    fields = body.model_dump(exclude_none=True)
+    if "status" in fields and fields["status"] not in store._TASK_STATUSES:
+        raise HTTPException(400, "status must be " + "|".join(store._TASK_STATUSES))
+    if "title" in fields and not fields["title"].strip():
+        raise HTTPException(400, "title cannot be blank")
+    store.update_task(routine_id, task_id, **fields)
+    return _routine_view(_routine_or_404(routine_id))
+
+
+@app.delete("/api/pipeline/routines/{routine_id}/tasks/{task_id}")
+def remove_task(routine_id: int, task_id: int) -> dict:
+    routine = _routine_or_404(routine_id)
+    _task_or_404(routine, task_id)
+    store.delete_task(routine_id, task_id)
+    return _routine_view(_routine_or_404(routine_id))
+
+
+@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/run")
+def run_task(routine_id: int, task_id: int, body: RunIn) -> dict:
+    routine = _routine_or_404(routine_id)
+    _task_or_404(routine, task_id)
+    out = pipeline.run_task(routine_id, task_id, (body.directive or "").strip() or None)
+    return {"routine": _routine_view(_routine_or_404(routine_id)), "run": out["run"]}
+
+
+@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/comment")
+def comment_task(routine_id: int, task_id: int, body: CommentIn) -> dict:
+    """Correct an answer that came back wrong.
+
+    The comment is not a note filed beside the reply — it is quoted into the next
+    run as a binding instruction, with the rejected answer attached, and the run
+    has to report what it changed. Both versions stay in the tree.
+    """
+    routine = _routine_or_404(routine_id)
+    _task_or_404(routine, task_id)
+    if not body.text.strip():
+        raise HTTPException(400, "comment text is required")
+    comment = store.add_comment(routine_id, task_id, body.text.strip())
+    run = None
+    if body.rerun:
+        run = pipeline.run_task(routine_id, task_id)["run"]
+    return {"routine": _routine_view(_routine_or_404(routine_id)),
+            "comment": comment, "run": run}
+
+
+@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/branch")
+def branch_task(routine_id: int, task_id: int, body: BranchTaskIn) -> dict:
+    """Fork the task at one run so two answers can be held side by side."""
+    routine = _routine_or_404(routine_id)
+    task = _task_or_404(routine, task_id)
+    if not any(r["n"] == body.run for r in task.get("runs", [])):
+        raise HTTPException(400, f"run {body.run} does not exist on this task")
+    branch = store.branch_task(routine_id, task_id, body.run,
+                               (body.title or "").strip() or None)
+    return {"routine": _routine_view(_routine_or_404(routine_id)), "task": branch}
 
 
 @app.put("/api/dept/{dept}/provider")

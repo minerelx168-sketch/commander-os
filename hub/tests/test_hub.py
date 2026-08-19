@@ -1481,9 +1481,19 @@ def test_index_serves_advisory_ui(client):
                    "ask-project", "uploadFiles", "stopBoard", "resetTo", "branchAt",
                    "seatResearchCard", "chairCard", "ask-web", "gateBlock", "dot",
                    # Crucible stages
-                   "frameCard", "redteamCard", "researchBlock", "convened"):
+                   "frameCard", "redteamCard", "researchBlock", "convened",
+                   # Pipeline: one work tree per routine
+                   "view-pipeline", "loadPipeline", "createRoutine", "commentTask",
+                   "branchTask", "thinkPanel", "rt-owner", "rt-project",
+                   # the live tree map
+                   "tree-map", "renderTreeMap", "routineMark", "refreshLive",
+                   "live-strip", "jumpToTask", "tmap-mark"):
         assert marker in html, marker
-    for stale in ("view-cmo", "runTask", "LLM Learning"):
+    # `runTask` used to be listed here, back when the hub deliberately executed
+    # nothing. The Pipeline page executes recurring work on the CEO's button, so
+    # the marker is now real; what must stay gone is the old per-department
+    # automation UI this hub replaced.
+    for stale in ("view-cmo", "LLM Learning"):
         assert stale not in html, f"stale automation marker: {stale}"
 
 
@@ -2343,3 +2353,758 @@ def test_bad_inputs(client):
     assert client.get("/api/consults/999").status_code == 404
     assert client.post("/api/consult/999/advance", json={}).status_code == 404
     assert client.post("/api/consult/999/reset", json={"step": "opinions"}).status_code == 404
+
+
+# ── reading what the AI actually sent back ──
+#
+# Everything below pins one class of bug: the provider answered, the hub decided
+# it understood, and the CEO was shown something the model never said. A silent
+# misread is more expensive than an error, so each of these has to fail loudly.
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ('{"a": 1}', {"a": 1}),
+    ("```json\n{\"a\": 1}\n```", {"a": 1}),                     # fenced
+    ("```\n{\"a\": 1}\n```", {"a": 1}),                          # fenced, unlabelled
+    ('นี่คือผลลัพธ์ครับ\n{"a": 1}\nหวังว่าจะช่วยได้', {"a": 1}),   # wrapped in prose
+    ('สรุป (ตามที่ขอ) {ดังนี้} ครับ\n{"a": 1}', {"a": 1}),        # a brace in the preamble
+    ('{"a": 1,}', {"a": 1}),                                     # trailing comma
+    ('{"a": 1, /* หมายเหตุ */ "b": 2}', {"a": 1, "b": 2}),        # block comment
+    ('{"a": 1} // เสร็จแล้ว', {"a": 1}),                          # line comment
+    ('{"url": "https://x.com/a"}', {"url": "https://x.com/a"}),  # ...that is not a URL
+    ('{"a": True, "b": None}', {"a": True, "b": None}),          # python literals
+    ('{"a": "บรรทัดแรก\nบรรทัดสอง"}', {"a": "บรรทัดแรก\nบรรทัดสอง"}),  # raw newline in a string
+    ('{“a”: 1}', {"a": 1}),                                      # typographic quotes
+])
+def test_every_way_a_model_mangles_its_json(client, raw, expected):
+    """Each of these is a real provider habit. `find("{")..rfind("}")` — what the
+    three old copies of _parse_json did — gets the brace-in-the-preamble case
+    wrong and every repair case wrong."""
+    from app import jsonx
+    assert jsonx.extract(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "ไม่มี JSON เลย", "{ยังไม่ปิดวงเล็บ", "[1,2,3]", None])
+def test_unreadable_json_fails_closed(client, raw):
+    """None, never a plausible object nobody wrote."""
+    from app import jsonx
+    assert jsonx.extract(raw) is None
+
+
+def test_a_truncated_reply_keeps_the_sections_that_finished(client):
+    """A reply cut at the token ceiling used to cost the whole document. Keep the
+    entries that closed, and prefer the outermost object over some nested
+    fragment that happens to parse on its own."""
+    from app import jsonx
+    cut = '{"sections": {"a": "หนึ่ง", "b": "สอง"}, "risk": "ครึ่งประ'
+    assert jsonx.extract(cut) == {"sections": {"a": "หนึ่ง", "b": "สอง"}}
+
+
+@pytest.mark.parametrize(("raw", "unit", "value"), [
+    ("1,250 บาท", None, 1250),          # thousands separator + currency word
+    ("1.2 ล้านบาท", None, 1_200_000),   # Thai magnitude, silently dropped before
+    ("4,200 ล้าน", None, 4.2e9),
+    ("50k", None, 50_000),
+    ("(3,000)", None, -3000),            # accounting negative, read as +3000 before
+    ("100-200", None, 150),              # a range is not a subtraction
+    ("3 เดือน", None, 3),                # "m" for months must not mean millions
+    ("3%", "pct", 0.03),
+    (3, "pct", 0.03),                    # the schema said 0.03; the model said 3
+    (0.03, "pct", 0.03),                 # …and an already-correct rate is left alone
+    (40, "pct", 0.4),
+    (125, "mult", 1.25),                 # a scenario multiplier written as a percent
+    (1.25, "mult", 1.25),
+    ("ไม่ทราบ", None, 0),
+    (None, None, 0),
+    (True, None, 0),                     # a bool is not a number
+])
+def test_numbers_are_read_the_way_a_thai_cfo_writes_them(client, raw, unit, value):
+    from app import jsonx
+    assert jsonx.number(raw, unit) == pytest.approx(value)
+
+
+def test_a_reinterpreted_unit_is_declared_not_silently_fixed(client):
+    """The CEO must be able to trace every number. A unit the hub corrected on his
+    behalf is exactly the number he would never think to check."""
+    from app import jsonx
+    value, note = jsonx.number_detail(3, "pct")
+    assert value == pytest.approx(0.03) and "3%" in note
+    assert jsonx.number_detail(0.03, "pct")[1] == "", "a correct value needs no note"
+
+
+def test_percent_confusion_reaches_the_workbook_as_a_rate_and_a_warning(client):
+    """`3` in a percent field is a 300%/month forecast — ten orders of magnitude
+    of error by month 24, agreed with by every sheet, chart and break-even."""
+    messy = json.loads(FINMODEL_JSON)
+    messy["revenue"]["growth_rate_monthly"] = {"value": 3, "source": "บอร์ด"}
+    messy["costs"]["fixed_cost_month"] = {"value": "1.2 ล้านบาท", "source": "บอร์ด"}
+    messy["scenarios"]["best"]["revenue_mult"] = 125
+    _s, _r, wb = _finmodel_wb(client, json.dumps(messy, ensure_ascii=False))
+    ws = wb["สมมติฐาน"]
+    rows = {row[0].value: row for row in ws.iter_rows(min_row=7, max_col=5)}
+    assert rows["อัตราเติบโตต่อเดือน"][1].value == pytest.approx(0.03)
+    assert "ระบบตีความหน่วย" in (rows["อัตราเติบโตต่อเดือน"][3].value or "")
+    assert rows["ค่าใช้จ่ายคงที่ต่อเดือน (บาท)"][1].value == pytest.approx(1_200_000)
+    # the scenario multipliers are read with the same eye
+    best = [r for r in ws.iter_rows(min_row=7, max_col=3) if r[0].value == "Best"][0]
+    assert best[1].value == pytest.approx(1.25)
+
+
+# ── the transport layer: an answer that isn't there, and one that was cut ──
+
+class _Resp:
+    """Minimal httpx.Response stand-in for the provider transports."""
+
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def test_gemini_reads_the_answer_not_the_scratchpad(client):
+    """Gemini 3 returns its reasoning as a part flagged `thought: true`, usually
+    first. `parts[0].text` therefore hands the board the model's scratchpad, and
+    drops any answer split across several parts."""
+    from app import llm
+
+    payload = {"candidates": [{"content": {"parts": [
+        {"text": "ขอคิดก่อน...", "thought": True},
+        {"text": "ส่วนที่หนึ่ง"},
+        {"text": "ส่วนที่สอง"},
+    ]}, "finishReason": "STOP"}]}
+    with patch("app.config.GOOGLE_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(payload)):
+        assert llm._gemini("s", "u") == "ส่วนที่หนึ่ง\nส่วนที่สอง"
+
+
+def test_gemini_says_when_it_was_cut_or_blocked(client):
+    from app import llm
+
+    cut = {"candidates": [{"content": {"parts": [{"text": "ครึ่งเดียว"}]},
+                           "finishReason": "MAX_TOKENS"}]}
+    with patch("app.config.GOOGLE_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(cut)):
+        with pytest.raises(llm.Truncated) as e:
+            llm._gemini("s", "u")
+        assert e.value.text == "ครึ่งเดียว"       # the partial survives the raise
+
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
+    with patch("app.config.GOOGLE_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(blocked)):
+        with pytest.raises(RuntimeError, match="SAFETY"):
+            llm._gemini("s", "u")
+
+
+def test_a_reply_that_is_all_thinking_is_a_failure_not_an_answer(client):
+    """Claude returning only thinking blocks, or DeepSeek spending the budget in
+    `reasoning_content`, used to reach the board as a confident blank section."""
+    from app import llm
+
+    thinking_only = {"content": [{"type": "thinking", "thinking": "..."}],
+                     "stop_reason": "end_turn"}
+    with patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(thinking_only)):
+        with pytest.raises(llm.EmptyReply):
+            llm._anthropic("s", "u")
+
+    reasoning_only = {"choices": [{"message": {"content": "", "reasoning_content": "..."},
+                                   "finish_reason": "stop"}]}
+    with patch("app.config.DEEPSEEK_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(reasoning_only)):
+        with pytest.raises(llm.EmptyReply):
+            llm._deepseek("s", "u")
+
+
+def test_every_provider_reports_the_token_ceiling_in_its_own_dialect(client):
+    """stop_reason / finish_reason / finishReason — three spellings of the same
+    event, none of which were being read."""
+    from app import llm
+
+    claude_cut = {"content": [{"type": "text", "text": "ครึ่ง"}], "stop_reason": "max_tokens"}
+    with patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(claude_cut)):
+        with pytest.raises(llm.Truncated):
+            llm._anthropic("s", "u", None, max_tokens=100)
+
+    openai_cut = {"choices": [{"message": {"content": "ครึ่ง"}, "finish_reason": "length"}]}
+    with patch("app.config.DEEPSEEK_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(openai_cut)):
+        with pytest.raises(llm.Truncated):
+            llm._deepseek("s", "u")
+
+
+def test_chat_hands_back_the_partial_and_flags_the_cut(client):
+    """A cut reply is still worth salvaging — but the caller has to be told, or a
+    half-written document reads as a finished one."""
+    from app import llm
+
+    def cut(system, user, cancel=None, max_tokens=None):
+        raise llm.Truncated("ครึ่งเดียว", "anthropic")
+
+    with patch.dict(llm._CALLERS, {"anthropic": cut}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), patch("app.llm.time.sleep"):
+        out = llm.chat("anthropic", "s", "u")
+    assert out["truncated"] and out["ok"] and out["text"] == "ครึ่งเดียว"
+
+
+def test_an_empty_reply_is_retried_but_a_cut_one_is_not(client):
+    """An empty completion is often a bad minute; the same budget cuts at the same
+    place every time, so retrying a truncation just burns the CEO's clock."""
+    from app import llm
+
+    calls = {"empty": 0, "cut": 0}
+
+    def empty_then_fine(system, user, cancel=None, max_tokens=None):
+        calls["empty"] += 1
+        if calls["empty"] == 1:
+            raise llm.EmptyReply("nothing")
+        return "recovered"
+
+    def always_cut(system, user, cancel=None, max_tokens=None):
+        calls["cut"] += 1
+        raise llm.Truncated("ครึ่ง", "anthropic")
+
+    with patch.dict(llm._CALLERS, {"anthropic": empty_then_fine}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), patch("app.llm.time.sleep"):
+        assert llm.chat("anthropic", "s", "u")["text"] == "recovered"
+    assert calls["empty"] == 2
+
+    with patch.dict(llm._CALLERS, {"anthropic": always_cut}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), patch("app.llm.time.sleep"):
+        llm.chat("anthropic", "s", "u")
+    assert calls["cut"] == 1
+
+
+# ── chat_json: ask for a schema, come back with one ──
+
+def _chat_reply(text, ok=True, truncated=False):
+    return {"text": text, "provider": "anthropic", "model": "m",
+            "ok": ok, "truncated": truncated}
+
+
+def test_a_good_json_reply_costs_exactly_one_call(client):
+    from app import llm
+    with patch("app.llm.chat", return_value=_chat_reply('{"a": 1}')) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a",))
+    assert out["data"] == {"a": 1} and out["calls"] == 1 and m.call_count == 1
+
+
+def test_a_model_that_answers_in_prose_is_shown_what_broke(client):
+    """Re-asking blind costs the same tokens for a worse hit rate — quote the
+    broken reply back and the model fixes its own format."""
+    from app import llm
+    replies = [_chat_reply("ขอโทษครับ ผมไม่เข้าใจ"), _chat_reply('{"a": 1}')]
+    with patch("app.llm.chat", side_effect=replies) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a",))
+    assert out["data"] == {"a": 1} and out["calls"] == 2
+    repair = m.call_args_list[1].args[2]
+    assert "ระบบอ่านคำตอบก่อนหน้าของคุณไม่สำเร็จ" in repair
+    assert "ขอโทษครับ ผมไม่เข้าใจ" in repair, "the model must see its own broken reply"
+    assert "u" in repair, "and the original question, or it answers a new one"
+
+
+def test_json_that_parses_into_a_hole_is_not_an_answer(client):
+    """A required key that came back missing is the failure that reaches the CEO
+    looking like an answer — a blank section he reads as 'nothing to report'."""
+    from app import llm
+    replies = [_chat_reply('{"options": []}'),
+               _chat_reply('{"options": ["ก"], "recommended": "ก"}')]
+    with patch("app.llm.chat", side_effect=replies) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("options", "recommended"))
+    assert out["data"] == {"options": ["ก"], "recommended": "ก"} and m.call_count == 2
+    assert "options" in m.call_args_list[1].args[2]      # names the keys it wants
+
+
+def test_a_cut_reply_is_re_asked_on_a_bigger_budget(client):
+    from app import llm
+    replies = [_chat_reply('{"a": 1, "b":', truncated=True),
+               _chat_reply('{"a": 1, "b": 2}')]
+    with patch("app.llm.chat", side_effect=replies) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a", "b"), max_tokens=4096)
+    assert out["data"] == {"a": 1, "b": 2}
+    assert m.call_args_list[1].kwargs["max_tokens"] == 8192
+
+
+def test_a_dead_provider_is_not_asked_to_reformat(client):
+    """A missing key or a 401 is not a formatting problem; re-asking just makes
+    the CEO wait for the same error twice."""
+    from app import llm
+    with patch("app.llm.chat", return_value=_chat_reply("⚠️ ล้มเหลว", ok=False)) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a",))
+    assert out["data"] is None and m.call_count == 1
+
+
+def test_the_best_read_survives_a_failed_repair(client):
+    """If the second try is worse than the first, keep the first — a partial
+    answer beats none, as long as it is a partial answer somebody wrote."""
+    from app import llm
+    replies = [_chat_reply('{"a": 1}'), _chat_reply("ยังไม่เข้าใจอีก")]
+    with patch("app.llm.chat", side_effect=replies):
+        out = llm.chat_json("anthropic", "s", "u", required=("a", "b"))
+    assert out["data"] == {"a": 1} and out["error"]
+
+
+# ── the same fixes, seen from the boardroom ──
+
+def test_a_chatty_moderator_no_longer_convenes_the_whole_board(client):
+    """Stage 1 failing open calls every seat — which is the *expensive* failure:
+    five models debating a question two of them have no lane for. A moderator that
+    wrapped its JSON in a sentence used to trigger it."""
+    chatty = "ได้ครับ นี่คือการตั้งกรอบ:\n```json\n" + _frame_json(["cfo", "coo"]) + "\n```\nหวังว่าจะช่วยได้"
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply(chatty)) as m:
+        s = _advance(client, s["id"])
+    assert m.call_count == 1, "a readable reply must not cost a repair round"
+    assert set(s["steps"][0]["results"]["framer"]["seats"]) == {"cfo", "coo"}
+
+
+def test_seats_named_in_prose_still_convene(client):
+    """"cfo, coo" and ["cfo","coo"] mean the same thing to everyone except a
+    list comprehension over a string, which convenes one board per letter."""
+    framing = json.dumps({**json.loads(_frame_json()), "seats": "cfo, coo"},
+                         ensure_ascii=False)
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply(framing)):
+        s = _advance(client, s["id"])
+    assert set(s["steps"][0]["results"]["framer"]["seats"]) == {"cfo", "coo"}
+
+
+def test_a_memory_id_quoted_as_a_string_is_still_a_citation(client):
+    """`"1" in {1}` is False, so every conflict a model quoted as a string was
+    thrown out as a hallucination and the CEO was told the archive was clean."""
+    from app import memory, store
+    store.add_memory({"consult_id": 1, "question": "q", "project": None,
+                      "conclusion": "c", "stance": "ทำ", "confidence": 50,
+                      "constraints": [], "open_questions": [], "tripwires": []})
+    quoted = json.dumps({"conflicts": [{"memory_id": "1", "past": "x", "tension": "y"}],
+                         "carry_forward": []}, ensure_ascii=False)
+    with patch("app.llm.chat", return_value=_reply(quoted)):
+        out = memory.conflicts("คำถามใหม่", None, "anthropic")
+    assert [c["memory_id"] for c in out["conflicts"]] == [1]
+
+
+def test_a_clean_archive_does_not_buy_a_repair_round(client):
+    """An empty conflicts list is the correct answer most of the time. Demanding a
+    non-empty one would pressure the model into inventing a clash."""
+    from app import memory, store
+    store.add_memory({"question": "q", "project": None, "conclusion": "c"})
+    with patch("app.llm.chat",
+               return_value=_reply('{"conflicts": [], "carry_forward": []}')) as m:
+        out = memory.conflicts("คำถามใหม่", None, "anthropic")
+    assert out["conflicts"] == [] and m.call_count == 1
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("ความมั่นใจ: **62%**", 62),              # markdown bold between label and score
+    ("ความมั่นใจต่อจุดยืนนี้ ประมาณ 62%", 62),  # words between them
+    ("Confidence: 7/10", 70),                 # a score, not seven percent
+    ("ความมั่นใจ 85/100", 85),
+    ("ความมั่นใจ\n70%", 70),                   # on the next line
+    ("ความมั่นใจ\n\nเหตุผล ราคา 45 บาท", None),  # not a number from further down
+])
+def test_confidence_survives_the_way_seats_actually_write_it(client, text, expected):
+    """An unrated seat drops out of the board average, so a regex that only
+    matched `label: digits` computed confidence from whichever seats happened to
+    punctuate the way it expected."""
+    from app import depts
+    assert depts.parse_confidence(text) == expected
+
+
+# ── Pipeline: recurring work, one work tree per routine ──
+
+TRACE_JSON = json.dumps({
+    "understanding": "สรุปยอดขายรายสัปดาห์แยกตามช่องทางให้ CEO อ่านเช้าวันจันทร์",
+    "steps": [{"step": "ดึงยอดขาย 4 สัปดาห์", "why": "ต้องมีฐานเทียบ", "found": "โต 8%"},
+              {"step": "แยกตามช่องทาง", "why": "งบโฆษณาผูกกับช่องทาง", "found": "ออนไลน์ 62%"}],
+    "assumptions": ["ยอดสาขาใหม่ใกล้เคียงสาขาเดิม"],
+    "evidence_used": ["เอกสาร: ยอดขาย ก.ค."],
+    "unknowns": ["ยอดคืนสินค้ายังไม่เข้าระบบ"],
+    "answer": "ยอดขายสัปดาห์นี้ 120,000 บาท — ออนไลน์ 62% หน้าร้าน 38%",
+    "next_actions": [{"action": "ขอตัวเลขคืนสินค้า", "owner": "คุณหนึ่ง", "due": "ศุกร์นี้"}],
+    "confidence": 72,
+    "self_check": "ถ้าผิด จะผิดที่สมมติฐานยอดสาขาใหม่ก่อน",
+    "changed_from_last": "",
+}, ensure_ascii=False)
+
+
+def _trace_reply(**over):
+    body = json.loads(TRACE_JSON)
+    body.update(over)
+    return _reply(json.dumps(body, ensure_ascii=False))
+
+
+def _routine(client, **over):
+    payload = {"name": "รายงานยอดขายรายสัปดาห์", "owner": "คุณหนึ่ง", "dept": "cmo",
+               "project": None, "goal": "รู้ยอดจริงก่อนประชุมเช้าวันจันทร์",
+               "cadence": "ทุกวันจันทร์"}
+    payload.update(over)
+    r = client.post("/api/pipeline/routines", json=payload)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _task(client, rid, title="สรุปยอดสัปดาห์นี้", brief="แยกตามช่องทาง"):
+    r = client.post(f"/api/pipeline/routines/{rid}/tasks",
+                    json={"title": title, "brief": brief})
+    assert r.status_code == 200, r.text
+    return r.json()["tasks"][-1]
+
+
+def test_a_routine_is_its_own_work_tree(client):
+    """Two routines share nothing — not tasks, not runs, not history. A lane the
+    CEO deletes must not take another lane's work with it."""
+    a = _routine(client, name="Weekly sales")
+    b = _routine(client, name="Monthly cash", owner="คุณสอง", dept="cfo")
+    assert a["tree"] != b["tree"]
+    assert a["tree"].startswith("routine/") and str(a["id"]) in a["tree"]
+
+    _task(client, a["id"], "งานของ A")
+    _task(client, b["id"], "งานของ B")
+    client.delete(f"/api/pipeline/routines/{a['id']}")
+
+    left = client.get("/api/pipeline").json()["routines"]
+    assert [r["id"] for r in left] == [b["id"]]
+    assert [t["title"] for t in left[0]["tasks"]] == ["งานของ B"]
+
+
+def test_a_thai_named_tree_is_not_given_an_invented_english_handle(client):
+    """`routine/3-` and `routine/3-tree` are both worse than `routine/3`."""
+    r = _routine(client, name="รายงานยอดขาย")
+    assert r["tree"] == f"routine/{r['id']}"
+
+
+def test_a_routine_needs_a_project_and_a_named_owner(client):
+    """Work with no owner is a wish. The API refuses rather than filing it."""
+    assert client.post("/api/pipeline/routines",
+                       json={"name": "x", "owner": "  ", "dept": "cmo"}).status_code == 400
+    assert client.post("/api/pipeline/routines",
+                       json={"name": " ", "owner": "y", "dept": "cmo"}).status_code == 400
+    assert client.post("/api/pipeline/routines",
+                       json={"name": "x", "owner": "y", "dept": "nope"}).status_code == 400
+
+    r = _routine(client, project="YourFin")
+    assert r["project"] == "YourFin" and r["owner"] == "คุณหนึ่ง"
+    # the seat that will do the work, and the model behind it, travel with it
+    assert r["seat_name"] == config.DEPTS["cmo"]["name"]
+    assert r["provider"] == client.get("/api/state").json()["depts"][0]["provider"]
+
+
+def test_a_task_inherits_the_routines_owner_rather_than_going_unassigned(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert t["owner"] == "คุณหนึ่ง" and t["status"] == "todo"
+    named = client.post(f"/api/pipeline/routines/{r['id']}/tasks",
+                        json={"title": "งานที่มอบต่อ", "owner": "คุณสาม"}).json()
+    assert named["tasks"][-1]["owner"] == "คุณสาม"
+
+
+def test_a_run_carries_the_reasoning_not_just_the_answer(client):
+    """The whole point of the page: a conclusion the CEO cannot inspect is a
+    conclusion he has to take on faith."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()
+    run = out["run"]
+    assert run["ok"] and run["n"] == 1 and run["trigger"] == "สั่งรันเอง"
+    trace = run["trace"]
+    assert trace["answer"].startswith("ยอดขายสัปดาห์นี้")
+    assert trace["confidence"] == 72
+    assert [s["step"] for s in trace["steps"]][0] == "ดึงยอดขาย 4 สัปดาห์"
+    assert trace["assumptions"] and trace["unknowns"] and trace["self_check"]
+    assert trace["next_actions"][0]["owner"] == "คุณหนึ่ง"
+    # …and a manifest of what it was actually allowed to read
+    kinds = [i["kind"] for i in run["inputs"]]
+    assert "routine" in kinds and "task" in kinds
+    assert run["prompt_chars"] > 0
+    # a finished run parks the task in front of the CEO, not in "done"
+    assert out["routine"]["tasks"][0]["status"] == "review"
+
+
+def test_the_seat_is_told_who_owns_the_work_and_what_it_is_for(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()) as m:
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+    prompt = m.call_args.args[2]
+    for expected in ("คุณหนึ่ง", "รายงานยอดขายรายสัปดาห์", "ทุกวันจันทร์",
+                     "รู้ยอดจริงก่อนประชุมเช้าวันจันทร์", "สรุปยอดสัปดาห์นี้"):
+        assert expected in prompt, expected
+
+
+def test_a_comment_reruns_the_task_and_keeps_both_answers(client):
+    """A correction the CEO can no longer compare against is a correction he
+    cannot check. Run 1 stays next to run 2, and the model has to say what it
+    changed."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    fixed = _trace_reply(answer="ยอดขาย 120,000 บาท แยกช่องทางแล้ว",
+                         changed_from_last="เพิ่มการแยกช่องทางตามที่ CEO สั่ง")
+    with patch("app.llm.chat", return_value=fixed) as m:
+        out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                          json={"text": "ยังไม่แยกตามช่องทาง แก้ใหม่"}).json()
+
+    prompt = m.call_args.args[2]
+    assert "ยังไม่แยกตามช่องทาง แก้ใหม่" in prompt, "the comment must reach the model"
+    assert "120,000" in prompt, "…alongside the answer it is rejecting"
+
+    task = out["routine"]["tasks"][0]
+    assert [x["n"] for x in task["runs"]] == [1, 2], "run 1 must survive its correction"
+    assert task["runs"][1]["trigger"].startswith("คอมเมนต์ของ CEO")
+    assert task["runs"][1]["trace"]["changed_from_last"]
+    assert task["comments"][0]["answered_by"] == 2
+    assert task["open_comments"] == []
+
+
+def test_a_comment_left_unrun_stays_visibly_unanswered(client):
+    """`rerun: false` files the correction without acting on it — it must show as
+    outstanding, not vanish into a thread."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                      json={"text": "ยังไม่ตรง", "rerun": False}).json()
+    assert out["run"] is None
+    task = out["routine"]["tasks"][0]
+    assert len(task["open_comments"]) == 1 and task["comments"][0]["answered_by"] is None
+    assert client.get("/api/pipeline").json()["stats"]["open_comments"] == 1
+
+    with patch("app.llm.chat", return_value=_trace_reply()) as m:
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+    assert "ยังไม่ตรง" in m.call_args.args[2], "a pending correction must reach the next run"
+    assert client.get("/api/pipeline").json()["stats"]["open_comments"] == 0
+
+
+def test_an_empty_comment_is_refused(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                       json={"text": "   "}).status_code == 400
+
+
+def test_a_task_branches_so_two_answers_can_be_held_at_once(client):
+    """Same as the Boardroom's branch, one level down: try another angle without
+    destroying the answer you already have."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/branch",
+                      json={"run": 1, "title": "ลองอีกทาง"}).json()
+    original, branch = out["routine"]["tasks"]
+    assert [x["n"] for x in original["runs"]] == [1, 2], "the original keeps everything"
+    assert [x["n"] for x in branch["runs"]] == [1], "the branch starts where it forked"
+    assert branch["parent_task"] == t["id"] and branch["branched_from"] == 1
+    assert branch["owner"] == original["owner"]
+    # a run that never happened is not a fork point
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/branch",
+                       json={"run": 9}).status_code == 400
+
+
+def test_a_failed_run_is_recorded_as_a_run(client):
+    """A task that silently stays 'todo' after the CEO pressed the button is the
+    worst of both worlds — nothing happened and nothing says so."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_reply("ขอโทษครับ ผมไม่เข้าใจ")):
+        out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()
+    assert out["run"]["ok"] is False and out["run"]["error"]
+    task = out["routine"]["tasks"][0]
+    assert task["status"] == "blocked" and len(task["runs"]) == 1
+
+
+def test_a_messy_trace_is_coerced_rather_than_discarded(client):
+    """A model that bullets its steps as prose, or writes confidence as "72%",
+    has still done the reasoning — dropping the trace over punctuation hides the
+    thing this page exists to show."""
+    messy = _reply(json.dumps({
+        "understanding": "เข้าใจแล้ว",
+        "steps": "ดึงยอด\nแยกช่องทาง",
+        "assumptions": "ยอดสาขาใหม่ใกล้เคียงเดิม",
+        "evidence_used": [],
+        "answer": "ยอด 120,000",
+        "next_actions": "ขอตัวเลขคืนสินค้า",
+        "confidence": "72%",
+    }, ensure_ascii=False))
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=messy):
+        run = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()["run"]
+    trace = run["trace"]
+    assert run["ok"]
+    assert [s["step"] for s in trace["steps"]] == ["ดึงยอด", "แยกช่องทาง"]
+    assert trace["assumptions"] == ["ยอดสาขาใหม่ใกล้เคียงเดิม"]
+    assert trace["next_actions"] == [{"action": "ขอตัวเลขคืนสินค้า", "owner": "", "due": ""}]
+    assert trace["confidence"] == 72
+
+
+def test_a_run_reads_the_project_library_and_the_boards_past_rulings(client):
+    """The routine's project is what scopes it: a lane about YourFin must not be
+    fed FlowerVending paperwork, and must respect what the board already ruled."""
+    from app import docs, store
+    body = "ยอดขาย YourFin เดือน ก.ค. 480,000 บาท"
+    docs.save_document("sales-july.txt", body.encode(), "text/plain",
+                       source="upload", text=body, project="YourFin")
+    store.add_memory({"consult_id": 1, "question": "ควรขยายสาขาไหม", "project": "YourFin",
+                      "conclusion": "ชะลอการขยายจนกว่าจะมีตัวเลข 6 เดือน",
+                      "stance": "ไม่ทำ", "confidence": 80, "constraints": [],
+                      "open_questions": [], "tripwires": []})
+    r = _routine(client, project="YourFin")
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()) as m:
+        run = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()["run"]
+    prompt = m.call_args.args[2]
+    assert "480,000" in prompt and "ชะลอการขยาย" in prompt
+    kinds = [i["kind"] for i in run["inputs"]]
+    assert "docs" in kinds and "memory" in kinds, \
+        "the manifest is what makes 'the AI ignored my document' checkable"
+
+
+def test_pipeline_bad_inputs(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert client.post("/api/pipeline/routines/999/tasks", json={"title": "x"}).status_code == 404
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks",
+                       json={"title": "  "}).status_code == 400
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks/99/run",
+                       json={}).status_code == 404
+    assert client.patch(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}",
+                        json={"status": "zzz"}).status_code == 400
+    assert client.patch(f"/api/pipeline/routines/{r['id']}",
+                        json={"owner": "  "}).status_code == 400
+    assert client.patch(f"/api/pipeline/routines/{r['id']}",
+                        json={"status": "zzz"}).status_code == 400
+    assert client.delete("/api/pipeline/routines/999").status_code == 404
+
+
+def test_a_paused_routine_stays_listed_but_an_archived_one_steps_aside(client):
+    r = _routine(client)
+    client.patch(f"/api/pipeline/routines/{r['id']}", json={"status": "paused"})
+    assert client.get("/api/pipeline").json()["routines"][0]["status"] == "paused"
+    client.patch(f"/api/pipeline/routines/{r['id']}", json={"status": "archived"})
+    assert client.get("/api/pipeline").json()["routines"] == []
+    assert len(client.get("/api/pipeline?include_archived=true").json()["routines"]) == 1
+
+
+def test_pipeline_counters_reach_the_shared_state_call(client):
+    """The sidebar badge for outstanding corrections is fed from /api/state, so
+    it has to be there whether or not the CEO is on the Pipeline page."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                json={"text": "แก้ด้วย", "rerun": False})
+    stats = client.get("/api/state").json()["pipeline"]
+    assert stats["routines"] == 1 and stats["tasks"] == 1 and stats["open_comments"] == 1
+
+
+# ── the tree map's live state ──
+
+def test_a_run_is_visible_while_it_is_still_running(client):
+    """`status: "running"` in the store is written by the request that starts the
+    run and only corrected when that same request ends — so a poll from anywhere
+    else cannot use it to answer "what is running?". The live registry can."""
+    from app import pipeline
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert pipeline.live() == []
+
+    seen = {}
+
+    def watching(provider, system, user, cancel=None, **kw):
+        seen["live"] = pipeline.live()          # what another request would see
+        return _trace_reply()
+
+    with patch("app.llm.chat", side_effect=watching):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    assert len(seen["live"]) == 1
+    entry = seen["live"][0]
+    assert entry["routine_id"] == r["id"] and entry["task_id"] == t["id"]
+    assert entry["routine"] == "รายงานยอดขายรายสัปดาห์" and entry["task"] == "สรุปยอดสัปดาห์นี้"
+    assert entry["owner"] == "คุณหนึ่ง" and entry["seat"] == config.DEPTS["cmo"]["name"]
+    assert entry["run_n"] == 1 and entry["trigger"] == "สั่งรันเอง"
+    assert entry["elapsed_ms"] >= 0 and "_started" not in entry
+    assert pipeline.live() == [], "the registry must empty out when the run lands"
+
+
+def test_a_run_that_blows_up_does_not_stay_on_the_map_forever(client):
+    """A map that keeps claiming a dead run is busy is worse than no map."""
+    from app import pipeline
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError):
+            pipeline.run_task(r["id"], t["id"])
+    assert pipeline.live() == []
+
+
+def test_the_map_tells_a_running_task_from_a_stalled_one(client):
+    """Stored "running" with nothing in the registry means the process that
+    started it is gone. That is a distinct state, and it has to show as one."""
+    from app import store
+    r = _routine(client)
+    t = _task(client, r["id"])
+    store.update_task(r["id"], t["id"], status="running")   # as a dead run would leave it
+
+    task = client.get("/api/pipeline").json()["routines"][0]["tasks"][0]
+    assert task["status"] == "running"
+    assert task["running_now"] is False and task["stalled"] is True
+
+
+def test_running_tasks_are_flagged_on_the_routine_that_owns_them(client):
+    from app import pipeline
+    r = _routine(client)
+    t = _task(client, r["id"])
+    seen = {}
+
+    def watching(provider, system, user, cancel=None, **kw):
+        seen["view"] = client.get("/api/pipeline").json()
+        return _trace_reply()
+
+    with patch("app.llm.chat", side_effect=watching):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    routine = seen["view"]["routines"][0]
+    assert routine["running_now"] is True
+    assert routine["tasks"][0]["running_now"] is True
+    assert routine["tasks"][0]["stalled"] is False
+    assert seen["view"]["stats"]["running"] == 1
+    assert len(seen["view"]["live"]) == 1
+    # …and it is gone from both once the run lands
+    after = client.get("/api/pipeline").json()
+    assert after["stats"]["running"] == 0 and after["live"] == []
+    assert after["routines"][0]["running_now"] is False
+
+
+def test_the_live_endpoint_is_cheap_enough_to_poll(client):
+    """The map ticks every couple of seconds; it has no business re-serialising
+    every run and comment in the store to do it."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    live = client.get("/api/pipeline/live").json()
+    assert set(live) == {"live", "stats"}
+    assert live["live"] == [] and live["stats"]["running"] == 0
+    assert live["stats"]["runs"] == 1
+    # the heavy payload is the other endpoint's job
+    assert "routines" not in live
+
+
+def test_the_running_count_reaches_the_shared_state_call(client):
+    assert client.get("/api/state").json()["pipeline"]["running"] == 0
