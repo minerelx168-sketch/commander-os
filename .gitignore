@@ -7,6 +7,8 @@ __pycache__/
 .env
 logs/
 hub/memory/hub_store.json
+# Connector definitions carry per-project ingest keys — credentials, not code.
+hub/memory/sources.json
 services/*/output/
 services/*/memory/*.json
 services/researcher/ledger.jsonl
