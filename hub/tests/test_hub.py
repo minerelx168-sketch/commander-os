@@ -1359,9 +1359,16 @@ def test_index_serves_advisory_ui(client):
                    "ask-project", "uploadFiles", "stopBoard", "resetTo", "branchAt",
                    "seatResearchCard", "chairCard", "ask-web", "gateBlock", "dot",
                    # Crucible stages
-                   "frameCard", "redteamCard", "researchBlock", "convened"):
+                   "frameCard", "redteamCard", "researchBlock", "convened",
+                   # Pipeline: one work tree per routine
+                   "view-pipeline", "loadPipeline", "createRoutine", "commentTask",
+                   "branchTask", "thinkPanel", "rt-owner", "rt-project"):
         assert marker in html, marker
-    for stale in ("view-cmo", "runTask", "LLM Learning"):
+    # `runTask` used to be listed here, back when the hub deliberately executed
+    # nothing. The Pipeline page executes recurring work on the CEO's button, so
+    # the marker is now real; what must stay gone is the old per-department
+    # automation UI this hub replaced.
+    for stale in ("view-cmo", "LLM Learning"):
         assert stale not in html, f"stale automation marker: {stale}"
 
 
@@ -2582,3 +2589,298 @@ def test_confidence_survives_the_way_seats_actually_write_it(client, text, expec
     punctuate the way it expected."""
     from app import depts
     assert depts.parse_confidence(text) == expected
+
+
+# ── Pipeline: recurring work, one work tree per routine ──
+
+TRACE_JSON = json.dumps({
+    "understanding": "สรุปยอดขายรายสัปดาห์แยกตามช่องทางให้ CEO อ่านเช้าวันจันทร์",
+    "steps": [{"step": "ดึงยอดขาย 4 สัปดาห์", "why": "ต้องมีฐานเทียบ", "found": "โต 8%"},
+              {"step": "แยกตามช่องทาง", "why": "งบโฆษณาผูกกับช่องทาง", "found": "ออนไลน์ 62%"}],
+    "assumptions": ["ยอดสาขาใหม่ใกล้เคียงสาขาเดิม"],
+    "evidence_used": ["เอกสาร: ยอดขาย ก.ค."],
+    "unknowns": ["ยอดคืนสินค้ายังไม่เข้าระบบ"],
+    "answer": "ยอดขายสัปดาห์นี้ 120,000 บาท — ออนไลน์ 62% หน้าร้าน 38%",
+    "next_actions": [{"action": "ขอตัวเลขคืนสินค้า", "owner": "คุณหนึ่ง", "due": "ศุกร์นี้"}],
+    "confidence": 72,
+    "self_check": "ถ้าผิด จะผิดที่สมมติฐานยอดสาขาใหม่ก่อน",
+    "changed_from_last": "",
+}, ensure_ascii=False)
+
+
+def _trace_reply(**over):
+    body = json.loads(TRACE_JSON)
+    body.update(over)
+    return _reply(json.dumps(body, ensure_ascii=False))
+
+
+def _routine(client, **over):
+    payload = {"name": "รายงานยอดขายรายสัปดาห์", "owner": "คุณหนึ่ง", "dept": "cmo",
+               "project": None, "goal": "รู้ยอดจริงก่อนประชุมเช้าวันจันทร์",
+               "cadence": "ทุกวันจันทร์"}
+    payload.update(over)
+    r = client.post("/api/pipeline/routines", json=payload)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _task(client, rid, title="สรุปยอดสัปดาห์นี้", brief="แยกตามช่องทาง"):
+    r = client.post(f"/api/pipeline/routines/{rid}/tasks",
+                    json={"title": title, "brief": brief})
+    assert r.status_code == 200, r.text
+    return r.json()["tasks"][-1]
+
+
+def test_a_routine_is_its_own_work_tree(client):
+    """Two routines share nothing — not tasks, not runs, not history. A lane the
+    CEO deletes must not take another lane's work with it."""
+    a = _routine(client, name="Weekly sales")
+    b = _routine(client, name="Monthly cash", owner="คุณสอง", dept="cfo")
+    assert a["tree"] != b["tree"]
+    assert a["tree"].startswith("routine/") and str(a["id"]) in a["tree"]
+
+    _task(client, a["id"], "งานของ A")
+    _task(client, b["id"], "งานของ B")
+    client.delete(f"/api/pipeline/routines/{a['id']}")
+
+    left = client.get("/api/pipeline").json()["routines"]
+    assert [r["id"] for r in left] == [b["id"]]
+    assert [t["title"] for t in left[0]["tasks"]] == ["งานของ B"]
+
+
+def test_a_thai_named_tree_is_not_given_an_invented_english_handle(client):
+    """`routine/3-` and `routine/3-tree` are both worse than `routine/3`."""
+    r = _routine(client, name="รายงานยอดขาย")
+    assert r["tree"] == f"routine/{r['id']}"
+
+
+def test_a_routine_needs_a_project_and_a_named_owner(client):
+    """Work with no owner is a wish. The API refuses rather than filing it."""
+    assert client.post("/api/pipeline/routines",
+                       json={"name": "x", "owner": "  ", "dept": "cmo"}).status_code == 400
+    assert client.post("/api/pipeline/routines",
+                       json={"name": " ", "owner": "y", "dept": "cmo"}).status_code == 400
+    assert client.post("/api/pipeline/routines",
+                       json={"name": "x", "owner": "y", "dept": "nope"}).status_code == 400
+
+    r = _routine(client, project="YourFin")
+    assert r["project"] == "YourFin" and r["owner"] == "คุณหนึ่ง"
+    # the seat that will do the work, and the model behind it, travel with it
+    assert r["seat_name"] == config.DEPTS["cmo"]["name"]
+    assert r["provider"] == client.get("/api/state").json()["depts"][0]["provider"]
+
+
+def test_a_task_inherits_the_routines_owner_rather_than_going_unassigned(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert t["owner"] == "คุณหนึ่ง" and t["status"] == "todo"
+    named = client.post(f"/api/pipeline/routines/{r['id']}/tasks",
+                        json={"title": "งานที่มอบต่อ", "owner": "คุณสาม"}).json()
+    assert named["tasks"][-1]["owner"] == "คุณสาม"
+
+
+def test_a_run_carries_the_reasoning_not_just_the_answer(client):
+    """The whole point of the page: a conclusion the CEO cannot inspect is a
+    conclusion he has to take on faith."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()
+    run = out["run"]
+    assert run["ok"] and run["n"] == 1 and run["trigger"] == "สั่งรันเอง"
+    trace = run["trace"]
+    assert trace["answer"].startswith("ยอดขายสัปดาห์นี้")
+    assert trace["confidence"] == 72
+    assert [s["step"] for s in trace["steps"]][0] == "ดึงยอดขาย 4 สัปดาห์"
+    assert trace["assumptions"] and trace["unknowns"] and trace["self_check"]
+    assert trace["next_actions"][0]["owner"] == "คุณหนึ่ง"
+    # …and a manifest of what it was actually allowed to read
+    kinds = [i["kind"] for i in run["inputs"]]
+    assert "routine" in kinds and "task" in kinds
+    assert run["prompt_chars"] > 0
+    # a finished run parks the task in front of the CEO, not in "done"
+    assert out["routine"]["tasks"][0]["status"] == "review"
+
+
+def test_the_seat_is_told_who_owns_the_work_and_what_it_is_for(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()) as m:
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+    prompt = m.call_args.args[2]
+    for expected in ("คุณหนึ่ง", "รายงานยอดขายรายสัปดาห์", "ทุกวันจันทร์",
+                     "รู้ยอดจริงก่อนประชุมเช้าวันจันทร์", "สรุปยอดสัปดาห์นี้"):
+        assert expected in prompt, expected
+
+
+def test_a_comment_reruns_the_task_and_keeps_both_answers(client):
+    """A correction the CEO can no longer compare against is a correction he
+    cannot check. Run 1 stays next to run 2, and the model has to say what it
+    changed."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    fixed = _trace_reply(answer="ยอดขาย 120,000 บาท แยกช่องทางแล้ว",
+                         changed_from_last="เพิ่มการแยกช่องทางตามที่ CEO สั่ง")
+    with patch("app.llm.chat", return_value=fixed) as m:
+        out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                          json={"text": "ยังไม่แยกตามช่องทาง แก้ใหม่"}).json()
+
+    prompt = m.call_args.args[2]
+    assert "ยังไม่แยกตามช่องทาง แก้ใหม่" in prompt, "the comment must reach the model"
+    assert "120,000" in prompt, "…alongside the answer it is rejecting"
+
+    task = out["routine"]["tasks"][0]
+    assert [x["n"] for x in task["runs"]] == [1, 2], "run 1 must survive its correction"
+    assert task["runs"][1]["trigger"].startswith("คอมเมนต์ของ CEO")
+    assert task["runs"][1]["trace"]["changed_from_last"]
+    assert task["comments"][0]["answered_by"] == 2
+    assert task["open_comments"] == []
+
+
+def test_a_comment_left_unrun_stays_visibly_unanswered(client):
+    """`rerun: false` files the correction without acting on it — it must show as
+    outstanding, not vanish into a thread."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                      json={"text": "ยังไม่ตรง", "rerun": False}).json()
+    assert out["run"] is None
+    task = out["routine"]["tasks"][0]
+    assert len(task["open_comments"]) == 1 and task["comments"][0]["answered_by"] is None
+    assert client.get("/api/pipeline").json()["stats"]["open_comments"] == 1
+
+    with patch("app.llm.chat", return_value=_trace_reply()) as m:
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+    assert "ยังไม่ตรง" in m.call_args.args[2], "a pending correction must reach the next run"
+    assert client.get("/api/pipeline").json()["stats"]["open_comments"] == 0
+
+
+def test_an_empty_comment_is_refused(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                       json={"text": "   "}).status_code == 400
+
+
+def test_a_task_branches_so_two_answers_can_be_held_at_once(client):
+    """Same as the Boardroom's branch, one level down: try another angle without
+    destroying the answer you already have."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/branch",
+                      json={"run": 1, "title": "ลองอีกทาง"}).json()
+    original, branch = out["routine"]["tasks"]
+    assert [x["n"] for x in original["runs"]] == [1, 2], "the original keeps everything"
+    assert [x["n"] for x in branch["runs"]] == [1], "the branch starts where it forked"
+    assert branch["parent_task"] == t["id"] and branch["branched_from"] == 1
+    assert branch["owner"] == original["owner"]
+    # a run that never happened is not a fork point
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/branch",
+                       json={"run": 9}).status_code == 400
+
+
+def test_a_failed_run_is_recorded_as_a_run(client):
+    """A task that silently stays 'todo' after the CEO pressed the button is the
+    worst of both worlds — nothing happened and nothing says so."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_reply("ขอโทษครับ ผมไม่เข้าใจ")):
+        out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()
+    assert out["run"]["ok"] is False and out["run"]["error"]
+    task = out["routine"]["tasks"][0]
+    assert task["status"] == "blocked" and len(task["runs"]) == 1
+
+
+def test_a_messy_trace_is_coerced_rather_than_discarded(client):
+    """A model that bullets its steps as prose, or writes confidence as "72%",
+    has still done the reasoning — dropping the trace over punctuation hides the
+    thing this page exists to show."""
+    messy = _reply(json.dumps({
+        "understanding": "เข้าใจแล้ว",
+        "steps": "ดึงยอด\nแยกช่องทาง",
+        "assumptions": "ยอดสาขาใหม่ใกล้เคียงเดิม",
+        "evidence_used": [],
+        "answer": "ยอด 120,000",
+        "next_actions": "ขอตัวเลขคืนสินค้า",
+        "confidence": "72%",
+    }, ensure_ascii=False))
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=messy):
+        run = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()["run"]
+    trace = run["trace"]
+    assert run["ok"]
+    assert [s["step"] for s in trace["steps"]] == ["ดึงยอด", "แยกช่องทาง"]
+    assert trace["assumptions"] == ["ยอดสาขาใหม่ใกล้เคียงเดิม"]
+    assert trace["next_actions"] == [{"action": "ขอตัวเลขคืนสินค้า", "owner": "", "due": ""}]
+    assert trace["confidence"] == 72
+
+
+def test_a_run_reads_the_project_library_and_the_boards_past_rulings(client):
+    """The routine's project is what scopes it: a lane about YourFin must not be
+    fed FlowerVending paperwork, and must respect what the board already ruled."""
+    from app import docs, store
+    body = "ยอดขาย YourFin เดือน ก.ค. 480,000 บาท"
+    docs.save_document("sales-july.txt", body.encode(), "text/plain",
+                       source="upload", text=body, project="YourFin")
+    store.add_memory({"consult_id": 1, "question": "ควรขยายสาขาไหม", "project": "YourFin",
+                      "conclusion": "ชะลอการขยายจนกว่าจะมีตัวเลข 6 เดือน",
+                      "stance": "ไม่ทำ", "confidence": 80, "constraints": [],
+                      "open_questions": [], "tripwires": []})
+    r = _routine(client, project="YourFin")
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()) as m:
+        run = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                          json={}).json()["run"]
+    prompt = m.call_args.args[2]
+    assert "480,000" in prompt and "ชะลอการขยาย" in prompt
+    kinds = [i["kind"] for i in run["inputs"]]
+    assert "docs" in kinds and "memory" in kinds, \
+        "the manifest is what makes 'the AI ignored my document' checkable"
+
+
+def test_pipeline_bad_inputs(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert client.post("/api/pipeline/routines/999/tasks", json={"title": "x"}).status_code == 404
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks",
+                       json={"title": "  "}).status_code == 400
+    assert client.post(f"/api/pipeline/routines/{r['id']}/tasks/99/run",
+                       json={}).status_code == 404
+    assert client.patch(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}",
+                        json={"status": "zzz"}).status_code == 400
+    assert client.patch(f"/api/pipeline/routines/{r['id']}",
+                        json={"owner": "  "}).status_code == 400
+    assert client.patch(f"/api/pipeline/routines/{r['id']}",
+                        json={"status": "zzz"}).status_code == 400
+    assert client.delete("/api/pipeline/routines/999").status_code == 404
+
+
+def test_a_paused_routine_stays_listed_but_an_archived_one_steps_aside(client):
+    r = _routine(client)
+    client.patch(f"/api/pipeline/routines/{r['id']}", json={"status": "paused"})
+    assert client.get("/api/pipeline").json()["routines"][0]["status"] == "paused"
+    client.patch(f"/api/pipeline/routines/{r['id']}", json={"status": "archived"})
+    assert client.get("/api/pipeline").json()["routines"] == []
+    assert len(client.get("/api/pipeline?include_archived=true").json()["routines"]) == 1
+
+
+def test_pipeline_counters_reach_the_shared_state_call(client):
+    """The sidebar badge for outstanding corrections is fed from /api/state, so
+    it has to be there whether or not the CEO is on the Pipeline page."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/comment",
+                json={"text": "แก้ด้วย", "rerun": False})
+    stats = client.get("/api/state").json()["pipeline"]
+    assert stats["routines"] == 1 and stats["tasks"] == 1 and stats["open_comments"] == 1
