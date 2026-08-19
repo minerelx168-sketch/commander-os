@@ -77,12 +77,49 @@ def _reply(text, provider="anthropic"):
     return {"text": text, "provider": provider, "model": "m", "ok": True}
 
 
-def _framed(client, seats=None, **kw):
-    """Open a session and run Stage 1, so the board is convened and the later
-    stages have a framing to argue inside."""
+def _framing_redteam_json(verdict="OK", summary="", concerns=None):
+    return json.dumps({
+        "verdict": verdict,
+        "reframe_suggestion": "",
+        "unchallenged_assumptions": concerns or [],
+        "missing_seats": [],
+        "evidence_bar_too_low": "",
+        "one_line_summary": summary or "กรอบใช้ได้ เดินหน้า",
+    }, ensure_ascii=False)
+
+
+def _stage1_reply(seats=None, verdict="OK"):
+    """One reply object routed to frame or framing_redteam by the system prompt.
+
+    Both stages call the moderator provider back to back, so a test that
+    doesn't care about the framing challenge can inject the same handler and
+    let each LLM call see the JSON it needs.
+    """
+    frame_json = _frame_json(seats)
+    fr_json = _framing_redteam_json(verdict)
+
+    def reply(provider, system, user, cancel=None, **kw):
+        if "Framing Red Team" in system or "Framing Red Team" in system.replace(" ", " "):
+            return _reply(fr_json, provider)
+        if "moderator" in system:
+            return _reply(frame_json, provider)
+        return _reply(frame_json, provider)  # fallback, framing patched separately
+
+    return reply
+
+
+def _framed(client, seats=None, verdict="OK", **kw):
+    """Open a session, run Stage 1 (Frame) and Stage 1.5 (Framing Red Team).
+
+    The Framing Red Team is deliberately cheap and always runs — an early
+    challenge to the moderator's framing that lets Stage 5 focus on evidence
+    rather than replaying an argument the board can no longer act on cheaply.
+    """
     s = _start(client, **kw)
-    with patch("app.llm.chat", return_value=_reply(_frame_json(seats))):
-        return _advance(client, s["id"])
+    with patch("app.llm.chat", side_effect=_stage1_reply(seats, verdict)):
+        s = _advance(client, s["id"])       # frame
+        s = _advance(client, s["id"])       # framing_redteam
+    return s
 
 
 # ── state ──
@@ -110,21 +147,30 @@ def test_consult_stops_at_a_gate_before_every_stage(client):
     with patch("app.llm.chat", return_value=_reply(_frame_json())) as m:
         s = _advance(client, s["id"])
     assert [x["key"] for x in s["steps"]] == ["frame"]
-    assert s["next_step"] == "positions" and s["status"] == "awaiting"
+    # The framing challenge runs BEFORE research — cheap, one call, and it
+    # would be pointless to attack the framing after the board burned four
+    # stages inside it. That is the whole point of moving it earlier.
+    assert s["next_step"] == "framing_redteam" and s["status"] == "awaiting"
     assert m.call_count == 1                      # one moderator, not a whole board
+
+    with patch("app.llm.chat", return_value=_reply(_framing_redteam_json())) as m:
+        s = _advance(client, s["id"])
+    assert [x["key"] for x in s["steps"]] == ["frame", "framing_redteam"]
+    assert s["next_step"] == "positions"          # research is off in this session
+    assert m.call_count == 1                      # framing challenge is a single LLM call
 
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
         s = _advance(client, s["id"])
-    assert [x["key"] for x in s["steps"]] == ["frame", "positions"]
+    assert [x["key"] for x in s["steps"]][-1] == "positions"
     assert s["next_step"] == "debate"
     assert m.call_count == len(config.DEPTS)      # one call per convened seat
 
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])             # debate
-        s = _advance(client, s["id"])             # red-team & converge
-    assert [x["key"] for x in s["steps"]] == ["frame", "positions", "debate", "redteam"]
+        s = _advance(client, s["id"])             # evidence red team & converge
+    assert [x["key"] for x in s["steps"]] == [
+        "frame", "framing_redteam", "positions", "debate", "redteam"]
     assert s["next_step"] == "brief"
-    # the red team is an outside voice, on top of every seat's own self-audit
     assert "redteam" in s["steps"][-1]["results"]
 
     with patch("app.llm.chat", side_effect=_fake_chat):
@@ -145,7 +191,7 @@ def test_ceo_can_skip_straight_to_the_brief(client):
     s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"], step="brief")
-    assert [x["key"] for x in s["steps"]] == ["frame", "brief"]
+    assert [x["key"] for x in s["steps"]] == ["frame", "framing_redteam", "brief"]
     assert s["next_step"] is None and s["status"] == "done"   # the brief is terminal
 
 
@@ -162,11 +208,11 @@ def test_reset_rewinds_and_feeds_the_rejected_path_back(client):
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])            # positions
         s = _advance(client, s["id"])            # debate
-    assert len(s["steps"]) == 3
+    assert len(s["steps"]) == 4                  # frame + framing_redteam + positions + debate
 
     r = client.post(f"/api/consult/{s['id']}/reset", json={"step": "debate"})
     s = r.json()
-    assert [x["key"] for x in s["steps"]] == ["frame", "positions"]
+    assert [x["key"] for x in s["steps"]] == ["frame", "framing_redteam", "positions"]
     assert [h["key"] for h in s["history"]] == ["debate"]
     assert s["history"][0]["reason"] == "reset" and s["next_step"] == "debate"
 
@@ -179,18 +225,19 @@ def test_reset_rewinds_and_feeds_the_rejected_path_back(client):
 def test_branch_forks_an_alternate_timeline_keeping_the_original(client):
     s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
-        s = _advance(client, s["id"])
-        s = _advance(client, s["id"])
+        s = _advance(client, s["id"])            # positions
+        s = _advance(client, s["id"])            # debate
 
     child = client.post(f"/api/consult/{s['id']}/branch", json={"step": "debate"}).json()
     assert child["id"] != s["id"] and child["parent_id"] == s["id"]
     assert child["branched_from"] == "debate"
-    assert [x["key"] for x in child["steps"]] == ["frame", "positions"]  # shared prefix
+    assert [x["key"] for x in child["steps"]] == ["frame", "framing_redteam", "positions"]
     assert child["history"][0]["reason"] == "branch"          # remembers the road not taken
     assert child["seats"] == s["seats"]                        # same board, different route
 
     original = client.get(f"/api/consults/{s['id']}").json()
-    assert [x["key"] for x in original["steps"]] == ["frame", "positions", "debate"]
+    assert [x["key"] for x in original["steps"]] == [
+        "frame", "framing_redteam", "positions", "debate"]
 
 
 def test_branch_on_a_stage_that_never_ran_is_rejected(client):
@@ -224,7 +271,7 @@ def test_stop_marks_the_session_and_abandons_pending_advisors(client):
     # and the CEO can resume from where it stopped
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, sid)
-    assert s["status"] == "awaiting" and len(s["steps"]) == 3
+    assert s["status"] == "awaiting" and len(s["steps"]) == 4
 
 
 def test_stop_on_unknown_session_404s(client):
@@ -236,15 +283,18 @@ def test_stop_on_unknown_session_404s(client):
 def test_frame_convenes_only_the_seats_the_question_needs(client):
     s = _start(client)
     with patch("app.llm.chat", return_value=_reply(_frame_json(["cfo", "coo"]))):
-        s = _advance(client, s["id"])
+        s = _advance(client, s["id"])                # frame
     framer = s["steps"][0]["results"]["framer"]
     assert framer["ok"] and framer["seats"] == ["cfo", "coo"]
     assert s["seats"] == ["cfo", "coo"] and s["convened"] == ["cfo", "coo"]
     assert framer["reframed"].startswith("ควรผูกสัญญาเช่า")
 
+    with patch("app.llm.chat", return_value=_reply(_framing_redteam_json())):
+        s = _advance(client, s["id"])                # framing_redteam (Stage 1.5)
+
     # the uninvited seats never speak — calling everyone is noise, not rigour
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
-        s = _advance(client, s["id"])
+        s = _advance(client, s["id"])                # positions
     assert set(s["steps"][-1]["results"]) == {"cfo", "coo"}
     assert m.call_count == 2
 
@@ -273,6 +323,64 @@ def test_the_framing_travels_into_every_later_stage(client):
     for c in m.call_args_list:
         assert "กรอบการตัดสินใจที่ moderator ตั้งไว้" in c.args[2]
         assert "ควรผูกสัญญาเช่าสาขาใหม่ 3 ปีในไตรมาสนี้หรือไม่" in c.args[2]
+
+
+# ── Stage 1.5: framing red team — the cheap early challenge ──
+
+def test_framing_red_team_runs_once_and_flows_into_every_seat(client):
+    """Stage 1.5 is the biggest structural change in this pipeline: attack the
+    framing *before* the board burns four stages arguing inside it.
+
+    The failure mode the docstring warned about — everyone arguing the wrong
+    question well — is caught here, cheaply, with a single LLM call. When the
+    verdict is CONCERN and the CEO presses on, every downstream seat has to be
+    told what they are being asked to ignore, or the concern was quietly
+    deleted rather than acknowledged."""
+    concerns = ["สมมติว่าจำนวนลูกค้าเพียงพอโดยไม่มีข้อมูลรองรับ"]
+    reframe = "reframe: ทำไมคิดว่าลูกค้าจะมา ไม่ใช่จะเปิดสาขาไหน"
+
+    def stage1(provider, system, user, cancel=None, **kw):
+        if "โจมตี 'การตั้งกรอบ'" in system:
+            return _reply(_framing_redteam_json(verdict="CONCERN",
+                                                summary=reframe, concerns=concerns), provider)
+        return _reply(_frame_json(), provider)
+
+    s = _start(client)
+    with patch("app.llm.chat", side_effect=stage1) as m:
+        s = _advance(client, s["id"])          # frame
+        assert s["next_step"] == "framing_redteam"
+        s = _advance(client, s["id"])          # framing_redteam
+
+    # exactly one LLM call at 1.5 — no fan-out, no research, no per-seat pass
+    fr_calls = [c for c in m.call_args_list if "โจมตี 'การตั้งกรอบ'" in c.args[1]]
+    assert len(fr_calls) == 1, "Stage 1.5 must be one cheap call, not a fan-out"
+
+    fr = s["steps"][1]["results"]["framing_redteam"]
+    assert s["steps"][1]["key"] == "framing_redteam"
+    assert fr["ok"] and fr["verdict"] == "CONCERN"
+    assert fr["unchallenged_assumptions"] == concerns
+    assert reframe in fr["text"]
+
+    # the CEO presses on — CONCERN is not BLOCK. Every downstream seat is now
+    # told what they were being asked to ignore, so no seat can silently argue
+    # inside a frame the board already flagged.
+    with patch("app.llm.chat", side_effect=_fake_chat) as m:
+        _advance(client, s["id"])
+    for c in m.call_args_list:
+        assert "[Framing Red Team (CONCERN)]" in c.args[2]
+        assert concerns[0] in c.args[2]
+
+
+def test_framing_red_team_skipped_when_frame_itself_failed(client):
+    """If Stage 1 could not produce a frame at all, there is nothing for the
+    1.5 pass to attack. It skips cleanly rather than spending a call on an
+    empty payload."""
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply("ขอโทษครับ ผมไม่เข้าใจ")):
+        s = _advance(client, s["id"])
+    assert s["steps"][0]["results"]["framer"]["ok"] is False
+    # research is off by default, so the next non-frame stage is positions
+    assert s["next_step"] == "positions"        # 1.5 is skipped, not blocking
 
 
 # ── Stage 2: independent research, one desk per seat ──
@@ -342,8 +450,9 @@ def test_research_failure_degrades_to_documents_only(client):
 def test_web_research_can_be_turned_off(client):
     s = _start(client, web=False)
     assert s["next_step"] == "frame"          # framing always happens
-    with patch("app.llm.chat", return_value=_reply(_frame_json())):
-        s = _advance(client, s["id"])
+    with patch("app.llm.chat", side_effect=_stage1_reply()):
+        s = _advance(client, s["id"])         # frame
+        s = _advance(client, s["id"])         # framing_redteam
     assert s["next_step"] == "positions"      # the research stage is skipped
 
 
@@ -784,7 +893,10 @@ def test_json_extraction_fails_closed(client, raw):
 
 # ── Stage 5: red team, confidence ──
 
-def test_red_team_attacks_the_framing_and_every_seat_scores_itself(client):
+def test_red_team_attacks_evidence_and_every_seat_scores_itself(client):
+    """Stage 5 is the *evidence* red team now. Framing is attacked at Stage 1.5
+    (a check that cannot exist yet at Stage 5's position, because by then the
+    board has already burned four stages arguing inside the frame)."""
     s = _framed(client)
     with patch("app.llm.chat", side_effect=_fake_chat):
         s = _advance(client, s["id"])            # positions
@@ -797,12 +909,13 @@ def test_red_team_attacks_the_framing_and_every_seat_scores_itself(client):
         s = _advance(client, s["id"])
     results = s["steps"][-1]["results"]
 
-    # the red team is briefed on what the debate cannot see: who was NOT invited
-    # and how many genuinely different models are behind the seats
-    red = [c for c in m.call_args_list if "Red Team อิสระ" in c.args[1]]
+    # the evidence red team is briefed on the vendor diversity behind the seats
+    # AND on what the framing red team already said at 1.5, so this pass focuses
+    # on evidence quality rather than replaying the frame argument
+    red = [c for c in m.call_args_list if "Evidence Red Team" in c.args[1]]
     assert len(red) == 1
-    assert "ที่นั่งที่ไม่ถูกเรียก" in red[0].args[2]
-    assert "จำนวน provider ที่ต่างกันจริง" in red[0].args[2]
+    assert "จำนวน vendor ที่ต่างกันจริง" in red[0].args[2]
+    assert "Framing Red Team ตัดสินว่า" in red[0].args[2]
     assert results["redteam"]["ok"] and "diversity" in results["redteam"]
 
     # every seat scores its own confidence, and the board average follows
@@ -848,11 +961,12 @@ def test_the_brief_carries_confidence_into_the_pdf(client):
 
 # ── echo-chamber control: distinct models behind the seats ──
 
-def test_the_default_line_up_is_diverse_but_not_enforced(client):
+def test_the_default_line_up_is_diverse_but_not_enforced(client, monkeypatch):
     """The shipped default puts every seat on a different agent — personas on one
     model is one brain in five hats. But it is a *default*, not a rule: the CEO
     may put two seats on one lab deliberately, and the board's job is to warn,
     never to refuse. This test guards both halves of that."""
+    monkeypatch.setattr("app.llm.provider_ready", lambda p: p != "mock")
     assigned = set(config.DEFAULT_PROVIDERS.values())
     assert len(assigned) == len(config.DEFAULT_PROVIDERS), "the default must not share an agent"
     assert len(assigned) >= 4
@@ -872,9 +986,10 @@ def test_the_default_line_up_is_diverse_but_not_enforced(client):
     assert state["diversity"]["warning"], "a single-lab board must be flagged"
 
 
-def test_agents_can_be_reset_to_the_shipped_line_up(client):
+def test_agents_can_be_reset_to_the_shipped_line_up(client, monkeypatch):
     """Free choice needs an undo: after shuffling five seats there must be a way
     back to the diverse default without hand-editing JSON."""
+    monkeypatch.setattr("app.llm.provider_ready", lambda p: p != "mock")
     for dept in config.DEPTS:
         client.put(f"/api/dept/{dept}/provider", json={"provider": "mock"})
     assert set(client.get("/api/state").json()["depts"][0].values())  # sanity
@@ -1034,19 +1149,24 @@ def test_frame_flags_a_question_that_cuts_against_a_past_ruling(client):
         if "decision consistency auditor" in system:
             assert "ควรขยายสาขาไหม" in user      # the archive is what it audits against
             return _reply(conflict, provider)
+        if "Framing Red Team" in system:
+            return _reply(_framing_redteam_json(), provider)
         return _reply(_frame_json(), provider)
 
     s = _start(client)
     with patch("app.llm.chat", side_effect=reply):
-        s = _advance(client, s["id"])
+        s = _advance(client, s["id"])           # frame
     framer = s["steps"][0]["results"]["framer"]
     assert framer["memory_checked"] == 1
     assert framer["conflicts"][0]["memory_id"] == 1
     assert framer["carry_forward"] == ["ห้ามผูกสัญญาเกิน 1 ปี"]
 
+    with patch("app.llm.chat", side_effect=reply):
+        s = _advance(client, s["id"])           # framing_redteam
+
     # and the constraint the board already committed to reaches the seats
     with patch("app.llm.chat", side_effect=_fake_chat) as m:
-        _advance(client, s["id"])
+        _advance(client, s["id"])               # positions
     assert all("ห้ามผูกสัญญาเกิน 1 ปี" in c.args[2] for c in m.call_args_list)
 
 
@@ -1145,7 +1265,9 @@ def test_rethink_reopens_the_question_without_touching_the_original(client):
     assert child["direction"] == "คราวนี้ให้มองมุมชะลอการลงทุน"
 
     original = client.get(f"/api/consults/{s['id']}").json()
-    assert original["status"] == "done" and len(original["steps"]) == 5
+    # frame, framing_redteam, positions, debate, redteam, brief — six with the
+    # cheap early framing challenge in front, one more than the old five-stage flow
+    assert original["status"] == "done" and len(original["steps"]) == 6
 
 
 def test_rethink_inherits_the_scope_of_the_consult_it_came_from(client):
