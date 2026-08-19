@@ -405,7 +405,7 @@ def add_correction(routine_id: int, task_id: int, run_n: int, node: str,
     """
     with _LOCK:
         data = _load()
-        r = _routine_of(data, routine_id)
+        r = _tree_of(data, routine_id)
         t = _task_of(r, task_id) if r else None
         if t is None:
             return None
@@ -453,7 +453,7 @@ def branch_task(routine_id: int, task_id: int, run_n: int,
         return None
     with _LOCK:
         data = _load()
-        r = _routine_of(data, routine_id)
+        r = _tree_of(data, routine_id)
         t = _task_of(r, branch["id"]) if r else None
         if t is not None:
             t["corrections"] = fixes
