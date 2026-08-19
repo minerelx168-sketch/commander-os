@@ -295,6 +295,9 @@ def add_task(routine_id: int, title: str, brief: str = "",
                 "title": title, "brief": brief or "",
                 "owner": owner or r.get("owner", ""),
                 "status": "todo", "runs": runs or [], "comments": [],
+                # Corrections aimed at ONE node of the reasoning, not at the
+                # answer as a whole — see add_correction.
+                "corrections": [],
                 "parent_task": parent_task, "branched_from": branched_from,
                 "at": _now()}
         r["tasks"].append(task)
@@ -344,7 +347,7 @@ def append_run(routine_id: int, task_id: int, run: dict) -> dict | None:
         entry = {**run, "n": len(t["runs"]) + 1, "at": _now()}
         t["runs"].append(entry)
         # Everything the CEO had flagged is answered by this run, whatever it says
-        for c in t["comments"]:
+        for c in t["comments"] + t.setdefault("corrections", []):
             if c.get("answered_by") is None:
                 c["answered_by"] = entry["n"]
         t["status"] = "review" if entry.get("ok") else "blocked"
@@ -379,6 +382,43 @@ def open_comments(task: dict) -> list:
     return [c for c in task.get("comments", []) if c.get("answered_by") is None]
 
 
+def add_correction(routine_id: int, task_id: int, run_n: int, node: str,
+                   label: str, was: str, should: str) -> dict | None:
+    """Pin a correction to ONE node of one run's reasoning.
+
+    A comment says "this answer is wrong". A correction says *where* it went
+    wrong — which step, which assumption, which reading of the problem — and
+    what it should have been. That distinction is the whole point: an answer
+    rejected wholesale gives the model nothing to steer by, so it re-derives the
+    same conclusion down the same road. A step marked wrong, quoted back with
+    what it should say, cannot be walked again.
+
+    `was` is captured at the moment of correction rather than looked up later:
+    the run it refers to is immutable, but the CEO must be able to read what he
+    rejected even if the node's index shifts in later runs.
+    """
+    with _LOCK:
+        data = _load()
+        r = _routine_of(data, routine_id)
+        t = _task_of(r, task_id) if r else None
+        if t is None:
+            return None
+        corrections = t.setdefault("corrections", [])
+        entry = {"id": max((c["id"] for c in corrections), default=0) + 1,
+                 "run_n": run_n, "node": node, "label": label,
+                 "was": was, "should": should,
+                 "answered_by": None, "at": _now()}
+        corrections.append(entry)
+        r["updated_at"] = _now()
+        _save(data)
+        return entry
+
+
+def open_corrections(task: dict) -> list:
+    """Wrong turns the CEO has marked that no later run has answered yet."""
+    return [c for c in task.get("corrections", []) if c.get("answered_by") is None]
+
+
 def branch_task(routine_id: int, task_id: int, run_n: int,
                 title: str | None = None) -> dict | None:
     """Fork a task at one of its runs into a sibling in the same tree.
@@ -396,9 +436,24 @@ def branch_task(routine_id: int, task_id: int, run_n: int,
         kept = [json.loads(json.dumps(run)) for run in t["runs"] if run["n"] <= run_n]
         if not kept:
             return None
+        # The corrections that shaped those runs travel with them: a branch that
+        # forgot which turns were already ruled out would walk them again.
+        fixes = [json.loads(json.dumps(c)) for c in t.get("corrections", [])
+                 if c.get("run_n", 0) <= run_n]
         src_title, src_brief, src_owner = t["title"], t["brief"], t["owner"]
-    return add_task(routine_id, title or f"{src_title} (แตกกิ่ง)", src_brief,
-                    src_owner, parent_task=task_id, runs=kept, branched_from=run_n)
+    branch = add_task(routine_id, title or f"{src_title} (แตกกิ่ง)", src_brief,
+                      src_owner, parent_task=task_id, runs=kept, branched_from=run_n)
+    if branch is None:
+        return None
+    with _LOCK:
+        data = _load()
+        r = _routine_of(data, routine_id)
+        t = _task_of(r, branch["id"]) if r else None
+        if t is not None:
+            t["corrections"] = fixes
+            _save(data)
+            return t
+    return branch
 
 
 def pipeline_stats() -> dict:
@@ -412,6 +467,7 @@ def pipeline_stats() -> dict:
         "review": sum(1 for t in tasks if t["status"] == "review"),
         "blocked": sum(1 for t in tasks if t["status"] == "blocked"),
         "open_comments": sum(len(open_comments(t)) for t in tasks),
+        "open_fixes": sum(len(open_corrections(t)) for t in tasks),
         "runs": sum(len(t["runs"]) for t in tasks),
     }
 

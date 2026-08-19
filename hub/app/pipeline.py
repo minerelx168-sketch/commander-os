@@ -27,6 +27,7 @@ that shows only conclusions asks the CEO to trust a model he cannot inspect;
 "the AI ignored my document" is a checkable claim rather than a suspicion.
 """
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -58,6 +59,9 @@ TASK_PERSONA = (
     "- สิ่งที่คุณประมาณเอง ต้องอยู่ใน assumptions ห้ามปนไปกับข้อเท็จจริง\n"
     "- ถ้ามีคำสั่งแก้ไขจาก CEO ต้องทำตามให้ครบทุกข้อ และบอกใน changed_from_last "
     "ว่าแก้อะไรไปบ้าง ถ้าข้อไหนทำตามไม่ได้ ต้องบอกเหตุผลตรงๆ ห้ามเงียบ\n"
+    "- ถ้า CEO ชี้ว่า **ขั้นตอนคิดขั้นไหนผิด** นั่นคือทางที่ถูกปิดแล้ว ห้ามเดินซ้ำ "
+    "ต้องคิดจากจุดนั้นใหม่ตามที่เขาบอก แล้วรายงานใน fix_responses ทีละจุด — "
+    "การตอบผลลัพธ์เดิมโดยเขียนใหม่ให้ดูต่าง ถือว่าไม่ได้แก้\n"
     "\n"
 )
 
@@ -73,10 +77,81 @@ TASK_SCHEMA = (
     '  "next_actions": [{"action": "สิ่งที่ต้องทำต่อ", "owner": "ใครทำ", "due": "ภายในเมื่อไร"}],\n'
     '  "confidence": 70,\n'
     '  "self_check": "ถ้าคำตอบนี้ผิด จะผิดตรงไหนก่อน และจะรู้ได้อย่างไร",\n'
-    '  "changed_from_last": "รอบนี้ต่างจากรอบก่อนตรงไหน (ถ้าเป็นรอบแรกให้ใส่ค่าว่าง)"\n'
+    '  "changed_from_last": "รอบนี้ต่างจากรอบก่อนตรงไหน (ถ้าเป็นรอบแรกให้ใส่ค่าว่าง)",\n'
+    '  "fix_responses": [{"node": "รหัสจุดที่ CEO ชี้ว่าผิด ตามที่ให้มาเป๊ะๆ",\n'
+    '                     "what_i_did": "คุณแก้ตามอย่างไร",\n'
+    '                     "disagree": "ถ้าทำตามไม่ได้ ให้บอกเหตุผลตรงนี้ ถ้าทำตามได้ให้เว้นว่าง"}]\n'
     "}\n"
-    "confidence เป็นตัวเลข 0-100 ห้ามใส่เครื่องหมาย %"
+    "confidence เป็นตัวเลข 0-100 ห้ามใส่เครื่องหมาย %\n"
+    "fix_responses ต้องมีครบทุกจุดที่ CEO ชี้ว่าผิด ถ้าไม่มีจุดไหนถูกชี้ ให้เป็นลิสต์ว่าง"
 )
+
+# ── addressing one node inside a reasoning trace ──────────────────────────
+#
+# A correction has to point at a *place*, not at the answer: "the second step is
+# wrong" is steerable, "this is wrong" is not. These are the addressable places.
+_LIST_NODES = {
+    "steps": "ลำดับการคิด",
+    "assumptions": "สมมติฐานที่ตั้งเอง",
+    "evidence_used": "หลักฐานที่อ้าง",
+    "unknowns": "สิ่งที่ยังไม่รู้",
+    "next_actions": "สิ่งที่ต้องทำต่อ",
+}
+_SCALAR_NODES = {
+    "understanding": "โจทย์ที่ AI เข้าใจ",
+    "answer": "คำตอบที่ส่งมอบ",
+    "self_check": "ถ้าผิด จะผิดตรงไหนก่อน",
+}
+_NODE_RE = re.compile(r"^([a-z_]+)(?:\[(\d+)\])?$")
+
+
+def _clean_node(value) -> str:
+    """Normalise a node id the model echoed back.
+
+    The reply is matched to the correction by this string, so a stray space or a
+    dropped `]` silently detaches the model's answer from the step it answers —
+    the CEO then sees his correction sitting unanswered next to a run that did
+    address it. Repair what is unambiguous; leave anything else alone so a
+    genuinely wrong id still reads as wrong.
+    """
+    node = jsonx.as_str(value).strip().strip("[]. ")
+    m = re.match(r"^([a-z_]+)\s*\[?\s*(\d+)\s*\]?$", node, re.I)
+    if m:
+        return f"{m.group(1).lower()}[{int(m.group(2))}]"
+    m = re.match(r"^([a-z_]+)$", node, re.I)
+    return m.group(1).lower() if m else node
+
+
+def node_text(trace: dict, node: str) -> tuple[str, str] | None:
+    """Resolve `steps[1]` / `understanding` to `(label, text)` in this trace.
+
+    None when the node does not exist in it — a correction aimed at a step that
+    was never written would be quoted back to the model as a fact it cannot
+    place, which is worse than refusing the correction.
+    """
+    m = _NODE_RE.match(node or "")
+    if not m or not isinstance(trace, dict):
+        return None
+    key, idx = m.group(1), m.group(2)
+    if key in _SCALAR_NODES and idx is None:
+        text = jsonx.as_str(trace.get(key))
+        return (_SCALAR_NODES[key], text) if text else None
+    if key in _LIST_NODES and idx is not None:
+        items = trace.get(key) or []
+        i = int(idx)
+        if not 0 <= i < len(items):
+            return None
+        item = items[i]
+        if isinstance(item, dict):        # steps / next_actions
+            text = " · ".join(x for x in (jsonx.as_str(item.get("step")),
+                                          jsonx.as_str(item.get("why")),
+                                          jsonx.as_str(item.get("found")),
+                                          jsonx.as_str(item.get("action")),
+                                          jsonx.as_str(item.get("owner"))) if x)
+        else:
+            text = jsonx.as_str(item)
+        return (f"{_LIST_NODES[key]} ข้อ {i + 1}", text) if text else None
+    return None
 
 _REQUIRED = ("understanding", "answer")
 
@@ -184,6 +259,22 @@ def _grounding(routine: dict, task: dict, directive: str | None) -> tuple[str, l
         blocks.append(_block(
             inputs, "comments",
             "คำสั่งแก้ไขจาก CEO — ต้องทำตามให้ครบทุกข้อในรอบนี้", body))
+
+    # The wrong turns, quoted at the exact place they were taken. This is the
+    # difference between "that answer was wrong" and "you went wrong here" —
+    # only the second one closes a road.
+    fixes = store.open_corrections(task)
+    if fixes:
+        body = "\n\n".join(
+            f"node = {c['node']}\n"
+            f"  จุดนี้คือ: {c['label']} (จากรอบที่ {c['run_n']})\n"
+            f"  คุณเคยคิดว่า: {c['was']}\n"
+            f"  CEO บอกว่าต้องเป็น: {c['should']}"
+            for c in fixes)
+        blocks.append(_block(
+            inputs, "fixes",
+            "จุดที่ CEO ชี้ว่าคุณ 'คิดผิด' — ทางเหล่านี้ถูกปิดแล้ว ห้ามเดินซ้ำ "
+            "และต้องตอบใน fix_responses ให้ครบทุก node", body))
     if directive:
         blocks.append(_block(inputs, "directive", "คำสั่งเพิ่มเติมสำหรับรอบนี้", directive))
 
@@ -225,6 +316,13 @@ def _normalise(data: dict) -> dict:
         elif jsonx.as_str(item):
             actions.append({"action": jsonx.as_str(item), "owner": "", "due": ""})
 
+    replies = []
+    for item in jsonx.as_list(data.get("fix_responses")):
+        if isinstance(item, dict):
+            replies.append({"node": _clean_node(item.get("node")),
+                            "what_i_did": jsonx.as_str(item.get("what_i_did")),
+                            "disagree": jsonx.as_str(item.get("disagree"))})
+
     confidence = jsonx.as_int(data.get("confidence"))
     if confidence is not None and not 0 <= confidence <= 100:
         confidence = None
@@ -239,6 +337,7 @@ def _normalise(data: dict) -> dict:
         "confidence": confidence,
         "self_check": jsonx.as_str(data.get("self_check")),
         "changed_from_last": jsonx.as_str(data.get("changed_from_last")),
+        "fix_responses": replies,
     }
 
 
@@ -263,9 +362,14 @@ def run_task(routine_id: int, task_id: int, directive: str | None = None) -> dic
                                  lane=lane, guard=guard) + TASK_SCHEMA
     user, inputs = _grounding(routine, task, directive)
     pending = store.open_comments(task)
+    pending_fixes = store.open_corrections(task)
 
-    trigger = ("คอมเมนต์ของ CEO " + ", ".join(f"#{c['id']}" for c in pending)
-               if pending else ("คำสั่งเพิ่มเติม" if directive else "สั่งรันเอง"))
+    if pending_fixes:
+        trigger = "CEO แก้เส้นทางคิด " + ", ".join(f"@{c['node']}" for c in pending_fixes)
+    elif pending:
+        trigger = "คอมเมนต์ของ CEO " + ", ".join(f"#{c['id']}" for c in pending)
+    else:
+        trigger = "คำสั่งเพิ่มเติม" if directive else "สั่งรันเอง"
 
     store.update_task(routine_id, task_id, status="running")
     started = time.monotonic()
@@ -311,6 +415,7 @@ def run_task(routine_id: int, task_id: int, directive: str | None = None) -> dic
         # run" and "the CEO rejected the last answer" is the point of the tree.
         "trigger": trigger,
         "answered_comments": [c["id"] for c in pending],
+        "answered_fixes": [c["id"] for c in pending_fixes],
         "directive": directive or None,
     }
     updated = store.append_run(routine_id, task_id, run)

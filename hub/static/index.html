@@ -1312,6 +1312,65 @@ select.step-act { background: var(--bg-3); border-color: var(--border); color: v
 }
 .live-strip.idle { border-style: dashed; border-color: var(--border-2); color: var(--text-3); }
 
+/* ── the decision path as an editable flow ──
+   Boxes joined by arrows, one per node of the reasoning. A node the CEO has
+   marked wrong is drawn dashed — the same "needs attention" language the rest of
+   the monochrome system uses — and carries both his correction and the AI's
+   answer to it, so the exchange stays readable long after the run. */
+.flow { margin: 4px 0 2px; }
+
+.fnode {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border-2);
+  border-radius: 2px;
+  background: var(--bg-3);
+  padding: 9px 11px;
+}
+.fnode.corrected { border-style: dashed; border-left-color: var(--text); }
+
+.fnode-head { display: flex; align-items: center; gap: 8px; }
+.fnode-label {
+  flex: 1; font-family: var(--mono);
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-2);
+}
+.fnode-fix {
+  flex-shrink: 0;
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 2px;
+  color: var(--text-3); background: transparent;
+  border: 1px solid var(--border-2); cursor: pointer;
+  opacity: .55; transition: opacity .12s, color .12s, border-color .12s;
+}
+.fnode:hover .fnode-fix { opacity: 1; }
+.fnode-fix:hover { color: var(--text); border-color: var(--text); }
+
+.fnode-body { font-size: 12.5px; color: var(--text); margin-top: 5px; line-height: 1.65; }
+
+.fnode-fixed {
+  margin-top: 8px; padding: 8px 10px;
+  border: 1px dashed var(--text-2); border-radius: 2px;
+  background: var(--bg-2); font-size: 12px;
+}
+.fnode-reply {
+  margin-top: 6px; padding: 8px 10px;
+  border-left: 2px solid var(--text-2); background: var(--bg-2);
+  font-size: 12px; color: var(--text-2);
+}
+
+/* the arrow between two nodes */
+.fedge { height: 16px; margin-left: 14px; position: relative; }
+.fedge::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 4px;
+  width: 1px; background: var(--border-2);
+}
+.fedge::after {
+  content: ''; position: absolute; left: -3px; bottom: 0;
+  border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
+  border-top: 5px solid var(--border-2);
+}
+
 /* the task the map was asked to point at */
 @keyframes tmap-flash { from { background: var(--bg-3); } to { background: transparent; } }
 .tree-task.flash { animation: tmap-flash 1.6s ease-out; }
@@ -1452,7 +1511,7 @@ select.step-act { background: var(--bg-3); border-color: var(--border); color: v
        ============================================================ -->
   <div class="view" id="view-pipeline">
 
-    <div class="stats-grid" id="pipe-stats" style="grid-template-columns:repeat(6,1fr);"></div>
+    <div class="stats-grid" id="pipe-stats" style="grid-template-columns:repeat(7,1fr);"></div>
 
     <!-- Tree map: every work tree at once, live -->
     <div class="card">
@@ -1665,7 +1724,8 @@ const HERO = {
   pipeline: () => ({
     stats: [['Trees', (STATE.pipeline||{}).routines || 0],
             ['Tasks', (STATE.pipeline||{}).tasks || 0],
-            ['Needs you', (STATE.pipeline||{}).open_comments || 0]],
+            ['Needs you', ((STATE.pipeline||{}).open_comments || 0)
+                          + ((STATE.pipeline||{}).open_fixes || 0)]],
     action: { label: '+ Work Tree ใหม่', fn: 'focusRoutineForm()' },
   }),
   docs: () => ({
@@ -2385,6 +2445,7 @@ async function loadPipeline() {
     <div class="stat-card"><div class="stat-label">งานทั้งหมด</div><div class="stat-value">${st.tasks||0}</div><div class="stat-sub">เสร็จแล้ว ${st.done||0}</div></div>
     <div class="stat-card"><div class="stat-label">รอตรวจ</div><div class="stat-value c-amber">${st.review||0}</div><div class="stat-sub">AI ส่งแล้ว รอคุณอ่าน</div></div>
     <div class="stat-card"><div class="stat-label">คอมเมนต์ค้าง</div><div class="stat-value c-red">${st.open_comments||0}</div><div class="stat-sub">สั่งแก้แล้วยังไม่ได้รันใหม่</div></div>
+    <div class="stat-card"><div class="stat-label">จุดคิดผิดค้าง</div><div class="stat-value c-red">${st.open_fixes||0}</div><div class="stat-sub">ชี้ในเส้นทางคิดแล้วยังไม่ได้คิดใหม่</div></div>
     <div class="stat-card"><div class="stat-label">รันไปแล้ว</div><div class="stat-value c-cyan">${st.runs||0}</div><div class="stat-sub">ทุกรอบถูกเก็บไว้ ไม่ทับของเก่า</div></div>`;
 
   fillProjects(document.getElementById('rt-project'), j.projects);
@@ -2432,7 +2493,8 @@ function routineMark(r) {
   if (marks.includes('running')) return 'running';
   if (marks.includes('stalled')) return 'stalled';
   if (marks.includes('blocked')) return 'blocked';
-  if (marks.includes('review') || tasks.some(t => (t.open_comments||[]).length)) return 'review';
+  if (marks.includes('review') || tasks.some(t => (t.open_comments||[]).length || (t.open_fixes||[]).length))
+    return 'review';
   if (tasks.length && marks.every(m => m === 'done')) return 'done';
   return 'todo';
 }
@@ -2487,6 +2549,7 @@ function renderTreeMap() {
                     <span class="tmap-meta">${MARK_TH[mark] || mark}${(t.runs||[]).length ? ` · ${t.runs.length} รอบ` : ''}${t.owner ? ` · 👤 ${esc(t.owner)}` : ''}</span>
                     ${e ? `<span class="tmap-elapsed" data-live="${r.id}.${t.id}">${fmtElapsed(liveElapsed(e))}</span>` : ''}
                     ${(t.open_comments||[]).length ? `<span class="badge badge-red">${t.open_comments.length} รอแก้</span>` : ''}
+                    ${(t.open_fixes||[]).length ? `<span class="badge badge-red">${t.open_fixes.length} จุดคิดผิด</span>` : ''}
                     ${t.parent_task ? `<span class="tmap-meta">🔀 กิ่งของ #${t.parent_task}</span>` : ''}
                   </div>
                 </div>`;
@@ -2561,10 +2624,11 @@ function jumpToTask(rid, tid) {
 function paintPipeBadge() {
   const b = document.getElementById('nav-pipe-badge');
   if (!b) return;
-  const n = (PIPE.stats||{}).open_comments || (STATE.pipeline||{}).open_comments || 0;
+  const st = (PIPE.stats && Object.keys(PIPE.stats).length) ? PIPE.stats : (STATE.pipeline || {});
+  const n = (st.open_comments || 0) + (st.open_fixes || 0);
   b.hidden = !n;
   b.textContent = n;
-  b.title = 'คอมเมนต์ที่ยังไม่ได้ให้ AI แก้';
+  b.title = 'คอมเมนต์ + จุดคิดผิด ที่ยังไม่ได้ให้ AI แก้';
 }
 
 function routineCard(r) {
@@ -2608,6 +2672,7 @@ function taskNode(r, t) {
       <span class="owner-chip">👤 ${esc(t.owner || r.owner)}</span>
       ${t.parent_task ? `<span class="owner-chip" title="แตกกิ่งมาจากงาน #${t.parent_task} ที่รอบ ${t.branched_from}">🔀 แตกกิ่งจาก #${t.parent_task} รอบ ${t.branched_from}</span>` : ''}
       ${open.length ? `<span class="badge badge-red">${open.length} คอมเมนต์รอแก้</span>` : ''}
+      ${(t.open_fixes||[]).length ? `<span class="badge badge-red" title="จุดในเส้นทางคิดที่คุณชี้ว่าผิด และยังไม่ได้รันใหม่">${t.open_fixes.length} จุดคิดผิดรอแก้</span>` : ''}
     </div>
     ${t.brief ? `<div class="task-brief">${esc(t.brief)}</div>` : ''}
     <div class="task-acts">
@@ -2655,57 +2720,123 @@ function runNode(r, t, run) {
       ? `<div class="run-answer">${esc(tr.answer||'')}</div>`
       : `<div class="run-answer" style="color:var(--red)">⚠️ รอบนี้ไม่สำเร็จ: ${esc(run.error||'ไม่ทราบสาเหตุ')}</div>
          ${run.text ? `<div class="think-body" style="margin-top:6px">สิ่งที่โมเดลตอบกลับมา: ${esc(String(run.text).slice(0,400))}</div>` : ''}`}
-    ${shown ? thinkPanel(run, tr) : ''}
+    ${shown ? thinkPanel(run, tr, r.id, t.id, t) : ''}
   </div>`;
 }
 
 /* The reasoning panel. A hub that shows only conclusions asks the CEO to trust
    a model he cannot inspect — so every run carries what it understood, how it
    got there, what it had to assume, what it read, and what would make it wrong. */
-function thinkPanel(run, tr) {
-  const list = (arr, empty) => (arr && arr.length)
-    ? `<ul>${arr.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
-    : `<div style="color:var(--text-3)">${empty}</div>`;
+/* The decision path, as a flow you can edit.
+   Reading the reasoning is only half of it: an answer the CEO rejects whole
+   gives the model nothing to steer by, so it re-derives the same conclusion down
+   the same road. Every node here is addressable — click ✏️ on the step that went
+   wrong, say what it should have been, and that turn is closed for the next run. */
+function thinkPanel(run, tr, rid, tid, task) {
+  const mine = (task.corrections||[]).filter(c => c.run_n === run.n);
+  const byNode = {};
+  mine.forEach(c => (byNode[c.node] = byNode[c.node] || []).push(c));
+
+  /* The AI's answer to a correction is emitted by the run that *acted* on it,
+     one round later — but it belongs on screen next to the correction, which
+     lives on the run that was wrong. That is where the CEO is looking. */
+  const replyTo = (c) => {
+    if (!c.answered_by) return null;
+    const answering = (task.runs||[]).find(r => r.n === c.answered_by);
+    const list = ((answering||{}).trace||{}).fix_responses || [];
+    // Exact node first; a single reply to a single correction can only be that
+    // one, so a model that mislabelled which step it fixed is not counted as
+    // having ignored the CEO.
+    return list.find(x => x.node === c.node)
+        || (list.length === 1 && mine.length === 1 ? list[0] : null);
+  };
+
+  /* one box in the flow: what it says, what the CEO corrected, what the AI did */
+  const node = (path, label, body, extra = '') => {
+    const fixes = byNode[path] || [];
+    return `
+    <div class="fnode ${fixes.length ? 'corrected' : ''}">
+      <div class="fnode-head">
+        <span class="fnode-label">${esc(label)}</span>
+        <button class="fnode-fix" title="ชี้ว่าจุดนี้คิดผิด แล้วบอกว่าควรเป็นอะไร — ทางนี้จะถูกปิดในรอบถัดไป"
+          onclick="fixNode(${rid},${tid},${run.n},'${path}',${JSON.stringify(label).replace(/"/g,'&quot;')})">✏️ แก้จุดนี้</button>
+      </div>
+      <div class="fnode-body">${body || '<span style="color:var(--text-3)">—</span>'}</div>
+      ${extra}
+      ${fixes.map(c => {
+        const rep = replyTo(c);
+        return `
+        <div class="fnode-fixed">
+          <div><b>❌ CEO:</b> ${esc(c.should)}</div>
+          <div class="think-why">เดิม: ${esc(c.was).slice(0, 180)}</div>
+          ${c.answered_by
+            ? `<div class="fnode-reply">
+                 <b>↩ AI (รอบที่ ${c.answered_by}):</b> ${rep ? esc(rep.what_i_did) || '—'
+                   : 'รันใหม่แล้วแต่ไม่ได้รายงานว่าแก้จุดนี้อย่างไร — ตรวจคำตอบรอบนั้นเอง'}
+                 ${rep && rep.disagree ? `<div class="think-why">ทำตามไม่ได้เพราะ: ${esc(rep.disagree)}</div>` : ''}
+               </div>`
+            : '<div class="think-why">ยังไม่ได้รันใหม่ — กด ▶ รันใหม่ เพื่อให้คิดใหม่จากจุดนี้</div>'}
+        </div>`; }).join('')}
+    </div>`;
+  };
+
+  const chain = [];
+  chain.push(node('understanding', '1 · โจทย์ที่ AI เข้าใจ', esc(tr.understanding)));
+  (tr.steps||[]).forEach((sx, i) => chain.push(node(
+    `steps[${i}]`, `${i + 2} · ${esc(sx.step) || 'ขั้นที่ ' + (i + 1)}`,
+    [sx.why ? `<div class="think-why">ทำไม: ${esc(sx.why)}</div>` : '',
+     sx.found ? `<div>ได้: ${esc(sx.found)}</div>` : ''].join(''))));
+  chain.push(node('answer', `${(tr.steps||[]).length + 2} · คำตอบที่ส่งมอบ`, esc(tr.answer)));
+
+  const side = (key, title, items, empty) => `
+    <div class="think-h">${title}</div>
+    ${(items||[]).length
+      ? (items||[]).map((x, i) => node(`${key}[${i}]`, `${title} ข้อ ${i + 1}`,
+          typeof x === 'string' ? esc(x)
+            : esc(x.action) + (x.owner ? ` <span class="think-why">— ${esc(x.owner)}</span>` : '')
+                              + (x.due ? ` <span class="think-why">(${esc(x.due)})</span>` : ''))).join('')
+      : `<div class="think-body" style="color:var(--text-3)">${empty}</div>`}`;
+
   const inputs = (run.inputs||[]).map(i =>
     `<li><b>${esc(i.label)}</b> <span class="think-why">(${(i.chars||0).toLocaleString()} ตัวอักษร)</span></li>`).join('');
+
   return `
   <div class="think">
-    <div class="think-h">1 · โจทย์ที่ AI เข้าใจ</div>
-    <div class="think-body">${esc(tr.understanding) || '<span style="color:var(--text-3)">—</span>'}</div>
+    <div class="think-h">เส้นทางการตัดสินใจ — คลิก ✏️ ที่จุดที่คิดผิด</div>
+    <div class="flow">${chain.join('<div class="fedge"></div>')}</div>
 
-    <div class="think-h">2 · ลำดับการคิด</div>
-    <div class="think-body">${(tr.steps||[]).length ? `<ol>${(tr.steps||[]).map(sx => `
-      <li class="think-step"><b>${esc(sx.step)}</b>
-        ${sx.why ? `<div class="think-why">ทำไม: ${esc(sx.why)}</div>` : ''}
-        ${sx.found ? `<div>ได้: ${esc(sx.found)}</div>` : ''}</li>`).join('')}</ol>`
-      : '<div style="color:var(--text-3)">โมเดลไม่ได้แจกแจงขั้นตอน</div>'}</div>
-
-    <div class="think-h">3 · สมมติฐานที่ตั้งเอง (ไม่มีข้อมูลจริงรองรับ)</div>
-    <div class="think-body">${list(tr.assumptions, 'ไม่มี — อ้างจากข้อมูลจริงทั้งหมด')}</div>
-
-    <div class="think-h">4 · อ้างอิงอะไรบ้าง</div>
-    <div class="think-body">${list(tr.evidence_used, 'ไม่ได้อ้างอะไรเลย')}</div>
-
-    <div class="think-h">5 · สิ่งที่ยังไม่รู้</div>
-    <div class="think-body">${list(tr.unknowns, 'ไม่ได้ระบุ')}</div>
-
-    <div class="think-h">6 · ถ้าผิด จะผิดตรงไหนก่อน</div>
-    <div class="think-body">${esc(tr.self_check) || '<span style="color:var(--text-3)">ไม่ได้ระบุ</span>'}</div>
+    ${side('assumptions', 'สมมติฐานที่ตั้งเอง (ไม่มีข้อมูลจริงรองรับ)', tr.assumptions, 'ไม่มี — อ้างจากข้อมูลจริงทั้งหมด')}
+    ${side('evidence_used', 'หลักฐานที่อ้าง', tr.evidence_used, 'ไม่ได้อ้างอะไรเลย')}
+    ${side('unknowns', 'สิ่งที่ยังไม่รู้', tr.unknowns, 'ไม่ได้ระบุ')}
+    ${node('self_check', 'ถ้าผิด จะผิดตรงไหนก่อน', esc(tr.self_check))}
+    ${(tr.next_actions||[]).length ? side('next_actions', 'สิ่งที่ต้องทำต่อ', tr.next_actions, '') : ''}
 
     ${tr.changed_from_last ? `
-    <div class="think-h">7 · รอบนี้แก้อะไรจากรอบก่อน</div>
+    <div class="think-h">รอบนี้แก้อะไรจากรอบก่อน</div>
     <div class="think-body">${esc(tr.changed_from_last)}</div>` : ''}
-
-    ${(tr.next_actions||[]).length ? `
-    <div class="think-h">สิ่งที่ต้องทำต่อ</div>
-    <div class="think-body"><ul>${(tr.next_actions||[]).map(a =>
-      `<li>${esc(a.action)}${a.owner?` <span class="think-why">— ${esc(a.owner)}</span>`:''}${a.due?` <span class="think-why">(${esc(a.due)})</span>`:''}</li>`).join('')}</ul></div>` : ''}
 
     <div class="think-h">AI อ่านอะไรไปบ้างในรอบนี้</div>
     <div class="think-body">${inputs ? `<ul>${inputs}</ul>` : '<div style="color:var(--text-3)">ไม่มีข้อมูลประกอบ</div>'}
       <div class="think-why" style="margin-top:4px">รวม ${(run.prompt_chars||0).toLocaleString()} ตัวอักษรที่ส่งเข้าโมเดล — ถ้าเอกสารที่คุณคาดหวังไม่อยู่ในรายการนี้ แปลว่า AI ไม่เคยเห็นมัน</div>
     </div>
   </div>`;
+}
+
+/* Close one road. The correction is pinned to the node, so the next run is
+   handed the exact step, what it thought, and what it should have thought. */
+async function fixNode(rid, tid, runN, node, label) {
+  const should = prompt(
+    `จุดนี้คิดผิดตรงไหน และควรเป็นอะไรแทน?\n\n[${label}]\n\n` +
+    'AI จะได้รับข้อความนี้พร้อมสิ่งที่มันเคยคิดที่จุดนี้ แล้วต้องคิดใหม่จากตรงนั้น ' +
+    'และรายงานกลับมาว่าแก้อย่างไร — ทางเดิมถือว่าปิดแล้ว');
+  if (!should || !should.trim()) return;
+  INFLIGHT++; startLivePolling(); refreshLive();
+  const j = await pipeCall(`/api/pipeline/routines/${rid}/tasks/${tid}/fix`,
+                           jsonPost({run: runN, node, should: should.trim(), rerun: true}))
+    .finally(() => { INFLIGHT--; });
+  if (!j) { refreshLive(); return; }
+  if (j.run) OPEN_THINK.add(`${rid}.${tid}.${j.run.n}`);
+  loadPipeline(); loadState();
 }
 
 function toggleThink(key) {
