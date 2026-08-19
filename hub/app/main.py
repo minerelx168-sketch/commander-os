@@ -127,6 +127,14 @@ class BranchTaskIn(BaseModel):
     title: str | None = None
 
 
+class FixIn(BaseModel):
+    """A correction pinned to one node of one run's reasoning."""
+    run: int
+    node: str          # "steps[1]" / "understanding" / "assumptions[0]" …
+    should: str        # what that step should have been
+    rerun: bool = True
+
+
 def _view(session: dict) -> dict:
     """Session + what the CEO may do next (drives the decision gate in the UI)."""
     nxt = depts.next_step(session)
@@ -556,7 +564,9 @@ def _routine_view(r: dict) -> dict:
     for t in r.get("tasks", []):
         running = pipeline.is_running(r["id"], t["id"])
         tasks.append({**t,
+                      "corrections": t.get("corrections", []),
                       "open_comments": store.open_comments(t),
+                      "open_fixes": store.open_corrections(t),
                       "running_now": running,
                       "stalled": t["status"] == "running" and not running})
     return {**r,
@@ -693,6 +703,39 @@ def comment_task(routine_id: int, task_id: int, body: CommentIn) -> dict:
         run = pipeline.run_task(routine_id, task_id)["run"]
     return {"routine": _routine_view(_routine_or_404(routine_id)),
             "comment": comment, "run": run}
+
+
+@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/fix")
+def fix_reasoning(routine_id: int, task_id: int, body: FixIn) -> dict:
+    """Mark one step of the AI's reasoning wrong, and say what it should be.
+
+    Commenting on a task says the answer is wrong; the model is then free to
+    re-derive the same conclusion down the same road, because nothing told it
+    which turn to stop taking. Pinning the correction to the node it belongs to
+    closes that road: the next run is handed the exact step, what it thought, and
+    what the CEO says it should have thought, and has to report per node what it
+    did about it.
+    """
+    routine = _routine_or_404(routine_id)
+    task = _task_or_404(routine, task_id)
+    if not body.should.strip():
+        raise HTTPException(400, "should is required — บอกด้วยว่าจุดนั้นควรเป็นอะไร")
+    run = next((r for r in task.get("runs", []) if r["n"] == body.run), None)
+    if run is None:
+        raise HTTPException(400, f"run {body.run} does not exist on this task")
+    found = pipeline.node_text(run.get("trace") or {}, body.node)
+    if found is None:
+        # Better to refuse than to quote the model a step it never wrote.
+        raise HTTPException(400, f"ไม่พบจุด '{body.node}' ในเส้นทางคิดของรอบที่ {body.run}")
+    label, was = found
+
+    fix = store.add_correction(routine_id, task_id, body.run, body.node,
+                               label, was, body.should.strip())
+    out = None
+    if body.rerun:
+        out = pipeline.run_task(routine_id, task_id)["run"]
+    return {"routine": _routine_view(_routine_or_404(routine_id)),
+            "fix": fix, "run": out}
 
 
 @app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/branch")

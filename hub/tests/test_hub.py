@@ -1487,7 +1487,10 @@ def test_index_serves_advisory_ui(client):
                    "branchTask", "thinkPanel", "rt-owner", "rt-project",
                    # the live tree map
                    "tree-map", "renderTreeMap", "routineMark", "refreshLive",
-                   "live-strip", "jumpToTask", "tmap-mark"):
+                   "live-strip", "jumpToTask", "tmap-mark",
+                   # correcting the decision path node by node
+                   "fixNode", "fnode-fix", "fnode-fixed", "fnode-reply", "fedge",
+                   "corrections", "open_fixes"):
         assert marker in html, marker
     # `runTask` used to be listed here, back when the hub deliberately executed
     # nothing. The Pipeline page executes recurring work on the CEO's button, so
@@ -3108,3 +3111,177 @@ def test_the_live_endpoint_is_cheap_enough_to_poll(client):
 
 def test_the_running_count_reaches_the_shared_state_call(client):
     assert client.get("/api/state").json()["pipeline"]["running"] == 0
+
+
+# ── correcting the AI's decision path, node by node ──
+
+def _ran(client, r, t, reply=None):
+    with patch("app.llm.chat", return_value=reply or _trace_reply()):
+        return client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run",
+                           json={}).json()
+
+
+def _fix(client, r, t, node="steps[1]", should="ต้องแยกยอดรายสาขาด้วย",
+         run=1, rerun=True, reply=None):
+    with patch("app.llm.chat", return_value=reply or _trace_reply(
+            changed_from_last="คิดขั้นนี้ใหม่",
+            fix_responses=[{"node": node, "what_i_did": "แยกรายสาขาแล้ว", "disagree": ""}])):
+        return client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/fix",
+                           json={"run": run, "node": node, "should": should, "rerun": rerun})
+
+
+def test_a_wrong_turn_is_pinned_to_the_step_it_was_taken_at(client):
+    """A comment says the answer is wrong; the model is then free to re-derive the
+    same conclusion down the same road, because nothing told it which turn to stop
+    taking. A correction names the turn."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+
+    out = _fix(client, r, t).json()
+    fix = out["fix"]
+    assert fix["node"] == "steps[1]" and fix["run_n"] == 1
+    assert fix["label"] == "ลำดับการคิด ข้อ 2"
+    # what it said is captured at the moment of correction, not looked up later
+    assert "แยกตามช่องทาง" in fix["was"]
+    assert fix["should"] == "ต้องแยกยอดรายสาขาด้วย"
+
+
+def test_the_correction_reaches_the_next_run_quoted_at_that_node(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+
+    seen = {}
+
+    def watching(provider, system, user, cancel=None, **kw):
+        seen["prompt"] = user
+        seen["system"] = system
+        return _trace_reply(fix_responses=[{"node": "steps[1]", "what_i_did": "แก้แล้ว"}])
+
+    with patch("app.llm.chat", side_effect=watching):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/fix",
+                    json={"run": 1, "node": "steps[1]", "should": "ต้องแยกรายสาขา"})
+
+    prompt = seen["prompt"]
+    assert "node = steps[1]" in prompt, "the model must be told which node"
+    assert "แยกตามช่องทาง" in prompt, "…what it thought there"
+    assert "ต้องแยกรายสาขา" in prompt, "…and what it should have thought"
+    assert "ห้ามเดินซ้ำ" in prompt, "…and that the road is closed"
+    assert "fix_responses" in seen["system"]
+
+
+def test_a_corrected_run_is_kept_beside_the_one_that_replaced_it(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+    out = _fix(client, r, t).json()
+
+    task = out["routine"]["tasks"][0]
+    assert [x["n"] for x in task["runs"]] == [1, 2]
+    assert task["runs"][1]["trigger"] == "CEO แก้เส้นทางคิด @steps[1]"
+    assert task["runs"][1]["answered_fixes"] == [1]
+    assert task["corrections"][0]["answered_by"] == 2
+    assert task["open_fixes"] == []
+    # the model's per-node answer survives on the run that acted
+    assert task["runs"][1]["trace"]["fix_responses"][0]["node"] == "steps[1]"
+
+
+def test_a_node_that_was_never_written_is_refused_not_invented(client):
+    """Quoting the model a step it never took is worse than refusing the
+    correction — it would be asked to defend reasoning it never did."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+    base = f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/fix"
+
+    for bad in ("steps[99]", "nonsense", "steps", "assumptions[9]", ""):
+        got = client.post(base, json={"run": 1, "node": bad, "should": "x", "rerun": False})
+        assert got.status_code == 400, bad
+    assert client.post(base, json={"run": 9, "node": "steps[0]", "should": "x"}).status_code == 400
+    assert client.post(base, json={"run": 1, "node": "steps[0]", "should": " "}).status_code == 400
+    assert client.post("/api/pipeline/routines/999/tasks/1/fix",
+                       json={"run": 1, "node": "steps[0]", "should": "x"}).status_code == 404
+
+
+@pytest.mark.parametrize("node", ["understanding", "steps[0]", "assumptions[0]",
+                                  "evidence_used[0]", "unknowns[0]", "answer",
+                                  "self_check", "next_actions[0]"])
+def test_every_part_of_the_reasoning_can_be_corrected(client, node):
+    """Not just the steps: a wrong reading of the problem, an invented
+    assumption, or a citation that does not support the claim are all places the
+    reasoning went wrong, and all have to be addressable."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+    out = _fix(client, r, t, node=node, should="ควรเป็นอย่างอื่น").json()
+    assert out["fix"]["node"] == node and out["fix"]["was"]
+
+
+def test_a_correction_left_unrun_stays_open_and_reaches_the_next_run(client):
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+    out = _fix(client, r, t, rerun=False).json()
+    assert out["run"] is None
+    assert len(out["routine"]["tasks"][0]["open_fixes"]) == 1
+    assert client.get("/api/pipeline").json()["stats"]["open_fixes"] == 1
+    assert client.get("/api/state").json()["pipeline"]["open_fixes"] == 1
+
+    seen = {}
+
+    def watching(provider, system, user, cancel=None, **kw):
+        seen["prompt"] = user
+        return _trace_reply()
+
+    with patch("app.llm.chat", side_effect=watching):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+    assert "node = steps[1]" in seen["prompt"]
+    assert client.get("/api/pipeline").json()["stats"]["open_fixes"] == 0
+
+
+def test_a_branch_remembers_which_turns_were_already_ruled_out(client):
+    """A fork that forgot the corrections behind it would walk the closed road
+    again on its first run."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+    _fix(client, r, t, rerun=False)
+
+    out = client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/branch",
+                      json={"run": 1}).json()
+    branch = out["task"]
+    assert [c["node"] for c in branch["corrections"]] == ["steps[1]"]
+    assert branch["parent_task"] == t["id"]
+
+
+@pytest.mark.parametrize(("raw", "clean"), [
+    ("steps[1]", "steps[1]"),
+    ("steps[1", "steps[1]"),          # the closing bracket the model dropped
+    (" steps [ 1 ] ", "steps[1]"),
+    ("Steps[1]", "steps[1]"),
+    ("steps1", "steps[1]"),
+    ("understanding", "understanding"),
+    (" answer ", "answer"),
+    ("ไม่รู้", "ไม่รู้"),               # genuinely wrong still reads as wrong
+    (None, ""),
+])
+def test_a_node_id_the_model_mangles_still_finds_its_correction(client, raw, clean):
+    """The reply is matched to the correction by this string, so a stray space or
+    a dropped bracket would silently detach the model's answer from the step it
+    answers — the CEO then sees his correction unanswered next to a run that did
+    address it."""
+    from app import pipeline
+    assert pipeline._clean_node(raw) == clean
+
+
+def test_a_model_that_ignores_the_correction_is_still_recorded_as_having_run(client):
+    """Silence is an answer the CEO needs to see: the correction is marked
+    answered by the run, and the run simply has nothing to show for it."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    _ran(client, r, t)
+    out = _fix(client, r, t, reply=_trace_reply()).json()   # no fix_responses
+    task = out["routine"]["tasks"][0]
+    assert task["corrections"][0]["answered_by"] == 2
+    assert task["runs"][1]["trace"]["fix_responses"] == []
