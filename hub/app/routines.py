@@ -26,6 +26,48 @@ from . import config, docs, llm, sources, store, telegram
 
 log = logging.getLogger("hub.routines")
 
+# What is executing this second, so the Pipeline dashboard can tell a seat that
+# is thinking from one whose report simply never arrived. Keyed by routine id;
+# the value carries which seats are still out.
+_LIVE: dict = {}
+_LIVE_LOCK = threading.Lock()
+
+
+def live() -> list:
+    """Routines running right now, each with how long it has been going."""
+    now = time.monotonic()
+    with _LIVE_LOCK:
+        entries = list(_LIVE.values())
+    return sorted(
+        ({k: v for k, v in e.items() if not k.startswith("_")}
+         | {"elapsed_ms": int((now - e["_started"]) * 1000)} for e in entries),
+        key=lambda e: -e["elapsed_ms"])
+
+
+def is_running(routine_id: int) -> bool:
+    with _LIVE_LOCK:
+        return routine_id in _LIVE
+
+
+def _mark_running(routine: dict, seats: list) -> None:
+    with _LIVE_LOCK:
+        _LIVE[routine["id"]] = {"routine_id": routine["id"],
+                                "task": routine["task"][:80],
+                                "seats": list(seats), "pending": list(seats),
+                                "_started": time.monotonic()}
+
+
+def _mark_seat_done(routine_id: int, dept: str) -> None:
+    with _LIVE_LOCK:
+        e = _LIVE.get(routine_id)
+        if e and dept in e["pending"]:
+            e["pending"].remove(dept)
+
+
+def _mark_finished(routine_id: int) -> None:
+    with _LIVE_LOCK:
+        _LIVE.pop(routine_id, None)
+
 TZ = timezone(timedelta(hours=7))          # UTC+7, the CEO's clock
 FREQUENCIES = ("daily", "weekly", "monthly")
 
@@ -136,12 +178,19 @@ def run_routine(routine: dict) -> dict:
         # truncates reasoning models into an empty reply.
         out = llm.chat(store.get_providers().get(dept, "mock"), _seat_prompt(dept), user,
                        max_tokens=4096)
+        _mark_seat_done(routine["id"], dept)
         return dept, {"text": out["text"], "provider": out["provider"], "ok": out["ok"]}
 
     # Serially, three seats on slow reasoning models outrun any sane HTTP
     # timeout; they have nothing to say to each other here, so run them at once.
-    with ThreadPoolExecutor(max_workers=max(1, len(seats))) as ex:
-        results = dict(ex.map(one, seats))
+    _mark_running(routine, seats)
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, len(seats))) as ex:
+            results = dict(ex.map(one, seats))
+    finally:
+        # A crash must clear the marker too, or the dashboard shows a phantom
+        # run forever and the CEO cannot tell it from a slow one.
+        _mark_finished(routine["id"])
 
     run = store.add_routine_run(routine["id"], results)
     _deliver(routine, run)

@@ -27,7 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import (auth, config, deliverable, depts, docs, finmodel, followup, llm,
-               pipeline, report, research, routines, sources, store, telegram)
+               report, research, routines, sources, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -80,59 +80,6 @@ class ScoreIn(BaseModel):
     outcome: str
     verdict: str  # saved | faster | neutral | missed
 
-
-class RoutineIn(BaseModel):
-    name: str
-    owner: str
-    dept: str
-    project: str | None = None
-    goal: str | None = None
-    cadence: str | None = None
-
-
-class RoutinePatchIn(BaseModel):
-    name: str | None = None
-    owner: str | None = None
-    dept: str | None = None
-    project: str | None = None
-    goal: str | None = None
-    cadence: str | None = None
-    status: str | None = None
-
-
-class TaskIn(BaseModel):
-    title: str
-    brief: str | None = None
-    owner: str | None = None
-
-
-class TaskPatchIn(BaseModel):
-    title: str | None = None
-    brief: str | None = None
-    owner: str | None = None
-    status: str | None = None
-
-
-class RunIn(BaseModel):
-    directive: str | None = None   # a one-off steer for this run only
-
-
-class CommentIn(BaseModel):
-    text: str
-    rerun: bool = True             # a correction the task never re-runs is a note
-
-
-class BranchTaskIn(BaseModel):
-    run: int
-    title: str | None = None
-
-
-class FixIn(BaseModel):
-    """A correction pinned to one node of one run's reasoning."""
-    run: int
-    node: str          # "steps[1]" / "understanding" / "assumptions[0]" …
-    should: str        # what that step should have been
-    rerun: bool = True
 
 
 def _view(session: dict) -> dict:
@@ -212,7 +159,7 @@ def state() -> dict:
         "memory_count": len(store.get_memory(limit=500)),
         "consults": store.get_consults(8),
         "decision_stats": store.decision_stats(),
-        "pipeline": _pipeline_stats(),
+        "pipeline": _pipeline_summary(),
     }
 
 
@@ -535,219 +482,156 @@ def delete_decision(decision_id: int, forget: bool = False) -> dict:
     return {"deleted": decision_id, "forgotten": dropped}
 
 
-# ── Pipeline: recurring work, one tree per routine ──
+# ── Pipeline: the dashboard over Routine ──
+#
+# Pipeline owns no records. A routine is the unit of work; Pipeline is how the
+# CEO sees all of them at once — who is assigned, what each seat last said,
+# what is running this second, and where a report failed. Anything created here
+# would be a second source of truth for the same thing, so nothing is.
 
-def _routine_or_404(routine_id: int) -> dict:
-    r = store.get_tree(routine_id)
-    if r is None:
-        raise HTTPException(404, "routine not found")
-    return r
-
-
-def _task_or_404(routine: dict, task_id: int) -> dict:
-    t = next((x for x in routine["tasks"] if x["id"] == task_id), None)
-    if t is None:
-        raise HTTPException(404, "task not found")
-    return t
+_RUN_HEALTH = {"ok": "done", "partial": "review", "failed": "blocked"}
 
 
-def _routine_view(r: dict) -> dict:
-    """A routine plus what the UI needs to render its tree without extra calls.
+def _routine_health(run: dict | None) -> str:
+    """done / review / blocked — read off the last run, not stored anywhere.
 
-    `running_now` comes from the live registry, not from the stored status: a
-    task left reading "running" by a process that died is *stalled*, and the
-    tree map has to be able to tell the two apart.
+    A stored status drifts: a report that failed at 09:00 still says "done"
+    tomorrow. Deriving it means the dashboard cannot lie about the last run.
     """
-    seat = config.DEPTS.get(r.get("dept"), {})
-    provider = store.get_providers().get(r.get("dept"), "mock")
-    tasks = []
-    for t in r.get("tasks", []):
-        running = pipeline.is_running(r["id"], t["id"])
-        tasks.append({**t,
-                      "corrections": t.get("corrections", []),
-                      "open_comments": store.open_comments(t),
-                      "open_fixes": store.open_corrections(t),
-                      "running_now": running,
-                      "stalled": t["status"] == "running" and not running})
-    return {**r,
-            "seat_name": seat.get("name", r.get("dept", "")),
-            "seat_icon": seat.get("icon", "•"),
-            "provider": provider,
+    if run is None:
+        return "todo"
+    results = run.get("results") or {}
+    if not results:
+        return "blocked"
+    ok = [k for k, v in results.items() if v.get("ok") and (v.get("text") or "").strip()]
+    if len(ok) == len(results):
+        return "done"
+    return "review" if ok else "blocked"
+
+
+def _seat_card(dept: str, run: dict | None) -> dict:
+    """One seat's standing in a routine: its provider, and its latest word."""
+    d = config.DEPTS.get(dept, {})
+    provider = store.get_providers().get(dept, "mock")
+    res = ((run or {}).get("results") or {}).get(dept) or {}
+    text = (res.get("text") or "").strip()
+    return {"key": dept, "name": d.get("name", dept), "icon": d.get("icon", "•"),
+            "role": d.get("role", ""), "provider": res.get("provider") or provider,
             "vendor": depts.vendor_of(provider),
             "provider_ready": llm.provider_ready(provider),
-            "running_now": any(t["running_now"] for t in tasks),
-            "tasks": tasks}
+            "reported": bool(text), "ok": bool(res.get("ok")) and bool(text),
+            "excerpt": text[:400], "chars": len(text)}
 
 
-def _pipeline_stats() -> dict:
-    """Stored counters plus what is in flight this second."""
-    return {**store.pipeline_stats(), "running": len(pipeline.live())}
+def _pipeline_view(r: dict, runs: list, live_ids: set) -> dict:
+    """A routine as the dashboard shows it: assignment, health, last word.
+
+    `runs` comes back newest-first from the store, so the latest report is the
+    head of the list — taking the tail would show the CEO his oldest run as
+    today's status, which is precisely the drift this page exists to prevent.
+    """
+    mine = [x for x in runs if x["routine_id"] == r["id"]]
+    last = mine[0] if mine else None
+    seats = [d for d in r.get("seats", []) if d in config.DEPTS]
+    cards = [_seat_card(d, last) for d in seats]
+    health = _routine_health(last)
+    return {
+        **r,
+        "health": health,
+        "running_now": r["id"] in live_ids,
+        "seat_cards": cards,
+        "runs_total": len(mine),
+        "last_run": None if last is None else {
+            "id": last["id"], "at": last["at"], "at_local": last.get("at_local"),
+            "delivery": last.get("delivery"),
+            "delivered": bool((last.get("delivery") or {}).get("ok")),
+            "seats_ok": sum(1 for c in cards if c["ok"]),
+            "seats_total": len(cards),
+        },
+        "next_at_local": _local(r.get("next_at")),
+        "last_at_local": _local(r.get("last_at")),
+    }
+
+
+def _local(iso: str | None) -> str | None:
+    if not iso:
+        return None
+    try:
+        from datetime import datetime as _dt
+        return _dt.fromisoformat(iso).astimezone(routines.TZ).strftime("%Y-%m-%d %H:%M")
+    except Exception:  # noqa: BLE001 — a malformed stamp must not break the page
+        return iso[:16].replace("T", " ")
 
 
 @app.get("/api/pipeline")
-def pipeline_state(include_archived: bool = False) -> dict:
-    return {"routines": [_routine_view(r)
-                         for r in store.get_trees(include_archived)],
-            "stats": _pipeline_stats(),
-            "live": pipeline.live(),
-            "task_statuses": list(store._TASK_STATUSES),
+def pipeline_state() -> dict:
+    """Every routine, as a dashboard. Derived — Pipeline stores nothing."""
+    rs = store.get_routines()
+    runs = store.get_routine_runs(limit=300)
+    live = routines.live()
+    live_ids = {e["routine_id"] for e in live}
+    views = [_pipeline_view(r, runs, live_ids) for r in rs]
+    return {"routines": views,
+            "stats": _pipeline_stats(views, runs, live),
+            "live": live,
+            "seats": [{"key": k, **v} for k, v in config.DEPTS.items()],
+            "scheduler_alive": routines.scheduler_alive(),
+            "now_local": routines.now().strftime("%Y-%m-%d %H:%M"),
             "projects": docs.list_projects()}
+
+
+def _pipeline_summary() -> dict:
+    """Pipeline counters for the sidebar, computed the same way the page does."""
+    rs = store.get_routines()
+    runs = store.get_routine_runs(limit=300)
+    live = routines.live()
+    views = [_pipeline_view(r, runs, {e["routine_id"] for e in live}) for r in rs]
+    return _pipeline_stats(views, runs, live)
+
+
+def _pipeline_stats(views: list, runs: list, live: list) -> dict:
+    seat_slots = [c for v in views for c in v["seat_cards"]]
+    return {
+        "routines": len(views),
+        "enabled": sum(1 for v in views if v.get("enabled")),
+        "running": len(live),
+        "runs": len(runs),
+        "done": sum(1 for v in views if v["health"] == "done"),
+        "review": sum(1 for v in views if v["health"] == "review"),
+        "blocked": sum(1 for v in views if v["health"] == "blocked"),
+        "seats_assigned": len(seat_slots),
+        "seats_silent": sum(1 for c in seat_slots if not c["reported"]),
+        "undelivered": sum(1 for v in views
+                           if v["last_run"] and not v["last_run"]["delivered"]),
+    }
 
 
 @app.get("/api/pipeline/live")
 def pipeline_live() -> dict:
-    """Just what is running, for the tree map to poll on a short interval.
+    """Only what is running, for the dashboard to poll every few seconds.
 
-    Separate from /api/pipeline on purpose: the map ticks every couple of
-    seconds and has no business re-serialising every run and comment in the
-    store to do it.
+    Separate from /api/pipeline on purpose: the strip ticks continuously and
+    has no business re-serialising every report in the store to do it.
     """
-    return {"live": pipeline.live(), "stats": _pipeline_stats()}
+    live = routines.live()
+    rs = store.get_routines()
+    runs = store.get_routine_runs(limit=300)
+    views = [_pipeline_view(r, runs, {e["routine_id"] for e in live}) for r in rs]
+    return {"live": live, "stats": _pipeline_stats(views, runs, live)}
 
 
-@app.post("/api/pipeline/routines")
-def create_routine(body: RoutineIn) -> dict:
-    """A routine needs a name and an owner. Work with no owner is a wish, and
-    the whole point of a routine is that somebody answers for it."""
-    if not body.name.strip():
-        raise HTTPException(400, "name is required")
-    if not body.owner.strip():
-        raise HTTPException(400, "owner is required — งานที่ไม่มีผู้รับผิดชอบไม่ใช่งาน")
-    if body.dept not in config.DEPTS:
-        raise HTTPException(400, f"unknown dept: {body.dept}")
-    project = (body.project or "").strip() or None
-    if project == NO_PROJECT:
-        project = None
-    return _routine_view(store.add_tree(
-        body.name.strip(), project, body.owner.strip(), body.dept,
-        (body.goal or "").strip(), (body.cadence or "").strip()))
-
-
-@app.patch("/api/pipeline/routines/{routine_id}")
-def patch_routine(routine_id: int, body: RoutinePatchIn) -> dict:
-    _routine_or_404(routine_id)
-    fields = body.model_dump(exclude_none=True)
-    if "dept" in fields and fields["dept"] not in config.DEPTS:
-        raise HTTPException(400, f"unknown dept: {fields['dept']}")
-    if "status" in fields and fields["status"] not in store._ROUTINE_STATUSES:
-        raise HTTPException(400, "status must be " + "|".join(store._ROUTINE_STATUSES))
-    for key in ("name", "owner"):
-        if key in fields and not str(fields[key]).strip():
-            raise HTTPException(400, f"{key} cannot be blank")
-    if fields.get("project") in ("", NO_PROJECT):
-        fields["project"] = None
-    return _routine_view(store.update_tree(routine_id, **fields))
-
-
-@app.delete("/api/pipeline/routines/{routine_id}")
-def remove_routine(routine_id: int) -> dict:
-    _routine_or_404(routine_id)
-    store.delete_tree(routine_id)
-    return {"deleted": routine_id}
-
-
-@app.post("/api/pipeline/routines/{routine_id}/tasks")
-def create_task(routine_id: int, body: TaskIn) -> dict:
-    _routine_or_404(routine_id)
-    if not body.title.strip():
-        raise HTTPException(400, "title is required")
-    store.add_task(routine_id, body.title.strip(), (body.brief or "").strip(),
-                   (body.owner or "").strip() or None)
-    return _routine_view(_routine_or_404(routine_id))
-
-
-@app.patch("/api/pipeline/routines/{routine_id}/tasks/{task_id}")
-def patch_task(routine_id: int, task_id: int, body: TaskPatchIn) -> dict:
-    routine = _routine_or_404(routine_id)
-    _task_or_404(routine, task_id)
-    fields = body.model_dump(exclude_none=True)
-    if "status" in fields and fields["status"] not in store._TASK_STATUSES:
-        raise HTTPException(400, "status must be " + "|".join(store._TASK_STATUSES))
-    if "title" in fields and not fields["title"].strip():
-        raise HTTPException(400, "title cannot be blank")
-    store.update_task(routine_id, task_id, **fields)
-    return _routine_view(_routine_or_404(routine_id))
-
-
-@app.delete("/api/pipeline/routines/{routine_id}/tasks/{task_id}")
-def remove_task(routine_id: int, task_id: int) -> dict:
-    routine = _routine_or_404(routine_id)
-    _task_or_404(routine, task_id)
-    store.delete_task(routine_id, task_id)
-    return _routine_view(_routine_or_404(routine_id))
-
-
-@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/run")
-def run_task(routine_id: int, task_id: int, body: RunIn) -> dict:
-    routine = _routine_or_404(routine_id)
-    _task_or_404(routine, task_id)
-    out = pipeline.run_task(routine_id, task_id, (body.directive or "").strip() or None)
-    return {"routine": _routine_view(_routine_or_404(routine_id)), "run": out["run"]}
-
-
-@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/comment")
-def comment_task(routine_id: int, task_id: int, body: CommentIn) -> dict:
-    """Correct an answer that came back wrong.
-
-    The comment is not a note filed beside the reply — it is quoted into the next
-    run as a binding instruction, with the rejected answer attached, and the run
-    has to report what it changed. Both versions stay in the tree.
-    """
-    routine = _routine_or_404(routine_id)
-    _task_or_404(routine, task_id)
-    if not body.text.strip():
-        raise HTTPException(400, "comment text is required")
-    comment = store.add_comment(routine_id, task_id, body.text.strip())
-    run = None
-    if body.rerun:
-        run = pipeline.run_task(routine_id, task_id)["run"]
-    return {"routine": _routine_view(_routine_or_404(routine_id)),
-            "comment": comment, "run": run}
-
-
-@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/fix")
-def fix_reasoning(routine_id: int, task_id: int, body: FixIn) -> dict:
-    """Mark one step of the AI's reasoning wrong, and say what it should be.
-
-    Commenting on a task says the answer is wrong; the model is then free to
-    re-derive the same conclusion down the same road, because nothing told it
-    which turn to stop taking. Pinning the correction to the node it belongs to
-    closes that road: the next run is handed the exact step, what it thought, and
-    what the CEO says it should have thought, and has to report per node what it
-    did about it.
-    """
-    routine = _routine_or_404(routine_id)
-    task = _task_or_404(routine, task_id)
-    if not body.should.strip():
-        raise HTTPException(400, "should is required — บอกด้วยว่าจุดนั้นควรเป็นอะไร")
-    run = next((r for r in task.get("runs", []) if r["n"] == body.run), None)
-    if run is None:
-        raise HTTPException(400, f"run {body.run} does not exist on this task")
-    found = pipeline.node_text(run.get("trace") or {}, body.node)
-    if found is None:
-        # Better to refuse than to quote the model a step it never wrote.
-        raise HTTPException(400, f"ไม่พบจุด '{body.node}' ในเส้นทางคิดของรอบที่ {body.run}")
-    label, was = found
-
-    fix = store.add_correction(routine_id, task_id, body.run, body.node,
-                               label, was, body.should.strip())
-    out = None
-    if body.rerun:
-        out = pipeline.run_task(routine_id, task_id)["run"]
-    return {"routine": _routine_view(_routine_or_404(routine_id)),
-            "fix": fix, "run": out}
-
-
-@app.post("/api/pipeline/routines/{routine_id}/tasks/{task_id}/branch")
-def branch_task(routine_id: int, task_id: int, body: BranchTaskIn) -> dict:
-    """Fork the task at one run so two answers can be held side by side."""
-    routine = _routine_or_404(routine_id)
-    task = _task_or_404(routine, task_id)
-    if not any(r["n"] == body.run for r in task.get("runs", [])):
-        raise HTTPException(400, f"run {body.run} does not exist on this task")
-    branch = store.branch_task(routine_id, task_id, body.run,
-                               (body.title or "").strip() or None)
-    return {"routine": _routine_view(_routine_or_404(routine_id)), "task": branch}
+@app.get("/api/pipeline/routines/{routine_id}")
+def pipeline_routine(routine_id: int, limit: int = 20) -> dict:
+    """One routine in full: its standing, and every report it has produced."""
+    r = store.get_routine(routine_id)
+    if r is None:
+        raise HTTPException(404, "routine not found")
+    runs = store.get_routine_runs(limit=300)
+    view = _pipeline_view(r, runs, {e["routine_id"] for e in routines.live()})
+    # Already newest-first from the store; slicing the head keeps it that way.
+    history = [x for x in runs if x["routine_id"] == routine_id][:limit]
+    return {"routine": view,
+            "runs": [{**x, "health": _routine_health(x)} for x in history]}
 
 
 @app.put("/api/dept/{dept}/provider")
@@ -1106,3 +990,5 @@ def rotate_source_key(source_id: int) -> dict:
     if s is None:
         raise HTTPException(404, "source not found")
     return s
+
+
