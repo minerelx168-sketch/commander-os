@@ -2221,3 +2221,364 @@ def test_bad_inputs(client):
     assert client.get("/api/consults/999").status_code == 404
     assert client.post("/api/consult/999/advance", json={}).status_code == 404
     assert client.post("/api/consult/999/reset", json={"step": "opinions"}).status_code == 404
+
+
+# ── reading what the AI actually sent back ──
+#
+# Everything below pins one class of bug: the provider answered, the hub decided
+# it understood, and the CEO was shown something the model never said. A silent
+# misread is more expensive than an error, so each of these has to fail loudly.
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ('{"a": 1}', {"a": 1}),
+    ("```json\n{\"a\": 1}\n```", {"a": 1}),                     # fenced
+    ("```\n{\"a\": 1}\n```", {"a": 1}),                          # fenced, unlabelled
+    ('นี่คือผลลัพธ์ครับ\n{"a": 1}\nหวังว่าจะช่วยได้', {"a": 1}),   # wrapped in prose
+    ('สรุป (ตามที่ขอ) {ดังนี้} ครับ\n{"a": 1}', {"a": 1}),        # a brace in the preamble
+    ('{"a": 1,}', {"a": 1}),                                     # trailing comma
+    ('{"a": 1, /* หมายเหตุ */ "b": 2}', {"a": 1, "b": 2}),        # block comment
+    ('{"a": 1} // เสร็จแล้ว', {"a": 1}),                          # line comment
+    ('{"url": "https://x.com/a"}', {"url": "https://x.com/a"}),  # ...that is not a URL
+    ('{"a": True, "b": None}', {"a": True, "b": None}),          # python literals
+    ('{"a": "บรรทัดแรก\nบรรทัดสอง"}', {"a": "บรรทัดแรก\nบรรทัดสอง"}),  # raw newline in a string
+    ('{“a”: 1}', {"a": 1}),                                      # typographic quotes
+])
+def test_every_way_a_model_mangles_its_json(client, raw, expected):
+    """Each of these is a real provider habit. `find("{")..rfind("}")` — what the
+    three old copies of _parse_json did — gets the brace-in-the-preamble case
+    wrong and every repair case wrong."""
+    from app import jsonx
+    assert jsonx.extract(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "ไม่มี JSON เลย", "{ยังไม่ปิดวงเล็บ", "[1,2,3]", None])
+def test_unreadable_json_fails_closed(client, raw):
+    """None, never a plausible object nobody wrote."""
+    from app import jsonx
+    assert jsonx.extract(raw) is None
+
+
+def test_a_truncated_reply_keeps_the_sections_that_finished(client):
+    """A reply cut at the token ceiling used to cost the whole document. Keep the
+    entries that closed, and prefer the outermost object over some nested
+    fragment that happens to parse on its own."""
+    from app import jsonx
+    cut = '{"sections": {"a": "หนึ่ง", "b": "สอง"}, "risk": "ครึ่งประ'
+    assert jsonx.extract(cut) == {"sections": {"a": "หนึ่ง", "b": "สอง"}}
+
+
+@pytest.mark.parametrize(("raw", "unit", "value"), [
+    ("1,250 บาท", None, 1250),          # thousands separator + currency word
+    ("1.2 ล้านบาท", None, 1_200_000),   # Thai magnitude, silently dropped before
+    ("4,200 ล้าน", None, 4.2e9),
+    ("50k", None, 50_000),
+    ("(3,000)", None, -3000),            # accounting negative, read as +3000 before
+    ("100-200", None, 150),              # a range is not a subtraction
+    ("3 เดือน", None, 3),                # "m" for months must not mean millions
+    ("3%", "pct", 0.03),
+    (3, "pct", 0.03),                    # the schema said 0.03; the model said 3
+    (0.03, "pct", 0.03),                 # …and an already-correct rate is left alone
+    (40, "pct", 0.4),
+    (125, "mult", 1.25),                 # a scenario multiplier written as a percent
+    (1.25, "mult", 1.25),
+    ("ไม่ทราบ", None, 0),
+    (None, None, 0),
+    (True, None, 0),                     # a bool is not a number
+])
+def test_numbers_are_read_the_way_a_thai_cfo_writes_them(client, raw, unit, value):
+    from app import jsonx
+    assert jsonx.number(raw, unit) == pytest.approx(value)
+
+
+def test_a_reinterpreted_unit_is_declared_not_silently_fixed(client):
+    """The CEO must be able to trace every number. A unit the hub corrected on his
+    behalf is exactly the number he would never think to check."""
+    from app import jsonx
+    value, note = jsonx.number_detail(3, "pct")
+    assert value == pytest.approx(0.03) and "3%" in note
+    assert jsonx.number_detail(0.03, "pct")[1] == "", "a correct value needs no note"
+
+
+def test_percent_confusion_reaches_the_workbook_as_a_rate_and_a_warning(client):
+    """`3` in a percent field is a 300%/month forecast — ten orders of magnitude
+    of error by month 24, agreed with by every sheet, chart and break-even."""
+    messy = json.loads(FINMODEL_JSON)
+    messy["revenue"]["growth_rate_monthly"] = {"value": 3, "source": "บอร์ด"}
+    messy["costs"]["fixed_cost_month"] = {"value": "1.2 ล้านบาท", "source": "บอร์ด"}
+    messy["scenarios"]["best"]["revenue_mult"] = 125
+    _s, _r, wb = _finmodel_wb(client, json.dumps(messy, ensure_ascii=False))
+    ws = wb["สมมติฐาน"]
+    rows = {row[0].value: row for row in ws.iter_rows(min_row=7, max_col=5)}
+    assert rows["อัตราเติบโตต่อเดือน"][1].value == pytest.approx(0.03)
+    assert "ระบบตีความหน่วย" in (rows["อัตราเติบโตต่อเดือน"][3].value or "")
+    assert rows["ค่าใช้จ่ายคงที่ต่อเดือน (บาท)"][1].value == pytest.approx(1_200_000)
+    # the scenario multipliers are read with the same eye
+    best = [r for r in ws.iter_rows(min_row=7, max_col=3) if r[0].value == "Best"][0]
+    assert best[1].value == pytest.approx(1.25)
+
+
+# ── the transport layer: an answer that isn't there, and one that was cut ──
+
+class _Resp:
+    """Minimal httpx.Response stand-in for the provider transports."""
+
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+def test_gemini_reads_the_answer_not_the_scratchpad(client):
+    """Gemini 3 returns its reasoning as a part flagged `thought: true`, usually
+    first. `parts[0].text` therefore hands the board the model's scratchpad, and
+    drops any answer split across several parts."""
+    from app import llm
+
+    payload = {"candidates": [{"content": {"parts": [
+        {"text": "ขอคิดก่อน...", "thought": True},
+        {"text": "ส่วนที่หนึ่ง"},
+        {"text": "ส่วนที่สอง"},
+    ]}, "finishReason": "STOP"}]}
+    with patch("app.config.GOOGLE_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(payload)):
+        assert llm._gemini("s", "u") == "ส่วนที่หนึ่ง\nส่วนที่สอง"
+
+
+def test_gemini_says_when_it_was_cut_or_blocked(client):
+    from app import llm
+
+    cut = {"candidates": [{"content": {"parts": [{"text": "ครึ่งเดียว"}]},
+                           "finishReason": "MAX_TOKENS"}]}
+    with patch("app.config.GOOGLE_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(cut)):
+        with pytest.raises(llm.Truncated) as e:
+            llm._gemini("s", "u")
+        assert e.value.text == "ครึ่งเดียว"       # the partial survives the raise
+
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
+    with patch("app.config.GOOGLE_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(blocked)):
+        with pytest.raises(RuntimeError, match="SAFETY"):
+            llm._gemini("s", "u")
+
+
+def test_a_reply_that_is_all_thinking_is_a_failure_not_an_answer(client):
+    """Claude returning only thinking blocks, or DeepSeek spending the budget in
+    `reasoning_content`, used to reach the board as a confident blank section."""
+    from app import llm
+
+    thinking_only = {"content": [{"type": "thinking", "thinking": "..."}],
+                     "stop_reason": "end_turn"}
+    with patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(thinking_only)):
+        with pytest.raises(llm.EmptyReply):
+            llm._anthropic("s", "u")
+
+    reasoning_only = {"choices": [{"message": {"content": "", "reasoning_content": "..."},
+                                   "finish_reason": "stop"}]}
+    with patch("app.config.DEEPSEEK_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(reasoning_only)):
+        with pytest.raises(llm.EmptyReply):
+            llm._deepseek("s", "u")
+
+
+def test_every_provider_reports_the_token_ceiling_in_its_own_dialect(client):
+    """stop_reason / finish_reason / finishReason — three spellings of the same
+    event, none of which were being read."""
+    from app import llm
+
+    claude_cut = {"content": [{"type": "text", "text": "ครึ่ง"}], "stop_reason": "max_tokens"}
+    with patch("app.config.ANTHROPIC_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(claude_cut)):
+        with pytest.raises(llm.Truncated):
+            llm._anthropic("s", "u", None, max_tokens=100)
+
+    openai_cut = {"choices": [{"message": {"content": "ครึ่ง"}, "finish_reason": "length"}]}
+    with patch("app.config.DEEPSEEK_API_KEY", "k"), \
+         patch("app.llm.httpx.post", return_value=_Resp(openai_cut)):
+        with pytest.raises(llm.Truncated):
+            llm._deepseek("s", "u")
+
+
+def test_chat_hands_back_the_partial_and_flags_the_cut(client):
+    """A cut reply is still worth salvaging — but the caller has to be told, or a
+    half-written document reads as a finished one."""
+    from app import llm
+
+    def cut(system, user, cancel=None, max_tokens=None):
+        raise llm.Truncated("ครึ่งเดียว", "anthropic")
+
+    with patch.dict(llm._CALLERS, {"anthropic": cut}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), patch("app.llm.time.sleep"):
+        out = llm.chat("anthropic", "s", "u")
+    assert out["truncated"] and out["ok"] and out["text"] == "ครึ่งเดียว"
+
+
+def test_an_empty_reply_is_retried_but_a_cut_one_is_not(client):
+    """An empty completion is often a bad minute; the same budget cuts at the same
+    place every time, so retrying a truncation just burns the CEO's clock."""
+    from app import llm
+
+    calls = {"empty": 0, "cut": 0}
+
+    def empty_then_fine(system, user, cancel=None, max_tokens=None):
+        calls["empty"] += 1
+        if calls["empty"] == 1:
+            raise llm.EmptyReply("nothing")
+        return "recovered"
+
+    def always_cut(system, user, cancel=None, max_tokens=None):
+        calls["cut"] += 1
+        raise llm.Truncated("ครึ่ง", "anthropic")
+
+    with patch.dict(llm._CALLERS, {"anthropic": empty_then_fine}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), patch("app.llm.time.sleep"):
+        assert llm.chat("anthropic", "s", "u")["text"] == "recovered"
+    assert calls["empty"] == 2
+
+    with patch.dict(llm._CALLERS, {"anthropic": always_cut}), \
+         patch("app.config.ANTHROPIC_API_KEY", "k"), patch("app.llm.time.sleep"):
+        llm.chat("anthropic", "s", "u")
+    assert calls["cut"] == 1
+
+
+# ── chat_json: ask for a schema, come back with one ──
+
+def _chat_reply(text, ok=True, truncated=False):
+    return {"text": text, "provider": "anthropic", "model": "m",
+            "ok": ok, "truncated": truncated}
+
+
+def test_a_good_json_reply_costs_exactly_one_call(client):
+    from app import llm
+    with patch("app.llm.chat", return_value=_chat_reply('{"a": 1}')) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a",))
+    assert out["data"] == {"a": 1} and out["calls"] == 1 and m.call_count == 1
+
+
+def test_a_model_that_answers_in_prose_is_shown_what_broke(client):
+    """Re-asking blind costs the same tokens for a worse hit rate — quote the
+    broken reply back and the model fixes its own format."""
+    from app import llm
+    replies = [_chat_reply("ขอโทษครับ ผมไม่เข้าใจ"), _chat_reply('{"a": 1}')]
+    with patch("app.llm.chat", side_effect=replies) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a",))
+    assert out["data"] == {"a": 1} and out["calls"] == 2
+    repair = m.call_args_list[1].args[2]
+    assert "ระบบอ่านคำตอบก่อนหน้าของคุณไม่สำเร็จ" in repair
+    assert "ขอโทษครับ ผมไม่เข้าใจ" in repair, "the model must see its own broken reply"
+    assert "u" in repair, "and the original question, or it answers a new one"
+
+
+def test_json_that_parses_into_a_hole_is_not_an_answer(client):
+    """A required key that came back missing is the failure that reaches the CEO
+    looking like an answer — a blank section he reads as 'nothing to report'."""
+    from app import llm
+    replies = [_chat_reply('{"options": []}'),
+               _chat_reply('{"options": ["ก"], "recommended": "ก"}')]
+    with patch("app.llm.chat", side_effect=replies) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("options", "recommended"))
+    assert out["data"] == {"options": ["ก"], "recommended": "ก"} and m.call_count == 2
+    assert "options" in m.call_args_list[1].args[2]      # names the keys it wants
+
+
+def test_a_cut_reply_is_re_asked_on_a_bigger_budget(client):
+    from app import llm
+    replies = [_chat_reply('{"a": 1, "b":', truncated=True),
+               _chat_reply('{"a": 1, "b": 2}')]
+    with patch("app.llm.chat", side_effect=replies) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a", "b"), max_tokens=4096)
+    assert out["data"] == {"a": 1, "b": 2}
+    assert m.call_args_list[1].kwargs["max_tokens"] == 8192
+
+
+def test_a_dead_provider_is_not_asked_to_reformat(client):
+    """A missing key or a 401 is not a formatting problem; re-asking just makes
+    the CEO wait for the same error twice."""
+    from app import llm
+    with patch("app.llm.chat", return_value=_chat_reply("⚠️ ล้มเหลว", ok=False)) as m:
+        out = llm.chat_json("anthropic", "s", "u", required=("a",))
+    assert out["data"] is None and m.call_count == 1
+
+
+def test_the_best_read_survives_a_failed_repair(client):
+    """If the second try is worse than the first, keep the first — a partial
+    answer beats none, as long as it is a partial answer somebody wrote."""
+    from app import llm
+    replies = [_chat_reply('{"a": 1}'), _chat_reply("ยังไม่เข้าใจอีก")]
+    with patch("app.llm.chat", side_effect=replies):
+        out = llm.chat_json("anthropic", "s", "u", required=("a", "b"))
+    assert out["data"] == {"a": 1} and out["error"]
+
+
+# ── the same fixes, seen from the boardroom ──
+
+def test_a_chatty_moderator_no_longer_convenes_the_whole_board(client):
+    """Stage 1 failing open calls every seat — which is the *expensive* failure:
+    five models debating a question two of them have no lane for. A moderator that
+    wrapped its JSON in a sentence used to trigger it."""
+    chatty = "ได้ครับ นี่คือการตั้งกรอบ:\n```json\n" + _frame_json(["cfo", "coo"]) + "\n```\nหวังว่าจะช่วยได้"
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply(chatty)) as m:
+        s = _advance(client, s["id"])
+    assert m.call_count == 1, "a readable reply must not cost a repair round"
+    assert set(s["steps"][0]["results"]["framer"]["seats"]) == {"cfo", "coo"}
+
+
+def test_seats_named_in_prose_still_convene(client):
+    """"cfo, coo" and ["cfo","coo"] mean the same thing to everyone except a
+    list comprehension over a string, which convenes one board per letter."""
+    framing = json.dumps({**json.loads(_frame_json()), "seats": "cfo, coo"},
+                         ensure_ascii=False)
+    s = _start(client)
+    with patch("app.llm.chat", return_value=_reply(framing)):
+        s = _advance(client, s["id"])
+    assert set(s["steps"][0]["results"]["framer"]["seats"]) == {"cfo", "coo"}
+
+
+def test_a_memory_id_quoted_as_a_string_is_still_a_citation(client):
+    """`"1" in {1}` is False, so every conflict a model quoted as a string was
+    thrown out as a hallucination and the CEO was told the archive was clean."""
+    from app import memory, store
+    store.add_memory({"consult_id": 1, "question": "q", "project": None,
+                      "conclusion": "c", "stance": "ทำ", "confidence": 50,
+                      "constraints": [], "open_questions": [], "tripwires": []})
+    quoted = json.dumps({"conflicts": [{"memory_id": "1", "past": "x", "tension": "y"}],
+                         "carry_forward": []}, ensure_ascii=False)
+    with patch("app.llm.chat", return_value=_reply(quoted)):
+        out = memory.conflicts("คำถามใหม่", None, "anthropic")
+    assert [c["memory_id"] for c in out["conflicts"]] == [1]
+
+
+def test_a_clean_archive_does_not_buy_a_repair_round(client):
+    """An empty conflicts list is the correct answer most of the time. Demanding a
+    non-empty one would pressure the model into inventing a clash."""
+    from app import memory, store
+    store.add_memory({"question": "q", "project": None, "conclusion": "c"})
+    with patch("app.llm.chat",
+               return_value=_reply('{"conflicts": [], "carry_forward": []}')) as m:
+        out = memory.conflicts("คำถามใหม่", None, "anthropic")
+    assert out["conflicts"] == [] and m.call_count == 1
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("ความมั่นใจ: **62%**", 62),              # markdown bold between label and score
+    ("ความมั่นใจต่อจุดยืนนี้ ประมาณ 62%", 62),  # words between them
+    ("Confidence: 7/10", 70),                 # a score, not seven percent
+    ("ความมั่นใจ 85/100", 85),
+    ("ความมั่นใจ\n70%", 70),                   # on the next line
+    ("ความมั่นใจ\n\nเหตุผล ราคา 45 บาท", None),  # not a number from further down
+])
+def test_confidence_survives_the_way_seats_actually_write_it(client, text, expected):
+    """An unrated seat drops out of the board average, so a regex that only
+    matched `label: digits` computed confidence from whichever seats happened to
+    punctuate the way it expected."""
+    from app import depts
+    assert depts.parse_confidence(text) == expected

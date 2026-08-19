@@ -310,12 +310,14 @@ def build(session: dict, dept: str, refresh: bool = False) -> dict:
     # 16k: seven Thai sections with tables routinely exceed 8k once a reasoning
     # model spends part of the budget thinking, and a truncated reply used to
     # discard the whole document.
-    out = llm.chat(provider, _author_system(spec), _grounding(session),
-                   cancel=lambda: store.is_stopped(session["id"]), max_tokens=16384)
-    document = report._parse_json(out["text"]) if out["ok"] else None
+    out = llm.chat_json(provider, _author_system(spec), _grounding(session),
+                        cancel=lambda: store.is_stopped(session["id"]), max_tokens=16384,
+                        required=("sections",))
+    document = out["data"]
     if not isinstance(document, dict) or not document.get("sections"):
-        log.warning("deliverable %s unusable for consult %s (ok=%s chars=%s)",
-                    dept, session.get("id"), out.get("ok"), len(out.get("text") or ""))
+        log.warning("deliverable %s unusable for consult %s (ok=%s calls=%s chars=%s): %s",
+                    dept, session.get("id"), out.get("ok"), out.get("calls"),
+                    len(out.get("text") or ""), out["error"])
         raise ValueError(f"{config.DEPTS[dept]['name']} สร้างเอกสารไม่สำเร็จ — ลองกดสร้างใหม่อีกครั้ง")
 
     # A salvaged reply loses its tail sections; say so rather than let the CEO
