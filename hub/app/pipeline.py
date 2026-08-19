@@ -27,7 +27,9 @@ that shows only conclusions asks the CEO to trust a model he cannot inspect;
 "the AI ignored my document" is a checkable claim rather than a suspicion.
 """
 import logging
+import threading
 import time
+from datetime import datetime, timezone
 
 from . import config, depts, docs, jsonx, llm, memory, store
 
@@ -77,6 +79,42 @@ TASK_SCHEMA = (
 )
 
 _REQUIRED = ("understanding", "answer")
+
+# ── the live registry: which runs are in flight *right now* ────────────────
+#
+# `status: "running"` in the store is not enough to answer "what is running?".
+# It is written by the request that starts the run and only corrected when that
+# same request finishes, so a poll from another tab sees "running" for a task
+# whose process died an hour ago, and sees nothing at all for one that started a
+# second ago in a request still in flight.
+#
+# This is the in-memory truth instead: registered the moment a run begins,
+# removed in a `finally` whatever happens to it. It is deliberately not
+# persisted — a restart means nothing is running, which is exactly true. The two
+# sources disagreeing is itself the useful signal: stored "running" with no live
+# entry is a *stalled* task, and the map says so rather than showing it as busy.
+_LIVE: dict[str, dict] = {}
+_LIVE_LOCK = threading.Lock()
+
+
+def _live_key(routine_id: int, task_id: int) -> str:
+    return f"{routine_id}.{task_id}"
+
+
+def live() -> list:
+    """Runs in flight, newest first, each with how long it has been going."""
+    now = time.monotonic()
+    with _LIVE_LOCK:
+        entries = list(_LIVE.values())
+    return sorted(
+        ({k: v for k, v in e.items() if not k.startswith("_")}
+         | {"elapsed_ms": int((now - e["_started"]) * 1000)} for e in entries),
+        key=lambda e: e["elapsed_ms"])
+
+
+def is_running(routine_id: int, task_id: int) -> bool:
+    with _LIVE_LOCK:
+        return _live_key(routine_id, task_id) in _LIVE
 
 
 def _seat(routine: dict) -> tuple[str, dict]:
@@ -226,10 +264,31 @@ def run_task(routine_id: int, task_id: int, directive: str | None = None) -> dic
     user, inputs = _grounding(routine, task, directive)
     pending = store.open_comments(task)
 
+    trigger = ("คอมเมนต์ของ CEO " + ", ".join(f"#{c['id']}" for c in pending)
+               if pending else ("คำสั่งเพิ่มเติม" if directive else "สั่งรันเอง"))
+
     store.update_task(routine_id, task_id, status="running")
     started = time.monotonic()
-    out = llm.chat_json(provider, system, user, max_tokens=MAX_TOKENS,
-                        required=_REQUIRED)
+    key = _live_key(routine_id, task_id)
+    with _LIVE_LOCK:
+        _LIVE[key] = {
+            "routine_id": routine_id, "task_id": task_id,
+            "routine": routine.get("name", ""), "tree": routine.get("tree", ""),
+            "task": task.get("title", ""),
+            "owner": task.get("owner") or routine.get("owner", ""),
+            "dept": dept, "seat": seat["name"], "provider": provider,
+            "trigger": trigger, "run_n": len(task.get("runs", [])) + 1,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "_started": started,
+        }
+    try:
+        out = llm.chat_json(provider, system, user, max_tokens=MAX_TOKENS,
+                            required=_REQUIRED)
+    finally:
+        # Whatever happens — a raise, a timeout, a provider dying — the map must
+        # not keep claiming this task is busy.
+        with _LIVE_LOCK:
+            _LIVE.pop(key, None)
     elapsed = int((time.monotonic() - started) * 1000)
 
     trace = _normalise(out["data"]) if isinstance(out["data"], dict) else None
@@ -250,8 +309,7 @@ def run_task(routine_id: int, task_id: int, directive: str | None = None) -> dic
         "duration_ms": elapsed,
         # Why this run happened at all — the difference between "the CEO pressed
         # run" and "the CEO rejected the last answer" is the point of the tree.
-        "trigger": ("คอมเมนต์ของ CEO " + ", ".join(f"#{c['id']}" for c in pending)
-                    if pending else ("คำสั่งเพิ่มเติม" if directive else "สั่งรันเอง")),
+        "trigger": trigger,
         "answered_comments": [c["id"] for c in pending],
         "directive": directive or None,
     }

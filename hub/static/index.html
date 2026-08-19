@@ -1171,6 +1171,9 @@ select.step-act { background: var(--bg-3); border-color: var(--border); color: v
 .st-review  { background: transparent;      color: var(--text);   border-color: var(--text); border-style: dashed; }
 .st-done    { background: var(--accent);    color: #000;          border-color: var(--accent); }
 .st-blocked { background: var(--text-2);    color: #000;          border-color: var(--text); border-style: double; border-width: 3px; }
+/* stored "running" with nothing in the live registry: the process that started
+   it is gone. Say "ค้าง", never keep claiming it is busy. */
+.st-stalled { background: transparent;      color: var(--text-2); border-color: var(--text-3); border-style: dotted; }
 .run {
   margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius);
   background: var(--bg-3); border: 1px solid var(--border);
@@ -1218,6 +1221,100 @@ select.step-act { background: var(--bg-3); border-color: var(--border); color: v
 .pipe-input:focus { border-color: var(--accent); }
 .pipe-label { font-size: 11px; color: var(--text-3); margin-bottom: 4px; display: block; }
 @media (max-width: 900px) { .pipe-form { grid-template-columns: 1fr; } }
+
+/* ============================================================
+   TREE MAP — every work tree at once, and what is running in it
+   Real connectors, not indentation: the elbow is drawn per node and the trunk
+   is masked below the last child, so the branching is legible at a glance
+   instead of having to be counted in whitespace.
+   ============================================================ */
+.tmap { font-size: 13px; }
+
+.tmap-root {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase;
+  color: var(--text); padding-bottom: 6px;
+}
+
+.tmap-kids {
+  margin-left: 7px;
+  padding-left: 20px;
+  border-left: 1px solid var(--border-2);
+}
+
+.tmap-node { position: relative; padding: 5px 0; }
+.tmap-node::before {            /* the elbow into this node */
+  content: ''; position: absolute;
+  left: -20px; top: 17px; width: 14px; height: 1px;
+  background: var(--border-2);
+}
+.tmap-node:last-child::after {  /* mask the trunk below the last child */
+  content: ''; position: absolute;
+  left: -21px; top: 18px; bottom: -6px; width: 3px;
+  background: var(--bg-2);
+}
+
+.tmap-row {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.tmap-row:hover { background: var(--bg-3); border-color: var(--border); }
+.tmap-row.is-running { border-color: var(--text); background: var(--bg-3); }
+.tmap-name { font-weight: 650; color: var(--text); }
+.tmap-leaf .tmap-name { font-weight: 500; color: var(--text-2); }
+.tmap-leaf .tmap-row.is-running .tmap-name { color: var(--text); }
+.tmap-meta {
+  font-family: var(--mono);
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-3);
+}
+/* text-transform:none — the chrome is uppercase, but "4S" is not a duration */
+.tmap-elapsed { font-family: var(--mono); font-size: 10.5px; color: var(--text);
+                font-weight: 700; text-transform: none; }
+
+/* the state marker: shape and motion, never hue */
+.tmap-mark {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex-shrink: 0; border: 1.5px solid var(--text-3); background: transparent;
+}
+.tmap-mark.m-todo    { border-color: var(--text-3); }
+.tmap-mark.m-review  { border-style: dashed; border-color: var(--text); }
+.tmap-mark.m-done    { background: var(--text); border-color: var(--text); }
+.tmap-mark.m-blocked { border-color: var(--text); box-shadow: inset 0 0 0 2px var(--bg-2), inset 0 0 0 4px var(--text); }
+.tmap-mark.m-stalled { border-style: dotted; border-color: var(--text-2); }
+.tmap-mark.m-running {
+  background: var(--text); border-color: var(--text);
+  animation: tmap-pulse 1.1s ease-in-out infinite;
+}
+@keyframes tmap-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,.55); opacity: 1; }
+  70%      { box-shadow: 0 0 0 6px rgba(255,255,255,0); opacity: .65; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tmap-mark.m-running { animation: none; box-shadow: 0 0 0 3px rgba(255,255,255,.25); }
+}
+
+/* the live banner above the map */
+.live-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 12px; margin-bottom: 14px;
+  border: 1px solid var(--text-2);
+  border-radius: 2px;
+  background: var(--bg-3);
+  font-family: var(--mono); font-size: 11px;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.live-strip.idle { border-style: dashed; border-color: var(--border-2); color: var(--text-3); }
+
+/* the task the map was asked to point at */
+@keyframes tmap-flash { from { background: var(--bg-3); } to { background: transparent; } }
+.tree-task.flash { animation: tmap-flash 1.6s ease-out; }
 </style>
 </head>
 <body>
@@ -1355,7 +1452,21 @@ select.step-act { background: var(--bg-3); border-color: var(--border); color: v
        ============================================================ -->
   <div class="view" id="view-pipeline">
 
-    <div class="stats-grid" id="pipe-stats" style="grid-template-columns:repeat(5,1fr);"></div>
+    <div class="stats-grid" id="pipe-stats" style="grid-template-columns:repeat(6,1fr);"></div>
+
+    <!-- Tree map: every work tree at once, live -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">🌳 แผนผังต้นไม้ — สถานะสด</span>
+        <span style="font-size:12px;color:var(--text-3)">
+          จุดกะพริบ = กำลังรันอยู่ตอนนี้ · คลิกที่กิ่งเพื่อกระโดดไปที่งานนั้น
+        </span>
+      </div>
+      <div class="card-body">
+        <div id="live-strip"></div>
+        <div id="tree-map"></div>
+      </div>
+    </div>
 
     <!-- New routine -->
     <div class="card dashed">
@@ -1602,7 +1713,7 @@ document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click'
   document.getElementById('page-subtitle').textContent = m.sub;
   renderHero();
   if (v === 'decisions') loadDecisions();
-  if (v === 'pipeline') loadPipeline();
+  if (v === 'pipeline') loadPipeline(); else stopLivePolling();
   if (v === 'docs') loadDocs();
 }));
 
@@ -2269,6 +2380,7 @@ async function loadPipeline() {
   PIPE = j;
   const st = j.stats || {};
   document.getElementById('pipe-stats').innerHTML = `
+    <div class="stat-card"><div class="stat-label">กำลังรัน</div><div class="stat-value">${(STATE.pipeline||{}).running||0}</div><div class="stat-sub">งานที่วิ่งอยู่ตอนนี้</div></div>
     <div class="stat-card"><div class="stat-label">Work tree</div><div class="stat-value c-blue">${st.routines||0}</div><div class="stat-sub">routine ที่ยังใช้งาน</div></div>
     <div class="stat-card"><div class="stat-label">งานทั้งหมด</div><div class="stat-value">${st.tasks||0}</div><div class="stat-sub">เสร็จแล้ว ${st.done||0}</div></div>
     <div class="stat-card"><div class="stat-label">รอตรวจ</div><div class="stat-value c-amber">${st.review||0}</div><div class="stat-sub">AI ส่งแล้ว รอคุณอ่าน</div></div>
@@ -2285,7 +2397,165 @@ async function loadPipeline() {
   document.getElementById('pipe-list').innerHTML = (j.routines||[]).map(routineCard).join('')
     || `<div class="empty-state"><div class="empty-state-icon">🧬</div>
         <div class="empty-state-text">ยังไม่มี routine — สร้าง Work Tree แรกด้านบน</div></div>`;
+  LIVE = j.live || [];
+  LIVE_AT = Date.now();
+  renderTreeMap();
   paintPipeBadge();
+  if (LIVE.length) startLivePolling();
+}
+
+/* ---------- tree map ----------
+   One picture of every work tree and what is moving in it. The live registry on
+   the server — not the stored status — decides what counts as running, so a task
+   left mid-run by a process that died shows as stalled instead of busy forever. */
+let LIVE = [];
+let LIVE_AT = 0;          // when LIVE was fetched, so the timers can tick locally
+let LIVE_TIMER = null;    // the 2s poll, running only while something is in flight
+let TICK = null;          // the 1s clock that advances the elapsed counters
+let INFLIGHT = 0;         // runs this tab has asked for but not yet seen land
+
+const MARK_TH = { todo:'รอเริ่ม', running:'กำลังทำ', review:'รอตรวจ',
+                  done:'เสร็จ', blocked:'ติดปัญหา', stalled:'ค้าง' };
+
+function taskMark(t) {
+  if (t.running_now) return 'running';
+  if (t.stalled)     return 'stalled';
+  return t.status;
+}
+
+/* A routine's marker is the worst thing under it that the CEO would want to know
+   about: something moving beats something waiting for him, which beats finished.
+   A branch that reads "done" while a task beneath it is blocked would be a lie. */
+function routineMark(r) {
+  const tasks = r.tasks || [];
+  const marks = tasks.map(taskMark);
+  if (marks.includes('running')) return 'running';
+  if (marks.includes('stalled')) return 'stalled';
+  if (marks.includes('blocked')) return 'blocked';
+  if (marks.includes('review') || tasks.some(t => (t.open_comments||[]).length)) return 'review';
+  if (tasks.length && marks.every(m => m === 'done')) return 'done';
+  return 'todo';
+}
+
+const fmtElapsed = ms => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s/60)}m ${String(s%60).padStart(2,'0')}s`;
+};
+
+/* elapsed as of *now*, not as of the last fetch — the poll is every 2s but the
+   counter ticks every second, so it never looks frozen */
+const liveElapsed = e => (e.elapsed_ms || 0) + (Date.now() - LIVE_AT);
+
+function renderTreeMap() {
+  const routines = PIPE.routines || [];
+  const running = LIVE.length;
+
+  document.getElementById('live-strip').innerHTML = running
+    ? `<div class="live-strip">
+         <span class="tmap-mark m-running"></span>
+         <span>กำลังรัน ${running} งาน</span>
+         ${LIVE.map(e => `<span class="badge badge-blue" data-live="${e.routine_id}.${e.task_id}"
+            title="${esc(e.trigger)} · รอบที่ ${e.run_n}">${esc(e.routine)} › ${esc(e.task)}
+            <span class="tmap-elapsed">${fmtElapsed(liveElapsed(e))}</span></span>`).join('')}
+       </div>`
+    : `<div class="live-strip idle"><span class="tmap-mark m-todo"></span>
+         <span>ตอนนี้ไม่มีงานรันอยู่</span></div>`;
+
+  document.getElementById('tree-map').innerHTML = routines.length ? `
+    <div class="tmap">
+      <div class="tmap-root">
+        👑 Commander Hub
+        <span class="tmap-meta">${routines.length} tree · ${running} กำลังรัน</span>
+      </div>
+      <div class="tmap-kids">
+        ${routines.map(r => `
+          <div class="tmap-node">
+            <div class="tmap-row ${r.running_now ? 'is-running' : ''}" onclick="jumpToRoutine(${r.id})">
+              <span class="tmap-mark m-${routineMark(r)}"></span>
+              <span class="tmap-name">${esc(r.name)}</span>
+              <span class="tmap-meta">${esc(r.tree)} · 👤 ${esc(r.owner)} · ${r.seat_icon} ${esc(r.seat_name)}/${esc(r.provider)} · ${(r.tasks||[]).length} งาน · ${MARK_TH[routineMark(r)]}</span>
+              ${r.status === 'paused' ? '<span class="badge badge-muted">พักอยู่</span>' : ''}
+            </div>
+            ${(r.tasks||[]).length ? `<div class="tmap-kids">
+              ${(r.tasks||[]).map(t => {
+                const mark = taskMark(t);
+                const e = LIVE.find(x => x.routine_id === r.id && x.task_id === t.id);
+                return `<div class="tmap-node tmap-leaf">
+                  <div class="tmap-row ${mark==='running'?'is-running':''}" onclick="jumpToTask(${r.id},${t.id})">
+                    <span class="tmap-mark m-${mark}"></span>
+                    <span class="tmap-name">${esc(t.title)}</span>
+                    <span class="tmap-meta">${MARK_TH[mark] || mark}${(t.runs||[]).length ? ` · ${t.runs.length} รอบ` : ''}${t.owner ? ` · 👤 ${esc(t.owner)}` : ''}</span>
+                    ${e ? `<span class="tmap-elapsed" data-live="${r.id}.${t.id}">${fmtElapsed(liveElapsed(e))}</span>` : ''}
+                    ${(t.open_comments||[]).length ? `<span class="badge badge-red">${t.open_comments.length} รอแก้</span>` : ''}
+                    ${t.parent_task ? `<span class="tmap-meta">🔀 กิ่งของ #${t.parent_task}</span>` : ''}
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>` : ''}
+          </div>`).join('')}
+      </div>
+    </div>` : `<div style="font-size:13px;color:var(--text-3)">ยังไม่มี tree ให้วาด</div>`;
+}
+
+/* Only the counters move between polls, so only the counters are rewritten —
+   re-rendering the whole map every second would fight the CEO's scroll. */
+function tickElapsed() {
+  if (!LIVE.length) return;
+  document.querySelectorAll('[data-live]').forEach(el => {
+    const [rid, tid] = el.dataset.live.split('.').map(Number);
+    const e = LIVE.find(x => x.routine_id === rid && x.task_id === tid);
+    if (!e) return;
+    const slot = el.classList.contains('tmap-elapsed') ? el : el.querySelector('.tmap-elapsed');
+    if (slot) slot.textContent = fmtElapsed(liveElapsed(e));
+  });
+}
+
+async function refreshLive() {
+  let j;
+  try { j = await (await fetch('/api/pipeline/live')).json(); }
+  catch (e) { return; }                       // a blip must not kill the poll
+  const before = LIVE.map(e => `${e.routine_id}.${e.task_id}`).sort().join();
+  LIVE = j.live || [];
+  LIVE_AT = Date.now();
+  STATE.pipeline = j.stats || STATE.pipeline;
+  const after = LIVE.map(e => `${e.routine_id}.${e.task_id}`).sort().join();
+  paintPipeBadge();
+  renderHero();
+  // A run that appeared or finished changed the trees themselves — reload them.
+  // Otherwise repaint the map alone and leave the detail list where it was.
+  if (before !== after) loadPipeline(); else renderTreeMap();
+  // Only idle once nothing is running *and* nothing this tab started is still
+  // outstanding: the first poll after pressing run fires before the server has
+  // registered it, and an empty list there is not proof that nothing is coming.
+  if (!LIVE.length && !INFLIGHT) stopLivePolling();
+}
+
+function startLivePolling() {
+  if (!LIVE_TIMER) LIVE_TIMER = setInterval(refreshLive, 2000);
+  if (!TICK) TICK = setInterval(tickElapsed, 1000);
+}
+
+function stopLivePolling() {
+  clearInterval(LIVE_TIMER); LIVE_TIMER = null;
+  clearInterval(TICK); TICK = null;
+}
+
+/* pipeCall returns null on failure rather than throwing, so .finally() is safe
+   to chain — but make that explicit, since INFLIGHT leaking would pin the poll
+   on forever. */
+
+function jumpToRoutine(rid) {
+  const el = document.getElementById('routine-' + rid);
+  if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function jumpToTask(rid, tid) {
+  const el = document.getElementById(`task-${rid}-${tid}`);
+  if (!el) return jumpToRoutine(rid);
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  el.classList.remove('flash');
+  void el.offsetWidth;                        // restart the animation
+  el.classList.add('flash');
 }
 
 function paintPipeBadge() {
@@ -2300,10 +2570,10 @@ function paintPipeBadge() {
 function routineCard(r) {
   const paused = r.status === 'paused';
   return `
-  <div class="card">
+  <div class="card" id="routine-${r.id}">
     <div class="card-header">
       <div class="routine-head">
-        <span class="card-title">🧬 ${esc(r.name)}</span>
+        <span class="card-title">${r.running_now ? '<span class="tmap-mark m-running" style="display:inline-block;margin-right:6px"></span>' : ''}🧬 ${esc(r.name)}</span>
         <span class="routine-tree-name" title="ชื่อ work tree — ใช้อ้างอิงงานสายนี้">${esc(r.tree||'')}</span>
         <span class="owner-chip" title="โปรเจคที่งานนี้อ่านเอกสารจาก">📁 ${esc(r.project || 'ไม่ผูกโปรเจค')}</span>
         <span class="owner-chip" title="คนที่ต้องตอบเรื่องนี้">👤 ${esc(r.owner)}</span>
@@ -2331,10 +2601,10 @@ function taskNode(r, t) {
   const open = t.open_comments || [];
   const runs = t.runs || [];
   return `
-  <div class="tree-task">
+  <div class="tree-task" id="task-${r.id}-${t.id}">
     <div class="task-head">
       <span class="task-title">${esc(t.title)}</span>
-      <span class="badge st-${t.status}">${TASK_ST_TH[t.status] || t.status}</span>
+      <span class="badge st-${taskMark(t)}">${MARK_TH[taskMark(t)] || t.status}</span>
       <span class="owner-chip">👤 ${esc(t.owner || r.owner)}</span>
       ${t.parent_task ? `<span class="owner-chip" title="แตกกิ่งมาจากงาน #${t.parent_task} ที่รอบ ${t.branched_from}">🔀 แตกกิ่งจาก #${t.parent_task} รอบ ${t.branched_from}</span>` : ''}
       ${open.length ? `<span class="badge badge-red">${open.length} คอมเมนต์รอแก้</span>` : ''}
@@ -2504,8 +2774,11 @@ async function addTask(rid) {
 }
 
 async function runTask(rid, tid, btn) {
-  const j = await pipeCall(`/api/pipeline/routines/${rid}/tasks/${tid}/run`, jsonPost({}), btn);
-  if (!j) return;
+  // the map should show this task as running while the request is still open
+  INFLIGHT++; startLivePolling(); refreshLive();
+  const j = await pipeCall(`/api/pipeline/routines/${rid}/tasks/${tid}/run`, jsonPost({}), btn)
+    .finally(() => { INFLIGHT--; });
+  if (!j) { refreshLive(); return; }
   OPEN_THINK.add(`${rid}.${tid}.${j.run.n}`);   // show the reasoning on a fresh run
   loadPipeline(); loadState();
 }
@@ -2517,9 +2790,11 @@ async function runTask(rid, tid, btn) {
 async function commentTask(rid, tid, btn) {
   const text = prompt('คำตอบไม่ตรงตรงไหน และต้องการให้แก้เป็นอะไร?\n\nระบบจะสั่งทำใหม่โดยยกคำตอบเดิม + คำสั่งนี้ให้ AI ดู และคำตอบเดิมจะยังอยู่ในประวัติ');
   if (!text || !text.trim()) return;
+  INFLIGHT++; startLivePolling(); refreshLive();
   const j = await pipeCall(`/api/pipeline/routines/${rid}/tasks/${tid}/comment`,
-                           jsonPost({text: text.trim(), rerun: true}), btn);
-  if (!j) return;
+                           jsonPost({text: text.trim(), rerun: true}), btn)
+    .finally(() => { INFLIGHT--; });
+  if (!j) { refreshLive(); return; }
   if (j.run) OPEN_THINK.add(`${rid}.${tid}.${j.run.n}`);
   loadPipeline(); loadState();
 }

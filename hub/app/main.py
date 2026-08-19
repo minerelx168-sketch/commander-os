@@ -157,7 +157,7 @@ def state() -> dict:
         "memory_count": len(store.get_memory(limit=500)),
         "consults": store.get_consults(8),
         "decision_stats": store.decision_stats(),
-        "pipeline": store.pipeline_stats(),
+        "pipeline": _pipeline_stats(),
     }
 
 
@@ -497,26 +497,55 @@ def _task_or_404(routine: dict, task_id: int) -> dict:
 
 
 def _routine_view(r: dict) -> dict:
-    """A routine plus what the UI needs to render its tree without extra calls."""
+    """A routine plus what the UI needs to render its tree without extra calls.
+
+    `running_now` comes from the live registry, not from the stored status: a
+    task left reading "running" by a process that died is *stalled*, and the
+    tree map has to be able to tell the two apart.
+    """
     seat = config.DEPTS.get(r.get("dept"), {})
     provider = store.get_providers().get(r.get("dept"), "mock")
+    tasks = []
+    for t in r.get("tasks", []):
+        running = pipeline.is_running(r["id"], t["id"])
+        tasks.append({**t,
+                      "open_comments": store.open_comments(t),
+                      "running_now": running,
+                      "stalled": t["status"] == "running" and not running})
     return {**r,
             "seat_name": seat.get("name", r.get("dept", "")),
             "seat_icon": seat.get("icon", "•"),
             "provider": provider,
             "vendor": depts.vendor_of(provider),
             "provider_ready": llm.provider_ready(provider),
-            "tasks": [{**t, "open_comments": store.open_comments(t)}
-                      for t in r.get("tasks", [])]}
+            "running_now": any(t["running_now"] for t in tasks),
+            "tasks": tasks}
+
+
+def _pipeline_stats() -> dict:
+    """Stored counters plus what is in flight this second."""
+    return {**store.pipeline_stats(), "running": len(pipeline.live())}
 
 
 @app.get("/api/pipeline")
 def pipeline_state(include_archived: bool = False) -> dict:
     return {"routines": [_routine_view(r)
                          for r in store.get_routines(include_archived)],
-            "stats": store.pipeline_stats(),
+            "stats": _pipeline_stats(),
+            "live": pipeline.live(),
             "task_statuses": list(store._TASK_STATUSES),
             "projects": docs.list_projects()}
+
+
+@app.get("/api/pipeline/live")
+def pipeline_live() -> dict:
+    """Just what is running, for the tree map to poll on a short interval.
+
+    Separate from /api/pipeline on purpose: the map ticks every couple of
+    seconds and has no business re-serialising every run and comment in the
+    store to do it.
+    """
+    return {"live": pipeline.live(), "stats": _pipeline_stats()}
 
 
 @app.post("/api/pipeline/routines")

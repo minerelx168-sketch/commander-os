@@ -1362,7 +1362,10 @@ def test_index_serves_advisory_ui(client):
                    "frameCard", "redteamCard", "researchBlock", "convened",
                    # Pipeline: one work tree per routine
                    "view-pipeline", "loadPipeline", "createRoutine", "commentTask",
-                   "branchTask", "thinkPanel", "rt-owner", "rt-project"):
+                   "branchTask", "thinkPanel", "rt-owner", "rt-project",
+                   # the live tree map
+                   "tree-map", "renderTreeMap", "routineMark", "refreshLive",
+                   "live-strip", "jumpToTask", "tmap-mark"):
         assert marker in html, marker
     # `runTask` used to be listed here, back when the hub deliberately executed
     # nothing. The Pipeline page executes recurring work on the CEO's button, so
@@ -2884,3 +2887,102 @@ def test_pipeline_counters_reach_the_shared_state_call(client):
                 json={"text": "แก้ด้วย", "rerun": False})
     stats = client.get("/api/state").json()["pipeline"]
     assert stats["routines"] == 1 and stats["tasks"] == 1 and stats["open_comments"] == 1
+
+
+# ── the tree map's live state ──
+
+def test_a_run_is_visible_while_it_is_still_running(client):
+    """`status: "running"` in the store is written by the request that starts the
+    run and only corrected when that same request ends — so a poll from anywhere
+    else cannot use it to answer "what is running?". The live registry can."""
+    from app import pipeline
+    r = _routine(client)
+    t = _task(client, r["id"])
+    assert pipeline.live() == []
+
+    seen = {}
+
+    def watching(provider, system, user, cancel=None, **kw):
+        seen["live"] = pipeline.live()          # what another request would see
+        return _trace_reply()
+
+    with patch("app.llm.chat", side_effect=watching):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    assert len(seen["live"]) == 1
+    entry = seen["live"][0]
+    assert entry["routine_id"] == r["id"] and entry["task_id"] == t["id"]
+    assert entry["routine"] == "รายงานยอดขายรายสัปดาห์" and entry["task"] == "สรุปยอดสัปดาห์นี้"
+    assert entry["owner"] == "คุณหนึ่ง" and entry["seat"] == config.DEPTS["cmo"]["name"]
+    assert entry["run_n"] == 1 and entry["trigger"] == "สั่งรันเอง"
+    assert entry["elapsed_ms"] >= 0 and "_started" not in entry
+    assert pipeline.live() == [], "the registry must empty out when the run lands"
+
+
+def test_a_run_that_blows_up_does_not_stay_on_the_map_forever(client):
+    """A map that keeps claiming a dead run is busy is worse than no map."""
+    from app import pipeline
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError):
+            pipeline.run_task(r["id"], t["id"])
+    assert pipeline.live() == []
+
+
+def test_the_map_tells_a_running_task_from_a_stalled_one(client):
+    """Stored "running" with nothing in the registry means the process that
+    started it is gone. That is a distinct state, and it has to show as one."""
+    from app import store
+    r = _routine(client)
+    t = _task(client, r["id"])
+    store.update_task(r["id"], t["id"], status="running")   # as a dead run would leave it
+
+    task = client.get("/api/pipeline").json()["routines"][0]["tasks"][0]
+    assert task["status"] == "running"
+    assert task["running_now"] is False and task["stalled"] is True
+
+
+def test_running_tasks_are_flagged_on_the_routine_that_owns_them(client):
+    from app import pipeline
+    r = _routine(client)
+    t = _task(client, r["id"])
+    seen = {}
+
+    def watching(provider, system, user, cancel=None, **kw):
+        seen["view"] = client.get("/api/pipeline").json()
+        return _trace_reply()
+
+    with patch("app.llm.chat", side_effect=watching):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    routine = seen["view"]["routines"][0]
+    assert routine["running_now"] is True
+    assert routine["tasks"][0]["running_now"] is True
+    assert routine["tasks"][0]["stalled"] is False
+    assert seen["view"]["stats"]["running"] == 1
+    assert len(seen["view"]["live"]) == 1
+    # …and it is gone from both once the run lands
+    after = client.get("/api/pipeline").json()
+    assert after["stats"]["running"] == 0 and after["live"] == []
+    assert after["routines"][0]["running_now"] is False
+
+
+def test_the_live_endpoint_is_cheap_enough_to_poll(client):
+    """The map ticks every couple of seconds; it has no business re-serialising
+    every run and comment in the store to do it."""
+    r = _routine(client)
+    t = _task(client, r["id"])
+    with patch("app.llm.chat", return_value=_trace_reply()):
+        client.post(f"/api/pipeline/routines/{r['id']}/tasks/{t['id']}/run", json={})
+
+    live = client.get("/api/pipeline/live").json()
+    assert set(live) == {"live", "stats"}
+    assert live["live"] == [] and live["stats"]["running"] == 0
+    assert live["stats"]["runs"] == 1
+    # the heavy payload is the other endpoint's job
+    assert "routines" not in live
+
+
+def test_the_running_count_reaches_the_shared_state_call(client):
+    assert client.get("/api/state").json()["pipeline"]["running"] == 0
