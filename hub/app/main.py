@@ -27,7 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import (auth, config, deliverable, depts, docs, finmodel, followup, llm,
-               report, research, routines, sources, store, telegram)
+               pipeline, report, research, routines, sources, store, telegram)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -630,8 +630,80 @@ def pipeline_routine(routine_id: int, limit: int = 20) -> dict:
     view = _pipeline_view(r, runs, {e["routine_id"] for e in routines.live()})
     # Already newest-first from the store; slicing the head keeps it that way.
     history = [x for x in runs if x["routine_id"] == routine_id][:limit]
+    fixes = store.routine_corrections(routine_id)
     return {"routine": view,
-            "runs": [{**x, "health": _routine_health(x)} for x in history]}
+            "runs": [_run_view(x, fixes) for x in history],
+            "nodes": pipeline.NODE_LABELS,
+            "open_fixes": [c for c in fixes if c["answered_by"] is None]}
+
+
+def _run_view(run: dict, fixes: list) -> dict:
+    """A run with the CEO's corrections attached to the nodes they addressed.
+
+    The AI's reply to a correction is emitted by the *next* run, but it belongs
+    on screen beside the correction — which lives on the run that was wrong.
+    That is where the CEO is looking.
+    """
+    mine = [c for c in fixes if c["run_id"] == run["id"]]
+    results = {}
+    for dept, res in (run.get("results") or {}).items():
+        seat_fixes = [c for c in mine if c["dept"] == dept]
+        results[dept] = {**res, "fixes": seat_fixes}
+    return {**run, "results": results, "health": _routine_health(run)}
+
+
+class RoutineFixIn(BaseModel):
+    """A correction pinned to one node of one seat's reasoning."""
+    run: int
+    dept: str
+    node: str          # "steps[1]" / "understanding" / "assumptions[0]" …
+    should: str        # what that step should have been
+    rerun: bool = True  # a correction the routine never re-runs is just a note
+
+
+@app.post("/api/pipeline/routines/{routine_id}/fix")
+def fix_routine_reasoning(routine_id: int, body: RoutineFixIn) -> dict:
+    """Mark one step of a seat's reasoning wrong, and say what it should be.
+
+    Commenting on the report as a whole lets the model re-derive the same
+    conclusion down the same road. Pinning the correction to its node closes
+    that road: the next run is handed the exact step, what it thought there,
+    and what the CEO says it should have thought.
+    """
+    if store.get_routine(routine_id) is None:
+        raise HTTPException(404, "routine not found")
+    if not body.should.strip():
+        raise HTTPException(400, "should is required — บอกด้วยว่าจุดนั้นควรเป็นอะไร")
+    run = next((x for x in store.get_routine_runs(routine_id, limit=300)
+                if x["id"] == body.run), None)
+    if run is None:
+        raise HTTPException(400, f"run {body.run} does not exist on this routine")
+    res = (run.get("results") or {}).get(body.dept)
+    if res is None:
+        raise HTTPException(400, f"{body.dept} did not report in that run")
+    trace = res.get("trace")
+    if not trace:
+        raise HTTPException(400, "รอบนั้นไม่มีเส้นทางการคิดให้แก้ — "
+                                 "ที่นั่งนี้ตอบเป็นข้อความธรรมดา")
+    found = pipeline.node_text(trace, body.node)
+    if found is None:
+        # Better to refuse than to quote the model a step it never wrote.
+        raise HTTPException(400, f"ไม่พบจุด '{body.node}' ในเส้นทางคิดของรอบนั้น")
+    label, was = found
+
+    fix = store.add_routine_correction(routine_id, body.run, body.dept,
+                                       body.node, label, was, body.should.strip())
+    out = None
+    if body.rerun:
+        out = routines.run_routine(store.get_routine(routine_id))
+    return {"fix": fix, "run": out}
+
+
+@app.delete("/api/pipeline/fixes/{fix_id}")
+def remove_routine_fix(fix_id: int) -> dict:
+    if not store.delete_routine_correction(fix_id):
+        raise HTTPException(404, "fix not found")
+    return {"deleted": fix_id}
 
 
 @app.put("/api/dept/{dept}/provider")

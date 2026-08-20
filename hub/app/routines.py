@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
-from . import config, docs, llm, sources, store, telegram
+from . import config, docs, jsonx, llm, pipeline, sources, store, telegram
 
 log = logging.getLogger("hub.routines")
 
@@ -77,11 +77,21 @@ ROUTINE_SYSTEM = (
     "กฎเหล็ก: {guard} — ถ้างานอยู่นอกขอบเขต ให้บอกตรงๆ ว่าอยู่นอกความเชี่ยวชาญ\n"
     "นี่คืองานประจำ (routine) ที่ CEO สั่งไว้ให้รายงานตามรอบเวลา "
     "จงรายงานเฉพาะสิ่งที่เปลี่ยนแปลงและสิ่งที่ต้องตัดสินใจ ไม่ต้องทวนสิ่งที่ CEO รู้อยู่แล้ว\n"
-    "ตอบภาษาไทย ไม่เกิน 10 บรรทัด ใช้โครงสร้างนี้:\n"
-    "สถานะ: (สิ่งที่เห็นตอนนี้ในมุมของคุณ)\n"
-    "สิ่งที่เปลี่ยน/น่ากังวล: (เจาะจง มีตัวเลขถ้ามี)\n"
-    "ต้องตัดสินใจ: (สิ่งที่ CEO ต้องเคาะ หรือ 'ยังไม่มี')"
+    "ตอบภาษาไทยทั้งหมด\n"
+    "- ถ้ามีคำสั่งแก้จาก CEO ที่จุดใด ให้ทำตามให้ครบทุกข้อในรอบนี้ "
+    "และรายงานใน fix_responses ว่าแก้อะไรไปบ้าง ข้อไหนทำตามไม่ได้ให้บอกเหตุผลตรงๆ\n"
+    "- ห้ามเดาตัวเลข ถ้าไม่มีข้อมูลจริงให้ใส่ไว้ใน unknowns และบอกว่าต้องได้อะไรมาก่อน\n"
 )
+# NOTE: do not add a line telling the seat that the CEO "will see your chain of
+# thought / เส้นทางการคิด". Measured on claude-fable-5: with that sentence the
+# API returns stop_reason=refusal 5/5, without it 5/5 succeed — it reads as a
+# request to expose internal reasoning. The schema below asks for the same
+# structure as ordinary report fields, which the model answers happily.
+
+# The report the CEO reads in Telegram is `answer`; the rest is the path he
+# corrects on the Pipeline page. Same trace shape the seat-level runs use, so
+# one renderer and one correction flow serve both.
+ROUTINE_SCHEMA = pipeline.TASK_SCHEMA
 
 
 def now() -> datetime:
@@ -138,9 +148,41 @@ def _seat_prompt(dept: str) -> str:
     return ROUTINE_SYSTEM.format(name=d["name"], role=d["role"], lane=lane, guard=guard)
 
 
+def _trace_of(out: dict) -> dict | None:
+    """The reasoning path, or None when the seat did not answer in JSON.
+
+    `out` comes from llm.chat_json, which has already parsed and — if the reply
+    was nearly right — asked the model to repair it. A model that still writes
+    prose has nonetheless reported: the text is kept as the report either way.
+    Losing the report to a formatting slip would be far worse than losing the
+    flow view for one round.
+    """
+    if not out.get("ok"):
+        return None
+    data = out.get("data")
+    if not isinstance(data, dict):
+        data = jsonx.extract(out.get("text") or "")
+    if not isinstance(data, dict):
+        return None
+    trace = pipeline._normalise(data)
+    return trace if trace.get("answer") or trace.get("understanding") else None
+
+
+def _report_text(out: dict, trace: dict | None) -> str:
+    """What the CEO reads in Telegram: the deliverable, not the scaffolding.
+
+    A failed call already carries its error in `text`; passing the raw JSON of a
+    half-parsed reply would put braces in his Telegram instead.
+    """
+    if trace and trace.get("answer"):
+        return trace["answer"]
+    return out.get("text") or ""
+
+
 def run_routine(routine: dict) -> dict:
     """Execute one routine now: every assigned seat reports, grounded in the
-    CEO's library and in what this same routine said last time."""
+    CEO's library, in what this same routine said last time, and in whatever
+    the CEO marked wrong in that last report."""
     task = routine["task"]
     project = routine.get("project")
     library = docs.knowledge_context(project=project, max_chars=2500)
@@ -157,29 +199,61 @@ def run_routine(routine: dict) -> dict:
     else:
         note = ""
 
-    ctx = [f"งานประจำที่ต้องรายงาน: {task}"]
+    base = [f"งานประจำที่ต้องรายงาน: {task}"]
     if note:
-        ctx.append(note)
+        base.append(note)
     if library:
-        ctx.append(f"[คลังเอกสารธุรกิจของ CEO]\n{library}")
+        base.append(f"[คลังเอกสารธุรกิจของ CEO]\n{library}")
     if live:
-        ctx.append(f"[ข้อมูลสดจากระบบ POS / หลังบ้านของโปรเจคนี้]\n{live}")
-    if previous:
-        for dept, r in (previous.get("results") or {}).items():
-            if r.get("ok"):
-                ctx.append(f"[รายงานรอบก่อนของ {config.DEPTS.get(dept, {}).get('name', dept)} "
-                           f"({previous['at'][:10]})]\n{r['text'][:700]}")
-    user = "\n\n".join(ctx)
+        base.append(f"[ข้อมูลสดจากระบบ POS / หลังบ้านของโปรเจคนี้]\n{live}")
 
     seats = [d for d in routine["seats"] if d in config.DEPTS]
 
+    def prompt_for(dept: str) -> str:
+        """This seat's context: shared grounding, its own last report, and the
+        corrections the CEO pinned to that report."""
+        ctx = list(base)
+        prev = ((previous or {}).get("results") or {}).get(dept) or {}
+        if prev.get("ok") and prev.get("text"):
+            ctx.append(f"[รายงานรอบก่อนของคุณ ({previous['at'][:10]})]\n"
+                       f"{prev['text'][:700]}")
+        # Other seats' last word, so the board does not contradict itself
+        for other, r in ((previous or {}).get("results") or {}).items():
+            if other != dept and r.get("ok") and r.get("text"):
+                ctx.append(f"[รายงานรอบก่อนของ "
+                           f"{config.DEPTS.get(other, {}).get('name', other)}]\n"
+                           f"{r['text'][:400]}")
+
+        fixes = store.open_routine_corrections(routine["id"], dept)
+        if fixes:
+            body = "\n\n".join(
+                f"- จุด `{c['node']}` ({c['label']})\n"
+                f"  รอบก่อนคุณเขียนว่า: {c['was']}\n"
+                f"  CEO สั่งให้แก้เป็น: {c['should']}"
+                for c in fixes)
+            # Phrased as instructions to follow, not as "the road is closed" —
+            # see the note on ROUTINE_SYSTEM about claude-fable-5 refusals.
+            ctx.append("[คำสั่งแก้จาก CEO — ต้องทำตามให้ครบทุกข้อในรอบนี้ "
+                       "และตอบใน fix_responses ให้ครบทุก node]\n" + body)
+        ctx.append(ROUTINE_SCHEMA)
+        return "\n\n".join(ctx)
+
     def one(dept: str) -> tuple[str, dict]:
-        # Routine reports are structured and Thai-heavy; the default ceiling
-        # truncates reasoning models into an empty reply.
-        out = llm.chat(store.get_providers().get(dept, "mock"), _seat_prompt(dept), user,
-                       max_tokens=4096)
+        # chat_json, not chat: the seat was asked for a schema, and a reply that
+        # is nearly-JSON gets one repair round rather than silently degrading
+        # into prose the CEO cannot correct node by node.
+        #
+        # 8192, not 4096: the trace carries the path as well as the answer, and
+        # measured on deepseek the same prompt truncates mid-JSON at 4096
+        # (1901 chars, truncated=True) but completes at 8192 — a cut trace
+        # reaches the CEO as an empty report.
+        out = llm.chat_json(store.get_providers().get(dept, "mock"), _seat_prompt(dept),
+                            prompt_for(dept), max_tokens=8192,
+                            required=("understanding", "answer"))
         _mark_seat_done(routine["id"], dept)
-        return dept, {"text": out["text"], "provider": out["provider"], "ok": out["ok"]}
+        trace = _trace_of(out)
+        return dept, {"text": _report_text(out, trace), "trace": trace,
+                      "provider": out["provider"], "ok": out["ok"]}
 
     # Serially, three seats on slow reasoning models outrun any sane HTTP
     # timeout; they have nothing to say to each other here, so run them at once.
@@ -193,6 +267,9 @@ def run_routine(routine: dict) -> dict:
         _mark_finished(routine["id"])
 
     run = store.add_routine_run(routine["id"], results)
+    # Whatever the seats did with them, the corrections reached this run; leaving
+    # them open would replay the same instruction every round forever.
+    store.answer_routine_corrections(routine["id"], run["id"])
     _deliver(routine, run)
     _file_report(routine, run)
     # _deliver stamps the delivery result on the stored copy; re-read so the
@@ -222,10 +299,16 @@ def _file_report(routine: dict, run: dict) -> None:
             f"รันเมื่อ: {run['at_local']}", ""]
     for dept, r in run["results"].items():
         body.append(f"## {config.DEPTS.get(dept, {}).get('name', dept)} [{r['provider']}]")
-        body.append(r["text"].strip())
+        body.append((r.get("text") or "(ไม่มีคำตอบ)").strip())
         body.append("")
     text = "\n".join(body)
     name = f"routine_{routine['id']}_{run['at_local'].replace(':', '').replace(' ', '_')}.md"
+    if not any((r.get("text") or "").strip() for r in run["results"].values()):
+        # Every seat came back empty. Filing an empty report would put a
+        # citable document with nothing in it into the library, and the board
+        # would later quote it as evidence.
+        log.info("routine %s produced no text; not filing a report", routine["id"])
+        return
     try:
         docs.save_document(name, text.encode(), "text/markdown", "routine",
                            text=text, project=routine.get("project"))

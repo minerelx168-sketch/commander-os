@@ -25,6 +25,8 @@ BUILTINS = {
     # `async (` / `var (` are syntax, and words inside template strings or
     # message text can look like bare calls to a regex.
     "async", "var", "let", "const", "failed", "session",
+    # callback parameters invoked inside a helper, not page-level functions
+    "fmt", "fn", "cb",
 }
 
 

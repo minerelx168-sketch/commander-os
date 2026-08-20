@@ -1486,6 +1486,23 @@ select.step-act { background: var(--bg-3); border-color: var(--border); color: v
 .pseat-none { color: var(--text-3); font-style: italic; }
 .pipe-hist { margin-top: 10px; }
 
+/* ── one seat's run inside the history ── */
+.srun { margin: 10px 0 0; padding: 10px 12px; border: 1px solid var(--border);
+        border-radius: 2px; background: var(--bg-2); }
+.srun-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+             font-size: 12.5px; font-weight: 650; margin-bottom: 6px; }
+.srun-answer { font-size: 12.5px; color: var(--text); line-height: 1.65;
+               white-space: pre-wrap; margin-bottom: 8px; }
+.flow.collapsed { display: none; }
+.flow-h { font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+          text-transform: uppercase; color: var(--text-3); margin: 10px 0 8px; }
+.flow-group { margin-top: 12px; }
+.flow-group-h { font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+                text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }
+.flow-note { margin-top: 10px; padding: 8px 10px; border-left: 2px solid var(--text-3);
+             background: var(--bg-3); font-size: 12px; color: var(--text-2); }
+.fnode-was { font-size: 11.5px; color: var(--text-3); margin-top: 4px; }
+
 /* ── the decision path as an editable flow ──
    Boxes joined by arrows, one per node of the reasoning. A node the CEO has
    marked wrong is drawn dashed — the same "needs attention" language the rest of
@@ -2768,6 +2785,7 @@ async function delDecision(id) {
    can see all of them at once instead of one at a time. */
 let PIPE = null;
 let PIPE_TICK = null;
+let PIPE_NODES = {};   // addressable node ids, from the server
 
 // Declared here rather than with the Routine page: `const` is not hoisted, and
 // Pipeline renders first if the CEO lands on it directly.
@@ -2911,22 +2929,179 @@ async function runRoutineFrom(id, btn) {
 
 async function openRoutineHistory(id) {
   const box = document.getElementById('pipe-hist-' + id);
-  if (box.style.display === 'block') { box.style.display = 'none'; return; }
+  // Toggle on our own flag, not on `display`: a click that lands while the
+  // fetch is still in flight used to read the half-open box as "open" and
+  // close it, leaving an empty div and no flow on screen.
+  if (box.dataset.open === '1') {
+    box.dataset.open = '0';
+    box.style.display = 'none';
+    return;                       // keep the rendered content for the next open
+  }
+  box.dataset.open = '1';
   box.style.display = 'block';
-  box.innerHTML = '<div class="tmap-meta">กำลังโหลด…</div>';
-  const j = await (await fetch(`/api/pipeline/routines/${id}`)).json();
-  box.innerHTML = j.runs.length ? j.runs.map(run => `
-    <div class="run">
-      <div class="run-head">
-        <span class="run-n">${esc(run.at_local || run.at.slice(0,16))}</span>
-        <span class="badge ${HEALTH_CLS[run.health]}">${esc(HEALTH_TH[run.health])}</span>
-        ${(run.delivery || {}).ok ? '<span class="tmap-meta">ส่ง Telegram แล้ว</span>'
-                                  : '<span class="tmap-meta">Telegram ส่งไม่สำเร็จ</span>'}
-      </div>
-      ${Object.entries(run.results || {}).map(([k, v]) => `
-        <div class="run-answer"><b>${esc(seatName(k))}</b> [${esc(v.provider)}]${v.ok ? '' : ' ⚠️'}
-        <br>${esc((v.text || '(ไม่มีคำตอบ)').slice(0, 700))}</div>`).join('')}
-    </div>`).join('') : '<div class="tmap-meta">ยังไม่มีผลรัน</div>';
+  if (box.dataset.loading === '1') return;      // a fetch is already running
+  if (!box.innerHTML.trim()) box.innerHTML = '<div class="tmap-meta">กำลังโหลด…</div>';
+  box.dataset.loading = '1';
+  try {
+    const j = await (await fetch(`/api/pipeline/routines/${id}`)).json();
+    PIPE_NODES = j.nodes || {};
+    box.innerHTML = j.runs.length
+      ? j.runs.map((run, i) => renderRun(id, run, i === 0)).join('')
+      : '<div class="tmap-meta">ยังไม่มีผลรัน</div>';
+  } catch (e) {
+    box.innerHTML = `<div class="tmap-meta">โหลดประวัติไม่สำเร็จ: ${esc(String(e))}</div>`;
+  } finally {
+    box.dataset.loading = '0';
+  }
+}
+
+/* After a correction the history must be rebuilt, not toggled — the caller has
+   already changed what the server would return. */
+async function reloadRoutineHistory(id) {
+  const box = document.getElementById('pipe-hist-' + id);
+  box.dataset.open = '0';
+  box.innerHTML = '';
+  await openRoutineHistory(id);
+}
+
+/* ── one run, as input → thinking → decision → output ──
+   The CEO reads down the flow and clicks ✏️ on the node that went wrong. A node
+   is addressable only if the backend can resolve it, so the ids come from
+   /api/pipeline (nodes), never from this file. */
+function renderRun(rid, run, open) {
+  const seats = Object.entries(run.results || {});
+  return `
+  <div class="run">
+    <div class="run-head">
+      <span class="run-n">${esc(run.at_local || run.at.slice(0, 16))}</span>
+      <span class="badge ${HEALTH_CLS[run.health]}">${esc(HEALTH_TH[run.health])}</span>
+      <span class="tmap-meta">${(run.delivery || {}).ok
+        ? 'ส่ง Telegram แล้ว' : 'Telegram ส่งไม่สำเร็จ'}</span>
+    </div>
+    ${seats.map(([dept, res]) => renderSeatRun(rid, run, dept, res, open)).join('')}
+  </div>`;
+}
+
+function renderSeatRun(rid, run, dept, res, open) {
+  const t = res.trace;
+  const head = `
+    <div class="srun-head">
+      <span>${esc(seatName(dept))}</span>
+      <span class="pseat-model">${esc(res.provider)}</span>
+      ${t && t.confidence != null
+        ? `<span class="badge badge-muted">ความมั่นใจ ${t.confidence}%</span>` : ''}
+      ${res.ok ? '' : '<span class="badge badge-red">ไม่สำเร็จ</span>'}
+    </div>`;
+
+  if (!t) {
+    // A seat that wrote prose still reported — show it, and say why it cannot
+    // be corrected node by node rather than pretending the option exists.
+    return `<div class="srun">${head}
+      <div class="run-answer">${esc((res.text || '(ไม่มีคำตอบ)').slice(0, 900))}</div>
+      <div class="tmap-meta" style="margin-top:6px">
+        รอบนี้ตอบเป็นข้อความธรรมดา จึงยังแก้ทีละจุดไม่ได้ — รอบถัดไปจะมีเส้นทางคิดให้แก้
+      </div></div>`;
+  }
+
+  const fixes = res.fixes || [];
+  // Open the path when it is the newest round, and also whenever this round
+  // carries a correction: a fix folded inside a collapsed older run is a fix
+  // the CEO cannot find, which is where he needs to look to see what changed.
+  const expanded = open || fixes.length > 0;
+  const flow = [];
+  const node = (id, label, body, extra = '') =>
+    flow.push(fnode(rid, run.id, dept, id, label, body, fixes, extra));
+
+  node('understanding', 'โจทย์ที่ AI เข้าใจ', t.understanding);
+  (t.steps || []).forEach((s, i) => node(
+    `steps[${i}]`, `ขั้นที่ ${i + 1} · ${s.step || ''}`,
+    [s.why ? `ทำไม: ${s.why}` : '', s.found ? `ได้: ${s.found}` : '']
+      .filter(Boolean).join('\n')));
+  node('answer', 'คำตอบที่ส่งมอบ', t.answer);
+
+  const listBlock = (key, title, items, fmt) => (items || []).length ? `
+    <div class="flow-group"><div class="flow-group-h">${esc(title)}</div>
+      ${items.map((v, i) => fnode(rid, run.id, dept, `${key}[${i}]`,
+                                  `${title} ข้อ ${i + 1}`, fmt(v), fixes)).join('')}
+    </div>` : '';
+
+  return `<div class="srun">${head}
+    <div class="srun-answer">${esc((t.answer || '').slice(0, 400))}</div>
+    <div class="flow${expanded ? '' : ' collapsed'}" id="flow-${run.id}-${dept}">
+      <div class="flow-h">เส้นทางการตัดสินใจ — คลิก ✏️ ที่จุดที่คิดผิด</div>
+      ${flow.join('<div class="fedge"></div>')}
+      ${listBlock('assumptions', 'สมมติฐานที่ตั้งเอง', t.assumptions, v => v)}
+      ${listBlock('evidence_used', 'หลักฐานที่อ้าง', t.evidence_used, v => v)}
+      ${listBlock('unknowns', 'สิ่งที่ยังไม่รู้', t.unknowns, v => v)}
+      ${listBlock('next_actions', 'สิ่งที่ต้องทำต่อ', t.next_actions,
+                  v => [v.action, v.owner && `(${v.owner})`, v.due && `ภายใน ${v.due}`]
+                        .filter(Boolean).join(' '))}
+      ${t.self_check ? fnode(rid, run.id, dept, 'self_check',
+                             'ถ้าผิด จะผิดตรงไหนก่อน', t.self_check, fixes) : ''}
+      ${t.changed_from_last ? `<div class="flow-note">รอบนี้ต่างจากรอบก่อน:
+        ${esc(t.changed_from_last)}</div>` : ''}
+    </div>
+    <button class="btn btn-sm btn-ghost" onclick="toggleFlow('flow-${run.id}-${dept}', this)">
+      ${expanded ? '▴ ซ่อนวิธีคิด' : '▾ ดูวิธีคิด'}</button>
+    ${fixes.length && !open
+      ? `<span class="tmap-meta">มีคำสั่งแก้ของคุณอยู่ในรอบนี้</span>` : ''}
+  </div>`;
+}
+
+/* One addressable node, with any correction the CEO pinned to it and the AI's
+   reply — which arrives a round later but belongs here, beside what it fixed. */
+function fnode(rid, runId, dept, id, label, body, fixes, extra = '') {
+  const mine = (fixes || []).filter(f => f.node === id);
+  return `
+  <div class="fnode ${mine.length ? 'corrected' : ''}">
+    <div class="fnode-head">
+      <span class="fnode-label">${esc(label)}</span>
+      <button class="fnode-fix" title="บอกว่าจุดนี้ควรคิดอย่างไร"
+        onclick="askFix(${rid}, ${runId}, '${dept}', '${id}', this)">✏️ แก้จุดนี้</button>
+    </div>
+    <div class="fnode-body">${esc(body || '—')}</div>
+    ${extra}
+    ${mine.map(f => `
+      <div class="fnode-fixed">
+        <b>✕ CEO:</b> ${esc(f.should)}
+        <div class="fnode-was">เดิม: ${esc(f.was)}</div>
+        ${f.answered_by ? `<div class="fnode-reply">↩ AI ตอบในรอบถัดมาแล้ว</div>`
+                        : `<div class="fnode-reply">⏳ รอรอบถัดไปแก้ตามนี้</div>`}
+        <button class="fnode-fix" onclick="dropFix(${f.id}, ${rid})">ยกเลิกคำสั่งนี้</button>
+      </div>`).join('')}
+  </div>`;
+}
+
+function toggleFlow(id, btn) {
+  const el = document.getElementById(id);
+  const hidden = el.classList.toggle('collapsed');
+  btn.textContent = hidden ? '▾ ดูวิธีคิด' : '▴ ซ่อนวิธีคิด';
+}
+
+async function askFix(rid, runId, dept, node, btn) {
+  const should = prompt('จุดนี้ควรคิด/ควรเป็นอย่างไร?\n\n' +
+    'ที่ปรึกษาจะถูกสั่งว่าทางเดิมปิดแล้ว ห้ามเดินซ้ำ และต้องคิดใหม่จากจุดนี้');
+  if (!should || !should.trim()) return;
+  const rerun = confirm('ให้รันใหม่ทันทีตามคำสั่งนี้เลยไหม?\n\n' +
+    'ตกลง = รันใหม่เดี๋ยวนี้   ยกเลิก = เก็บไว้ใช้รอบถัดไป');
+  btn.disabled = true; btn.textContent = '⏳';
+  const r = await fetch(`/api/pipeline/routines/${rid}/fix`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({run: runId, dept, node, should: should.trim(), rerun})});
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    alert('แก้ไม่สำเร็จ: ' + (e.detail || r.status));
+    btn.disabled = false; btn.textContent = '✏️ แก้จุดนี้';
+    return;
+  }
+  await loadPipeline();
+  await reloadRoutineHistory(rid);
+}
+
+async function dropFix(fixId, rid) {
+  if (!confirm('ยกเลิกคำสั่งแก้จุดนี้?')) return;
+  await fetch(`/api/pipeline/fixes/${fixId}`, {method: 'DELETE'});
+  await reloadRoutineHistory(rid);
 }
 
 /* The dashboard is only honest if it keeps up with what is running. */

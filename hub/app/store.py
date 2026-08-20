@@ -33,6 +33,7 @@ _DEFAULT = {
     "routines": [],                                   # standing orders on a schedule
     "routine_runs": [],                               # every execution, newest last
     "followups": [],                                  # one-shot Q&A from Telegram
+    "routine_fixes": [],                              # CEO corrections pinned to a node
     # Pipeline work trees. Kept under their own key because a "routine" here is
     # a lane of work with tasks and runs, not a scheduled report — merging the
     # two would have one system silently reading the other's records.
@@ -741,6 +742,66 @@ def add_routine_run(routine_id: int, results: dict) -> dict:
         data["routine_runs"] = data["routine_runs"][-300:]
         _save(data)
     return entry
+
+
+# ── corrections pinned to a node of a routine report ──
+#
+# A comment on a whole report says "this is wrong" and leaves the model free to
+# re-derive the same conclusion down the same road. A correction pinned to the
+# step it was taken at closes that road: the next run is handed the node, what
+# it thought there, and what the CEO says it should have thought.
+
+def add_routine_correction(routine_id: int, run_id: int, dept: str, node: str,
+                           label: str, was: str, should: str) -> dict:
+    """`was` is captured now, not looked up later: the run it refers to is
+    immutable, but the CEO must still be able to read what he rejected after
+    later runs shift the indices."""
+    entry = {"id": None, "routine_id": routine_id, "run_id": run_id, "dept": dept,
+             "node": node, "label": label, "was": was, "should": should,
+             "answered_by": None, "at": _now()}
+    with _LOCK:
+        data = _load()
+        fixes = data.setdefault("routine_fixes", [])
+        entry["id"] = max((c["id"] for c in fixes), default=0) + 1
+        fixes.append(entry)
+        _save(data)
+    return entry
+
+
+def open_routine_corrections(routine_id: int, dept: str | None = None) -> list:
+    """Corrections no later run has answered yet — the CEO's standing orders."""
+    with _LOCK:
+        fixes = _load().get("routine_fixes", [])
+    return [c for c in fixes
+            if c["routine_id"] == routine_id and c["answered_by"] is None
+            and (dept is None or c["dept"] == dept)]
+
+
+def routine_corrections(routine_id: int) -> list:
+    with _LOCK:
+        fixes = _load().get("routine_fixes", [])
+    return [c for c in fixes if c["routine_id"] == routine_id]
+
+
+def answer_routine_corrections(routine_id: int, run_id: int) -> None:
+    """Everything outstanding was put to this run, whatever it did about it —
+    an unanswered correction must not silently repeat forever."""
+    with _LOCK:
+        data = _load()
+        for c in data.setdefault("routine_fixes", []):
+            if c["routine_id"] == routine_id and c["answered_by"] is None:
+                c["answered_by"] = run_id
+        _save(data)
+
+
+def delete_routine_correction(fix_id: int) -> bool:
+    with _LOCK:
+        data = _load()
+        fixes = data.setdefault("routine_fixes", [])
+        before = len(fixes)
+        data["routine_fixes"] = [c for c in fixes if c["id"] != fix_id]
+        _save(data)
+        return len(data["routine_fixes"]) < before
 
 
 def mark_routine_delivery(routine_id: int, run_id: int, delivery: dict) -> None:

@@ -75,19 +75,23 @@ def test_create_validates_and_schedules(client):
 
 
 def test_run_asks_only_the_assigned_seats_and_delivers(client):
+    import json
     r = client.post("/api/routines", json={"task": "เช็คกระแสเงินสด", "frequency": "daily",
                                            "time": "09:00", "seats": ["cfo"]}).json()
     calls = []
+    reply = json.dumps({"understanding": "เช็คกระแสเงินสด", "answer": "สถานะ: ปกติ"},
+                       ensure_ascii=False)
 
     def fake_chat(provider, system, user, **kw):
         calls.append((provider, system, user))
-        return {"text": "สถานะ: ปกติ", "provider": provider, "model": "m", "ok": True}
+        return {"text": reply, "provider": provider, "model": "m", "ok": True}
 
     with patch("app.llm.chat", side_effect=fake_chat), \
          patch("app.telegram.send", return_value={"ok": True, "sent": 1}) as tg:
         run = client.post(f"/api/routines/{r['id']}/run").json()
 
     assert set(run["results"]) == {"cfo"}            # CMO was not assigned
+    # One seat, one call: a well-formed reply must not cost a repair round.
     assert len(calls) == 1
     assert "งานประจำ" in calls[0][1] and "เช็คกระแสเงินสด" in calls[0][2]
     body = tg.call_args.args[0]

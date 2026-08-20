@@ -104,6 +104,10 @@ _SCALAR_NODES = {
 }
 _NODE_RE = re.compile(r"^([a-z_]+)(?:\[(\d+)\])?$")
 
+# What each addressable place is called on screen. The UI must not hard-code
+# these: a node the backend cannot resolve is one the CEO cannot correct.
+NODE_LABELS = {**_SCALAR_NODES, **_LIST_NODES}
+
 
 def _clean_node(value) -> str:
     """Normalise a node id the model echoed back.
