@@ -9,6 +9,11 @@ logs/
 hub/memory/hub_store.json
 # Connector definitions carry per-project ingest keys — credentials, not code.
 hub/memory/sources.json
+# The CEO's document library: uploaded business files and every routine report
+# the board has produced. Business data, not source — it does not belong in a
+# repository. The 21 files already tracked stay tracked (untracking them needs
+# the CEO's word, and the repo is private); this stops any new one being added.
+hub/docs_store/
 services/*/output/
 services/*/memory/*.json
 services/researcher/ledger.jsonl
