@@ -31,6 +31,24 @@ SECRET_RE = re.compile(
 )
 
 
+# Files whose job is to *name* the credential shapes: the checker, its tests,
+# the tester that plants fakes to prove the checker bites, and the env example.
+# They are not waved through wholesale — a real key pasted into one of them must
+# still be caught — so only obvious placeholders are tolerated.
+NAMES_THE_SHAPES = {
+    "hub/scripts/check_secrets.py",
+    "hub/tests/test_secrets.py",
+    "scripts/check_guard_works.sh",
+    "hub/.env.example",
+}
+PLACEHOLDER_RE = re.compile(r"^(?:[A-Za-z0-9_-]*?)(AAAA|XXXX|1234567890:)")
+
+
+def is_placeholder(value: str) -> bool:
+    """A run of A/X or the documented 1234567890: prefix — never a live key."""
+    return bool(PLACEHOLDER_RE.search(value)) or "A" * 8 in value
+
+
 def tracked() -> set[str]:
     out = subprocess.run(["git", "ls-files"], cwd=ROOT,
                          capture_output=True, text=True, check=True)
@@ -48,13 +66,13 @@ def main() -> int:
         p = ROOT / rel
         if not p.is_file() or p.suffix in {".png", ".jpg", ".pdf", ".xlsx"}:
             continue
-        if rel.endswith(".example") or "check_secrets" in rel:
-            continue          # the example file and this checker name the shapes
         try:
             text = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
         for m in SECRET_RE.finditer(text):
+            if rel in NAMES_THE_SHAPES and is_placeholder(m.group()):
+                continue
             bad.append(f"credential in {rel}: {m.group()[:14]}…")
 
     if bad:

@@ -63,6 +63,22 @@ def test_runtime_state_is_untracked_but_still_on_disk(path):
     assert (ROOT / path).exists(), f"{path} vanished from disk"
 
 
+def test_the_placeholder_exemption_is_not_a_back_door(guard):
+    """Files that name the shapes are exempt only for obvious fakes. A real key
+    pasted into the checker or its tests must still stop the commit.
+
+    The high-entropy samples are assembled here rather than written as literals,
+    so this file never contains a credential-shaped string of its own — a test
+    for a leak guard must not be the leak.
+    """
+    fake = "cx_" + "7mQr2VtKp9LsXd4Ye1Nb" + "6Uh3Wg8Zc5Aj"
+    pat = "ghp_" + "3Kd9Xm2Qw7Rt5Yv8Bn1P" + "l4Gs6Hz0Jf2Ce"
+    assert not guard.is_placeholder(fake), "a real-looking ingest key slipped through"
+    assert not guard.is_placeholder(pat), "a real-looking PAT slipped through"
+    for obvious in ("cx_" + "A" * 30, "ghp_" + "A" * 36, "1234567890:AA" + "A" * 33):
+        assert guard.is_placeholder(obvious), obvious
+
+
 def test_new_business_documents_cannot_be_added():
     """Routine reports and uploads are the CEO's data, not source."""
     ignored = subprocess.run(
